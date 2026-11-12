@@ -1,0 +1,21 @@
+{
+  "name": "dsh-a2ui-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Development workspace for the dsh-a2ui DeepSeek Harness plugin (the installable bundle lives in ./package).",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node tools/run-tests.mjs",
+    "verify": "node tools/verify-bundle.mjs",
+    "render": "node tools/render-check.mjs",
+    "inspect:session": "node tools/inspect-session-log.mjs",
+    "all": "npm run typecheck && npm run build && npm test && npm run verify && npm run render"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "typescript": "~5.9.2"
+  }
+}
