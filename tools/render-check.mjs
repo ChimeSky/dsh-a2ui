@@ -2,7 +2,7 @@
 /**
  * Real-render check for the shipped browser bundle.
  *
- * Loads `package/client.js` exactly as the Harness module table does, registers
+ * Loads `client.js` exactly as the Harness module table does, registers
  * the tool view through a fake Client context, then renders it server-side with
  * React against (a) the payload actually recorded in this workspace's newest
  * session log and (b) a synthetic surface that uses every catalog component.
@@ -29,7 +29,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /* ------------------------------------------------------------------ */
 
 function loadView() {
-  const source = fs.readFileSync(path.join(ROOT, 'package', 'client.js'), 'utf8')
+  const source = fs.readFileSync(path.join(ROOT, 'client.js'), 'utf8')
   const registered = []
   const localeRegister = []
   const document = {

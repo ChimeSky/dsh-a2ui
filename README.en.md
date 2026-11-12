@@ -1,5 +1,9 @@
 # dsh-a2ui — Generative UI for DeepSeek Harness
 
+[![CI](https://github.com/ChimeSky/dsh-a2ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ChimeSky/dsh-a2ui/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![DSH plugin](https://img.shields.io/badge/dsh-plugin-8A2BE2)](https://github.com/topics/dsh-plugin)
+
 *Bring interactive, agent-generated interfaces into DeepSeek Harness through the Google A2UI protocol.*
 
 [简体中文](README.md) | **English**
@@ -44,15 +48,13 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 ## Install, enable, disable, remove
 
-The plugin ships as a **bundle** (`dsh.bundle.patch` + `dsh.client`), providing both the Host and browser halves from one package.
+The plugin ships as a **bundle** (`dsh.bundle` + `dsh.client`): the repository root is the installable package, providing both the Host and browser halves. Build artifacts are committed, so installing does not compile anything.
 
-**Recommended — via the DSH plugin manager:**
+**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.1.0`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
 
-```text
-plugin_manager  action=install_bundle  target=<absolute path>/plugins/a2ui/package
-```
+**B — frozen tarball.** `vendor/dsh-a2ui-0.1.0.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.1.0.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
 
-This installs the package into the active profile (the Desktop build uses `desktop`) and selects the bundle; it also appears in Settings → Plugins. New bundles activate through HMR; replacing an already-installed package requires a restart to load a fresh JavaScript module generation.
+**C — DSH plugin manager.** Run `plugin_manager action=install_bundle target=<absolute path or tarball>`. The bundle is written to the active profile (Desktop uses `desktop`) and appears in Settings → Plugins. New bundles activate through HMR; replacing an already-installed package requires a restart to load a fresh JavaScript module generation.
 
 - Disable: `plugin_manager action=set_plugin target=dsh-a2ui enabled=false`. The two tools disappear from the model, the prompt section is removed, the chat view is no longer registered, and styles/dictionaries are disposed with their `ctx.effect` — ordinary chat is unaffected.
 - Enable: `enabled=true`.
@@ -228,13 +230,14 @@ The rule: anything the interface can do locally must not send a message. Sorting
 ```bash
 npm install --ignore-scripts     # typescript/@types only (esbuild's postinstall needs pipes the sandbox forbids)
 npm run typecheck                # tsc --noEmit
-npm run build                    # tsc + module linker → package/index.js, package/lib/**, package/client.js
-npm test                         # 57 cases (node:test, in-process)
+npm run build                    # tsc + module linker → index.js, lib/**, client.js (written into the repo root)
+npm test                         # all cases (node:test, in-process)
 npm run verify                   # pre-install bundle invariants
+npm run pack:vendor              # regenerate vendor/dsh-a2ui-<version>.tgz
 npm run all                      # all of the above
 ```
 
-The build does not use esbuild: its native service needs pipes that the Windows sandbox refuses (`spawn EPERM`). `tools/build.mjs` compiles in-process through the TypeScript compiler API, then links the browser half into one file with a ~120-line module registry wrapped in `__ModuleLoader__.load({ id, factory })`. `npm test` uses `tools/run-tests.mjs` for the same reason (no child process per file).
+The build does not use esbuild: its native service needs pipes that the Windows sandbox refuses (`spawn EPERM`). `tools/build.mjs` compiles in-process through the TypeScript compiler API, then links the browser half into one file with a ~120-line module registry wrapped in `__ModuleLoader__.load({ id, factory })`. `npm test` uses `tools/run-tests.mjs` for the same reason (no child process per file). `index.js`, `lib/**` and `client.js` are build artifacts committed to the repository so that `dsh plugin add github:` works without a build step; rerun `npm run build` and commit after changing `src/`.
 
 ---
 

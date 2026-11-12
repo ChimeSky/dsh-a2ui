@@ -6,9 +6,9 @@
  * sandbox refuses to create (`spawn EPERM`). Everything here runs in-process:
  *
  *   1. `typescript` compiles `src/**` to ESM in `build/esm`.
- *   2. The Host half is shipped as ordinary ESM files (`package/lib/**`), so
+ *   2. The Host half is shipped as ordinary ESM files (`lib/**`), so
  *      Node resolves its imports natively.
- *   3. The browser half is linked into ONE file (`package/client.js`) by a
+ *   3. The browser half is linked into ONE file (`client.js`) by a
  *      small registry linker, wrapped in the `__ModuleLoader__` factory the
  *      Harness module table expects, with `react` left external.
  *
@@ -25,7 +25,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = path.join(ROOT, 'src')
 const BUILD = path.join(ROOT, 'build')
 const ESM = path.join(BUILD, 'esm')
-const PKG = path.join(ROOT, 'package')
+const PKG = ROOT
 const CLIENT_ID = 'dsh-a2ui'
 
 const COMPILER_OPTIONS = {
@@ -280,33 +280,16 @@ async function buildSharedForTests() {
   await writeFile(target, `${chunks.join('\n')}\n`, 'utf8')
 }
 
-async function copyDocs() {
-  for (const name of ['README.md', 'README.en.md']) {
-    try {
-      await copyFile(path.join(ROOT, name), path.join(PKG, name))
-    } catch {
-      // A docs-less build (tests, CI) still produces a working bundle.
-    }
-  }
-  try {
-    await mkdir(path.join(PKG, 'docs'), { recursive: true })
-    await copyFile(path.join(ROOT, 'docs', 'TEST-REPORT.md'), path.join(PKG, 'docs', 'TEST-REPORT.md'))
-  } catch {
-    // Same as above: the report is documentation, not runtime material.
-  }
-}
-
 async function main() {
   const started = Date.now()
   const files = await compile()
   const clientBytes = await buildClient()
   await buildHost(files)
   await buildSharedForTests()
-  await copyDocs()
   console.log(`built ${files.length} TypeScript modules in ${Date.now() - started} ms`)
-  console.log(`  package/index.js  (host ESM entry)`)
-  console.log(`  package/lib/**    (host + shared modules)`)
-  console.log(`  package/client.js (${Math.round(clientBytes / 1024)} KiB browser bundle)`)
+  console.log(`  index.js  (host ESM entry)`)
+  console.log(`  lib/**    (host + shared modules)`)
+  console.log(`  client.js (${Math.round(clientBytes / 1024)} KiB browser bundle)`)
   console.log(`  build/shared.mjs  (test harness)`)
 }
 

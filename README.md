@@ -1,5 +1,9 @@
 # dsh-a2ui — Generative UI for DeepSeek Harness
 
+[![CI](https://github.com/ChimeSky/dsh-a2ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ChimeSky/dsh-a2ui/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![DSH plugin](https://img.shields.io/badge/dsh-plugin-8A2BE2)](https://github.com/topics/dsh-plugin)
+
 *Bring interactive, agent-generated interfaces into DeepSeek Harness through the Google A2UI protocol.*
 
 **简体中文** | [English](README.en.md)
@@ -44,21 +48,19 @@
 
 ## 三、安装与启停
 
-插件以 **bundle** 形式打包（`dsh.bundle.patch` + `dsh.client`），Host 与浏览器两个半边由同一个包提供。
+插件以 **bundle** 形式打包（`dsh.bundle` + `dsh.client`）：仓库根目录就是可安装的包，Host 与浏览器两个半边由同一个包提供，构建产物已随仓库提交，安装时不需要现场编译。
 
-### 方式 A：通过 DSH 插件管理器安装（推荐）
+### 方式 A：从 GitHub 安装（推荐）
 
-在 DSH 中让 Agent 或插件管理界面执行：
+在 DSH 中执行 `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.1.0`。`#v0.1.0` 把安装固定到发布标签，`desktop` 按目标 profile 替换（Web 端通常为 `web`）。
 
-```text
-plugin_manager  action=install_bundle  target=<绝对路径>/plugins/a2ui/package
-```
+### 方式 B：用冻结的 tarball 安装
 
-安装后该 bundle 会写入当前 Profile（桌面端为 `desktop`），并出现在「设置 → 插件」列表中。插件本身**无需重启**即可通过 HMR 生效；替换已安装包时需要重启才能加载新的 JavaScript 模块。
+`vendor/dsh-a2ui-0.1.0.tgz` 与发布测试过的字节一致：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.1.0.tgz`。也可以运行 `tools/install.ps1`，它负责安装、卸载与安装副本校验。
 
-### 方式 B：手动加入 Profile
+### 方式 C：在 DSH 插件管理器中安装
 
-在 Profile 的 `package.json` 中把该目录作为 `file:` 依赖加入，并在 `dsh.profile.bundles` 中追加 `dsh-a2ui`。**不建议手改**，因为 `install_bundle` 会同时处理包管理、bundle 选择与 patch 合并。
+让 Agent 或插件管理界面执行 `plugin_manager action=install_bundle target=<绝对路径或 tarball 路径>`。安装后 bundle 会写入当前 Profile（桌面端为 `desktop`），并出现在「设置 → 插件」列表中。插件通过 HMR 生效；替换已安装包后需要重启以加载新的 JavaScript 模块。
 
 ### 启用 / 停用 / 卸载
 
@@ -70,12 +72,14 @@ plugin_manager  action=install_bundle  target=<绝对路径>/plugins/a2ui/packag
 
 | 路径 | 作用 |
 |---|---|
-| `package/` | **可安装产物**：`package.json`、`cordis.patch.yml`、`index.js`（Host 入口）、`lib/**`（Host 模块）、`client.js`（浏览器 bundle）、`locale/`、`icon.svg` |
-| `src/host/` | Host 插件源码（工具、提示词段） |
-| `src/shared/` | 协议层：Schema、Catalog、绑定、函数、表达式、校验、URL 准入（Host 与浏览器共用） |
-| `src/client/` | 渲染器：表面状态、组件、图表、动画、工具卡片视图 |
-| `tests/` | 57 个用例（协议 / 单元 / 集成 / 验收） |
-| `tools/` | 构建、测试、校验脚本；只读的 asar 研究工具 |
+| `index.js`、`lib/**` | Host 入口与协议/工具模块（构建产物，勿手改） |
+| `client.js` | 浏览器 bundle（模块表加载） |
+| `cordis.patch.yml` | bundle patch，插入 `dsh-a2ui` 行 |
+| `locale/`、`icon.svg` | 插件显示元数据与图标 |
+| `src/host/`、`src/shared/`、`src/client/` | TypeScript 源码 |
+| `tests/` | 用例（协议 / 单元 / 集成 / 验收） |
+| `tools/` | 构建、测试、校验、安装、打包脚本 |
+| `vendor/` | 冻结的安装 tarball |
 | `docs/` | 实现说明与测试报告 |
 
 ---
@@ -278,13 +282,14 @@ conversation.send("[A2UI action] …")  →  当前会话 → Agent
 ```bash
 npm install --ignore-scripts     # 仅 typescript/@types（esbuild 的 postinstall 在受限沙箱会 EPERM）
 npm run typecheck                # tsc --noEmit
-npm run build                    # tsc + 模块链接器 → package/index.js, package/lib/**, package/client.js
-npm test                         # 57 个用例（node:test，进程内运行）
+npm run build                    # tsc + 模块链接器 → index.js, lib/**, client.js（写回仓库根目录）
+npm test                         # 全部用例（node:test，进程内运行）
 npm run verify                   # 安装前的 bundle 不变量检查
+npm run pack:vendor              # 重新生成 vendor/dsh-a2ui-<version>.tgz
 npm run all                      # 以上全部
 ```
 
-> 构建不使用 esbuild：受限沙箱禁止其原生服务所需的管道（`spawn EPERM`）。`tools/build.mjs` 用 TypeScript 编译器 API 在进程内编译，再用约 120 行的模块注册链接器把浏览器半边合成单文件，并包进 `__ModuleLoader__.load({ id, factory })`。`npm test` 也用 `tools/run-tests.mjs` 在单进程内加载测试，避免 `node --test` 为每个文件 spawn 子进程。
+> 构建不使用 esbuild：受限沙箱禁止其原生服务所需的管道（`spawn EPERM`）。`tools/build.mjs` 用 TypeScript 编译器 API 在进程内编译，再用约 120 行的模块注册链接器把浏览器半边合成单文件，并包进 `__ModuleLoader__.load({ id, factory })`。`npm test` 也用 `tools/run-tests.mjs` 在单进程内加载测试，避免 `node --test` 为每个文件 spawn 子进程。`index.js`、`lib/**`、`client.js` 是构建产物，随仓库提交，便于 `dsh plugin add github:` 直接安装；改源码后重新执行 `npm run build` 再提交。
 
 ---
 

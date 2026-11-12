@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 
-import * as host from '../package/index.js'
+import * as host from '../index.js'
 import { shared } from '../build/shared.mjs'
 
 const { safeMediaUrl, safeExternalUrl, safeSvgPath } = shared
@@ -223,7 +223,7 @@ test('SVG path admission accepts path grammar and rejects markup', () => {
 /* ------------------------------------------------------------------ */
 
 async function loadClientBundle() {
-  const source = await readFile(new URL('../package/client.js', import.meta.url), 'utf8')
+  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   const loaded = {}
   const document = {
     head: { appendChild() {} },

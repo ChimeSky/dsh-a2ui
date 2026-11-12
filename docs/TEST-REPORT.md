@@ -20,7 +20,7 @@
 | 项目 | 结果 |
 |---|---|
 | TypeScript 类型检查（`strict`） | ✅ 0 错误 |
-| 构建 | ✅ 22 个模块；`package/client.js` 202 KiB；`package/lib/**` + `package/index.js` |
+| 构建 | 22 个模块；`client.js` 202 KiB；`lib/**` + `index.js` |
 | 单元/集成/验收用例 | ✅ **70 / 70 通过**（`node:test`，`duration ≈ 100 ms`） |
 | Bundle 不变量检查 | ✅ **29 / 29 通过** |
 
