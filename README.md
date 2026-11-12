@@ -25,20 +25,20 @@
 
 | 能力 | 状态 |
 |---|---|
-| Host 工具注册（`a2ui`、`a2ui_catalog`） | ✅ 已实现 |
-| A2UI 1.0 消息校验（`createSurface` / `updateComponents` / `updateDataModel` / `deleteSurface`） | ✅ 已实现 |
-| 对话流内原生渲染（`tool.call.toolview`） | ✅ 已实现 |
-| 官方 basic catalog 全部 18 个组件 | ✅ 已实现 |
-| 扩展 catalog：Table / Bar / Line / Pie / Stat / Progress / Plot / FramePlayer | ✅ 已实现 |
-| 数据模型绑定 + 本地函数（formatString、formatNumber、校验函数等） | ✅ 已实现 |
-| 双向交互（按钮 / 表单 → 当前会话 → Agent） | ✅ 已实现 |
-| 多 Surface 并存、同一次调用内增量更新 | ✅ 已实现 |
-| 会话恢复、历史回放无副作用 | ✅ 已实现（由日志推导） |
-| 明暗主题、响应式、键盘可达、ARIA 标签 | ✅ 已实现（样式走 `--dsw-alias-*` 主题变量） |
-| 逐字流式渲染（边生成边画） | ⚠️ 部分：工具调用进入 `start` 阶段即渲染，之后可再次调用工具增量更新；不做逐字符解析 |
-| 跨工具调用「原地替换已有卡片」 | ❌ 未实现（见[已知限制](#十已知限制)） |
-| `callRendererFunction` / `agentFunctionResponse` 消息 | ❌ 明确拒绝（v0.1.0 不支持，报错文案说明原因） |
-| PTC（Code mode）下的 `run_code` 子调用渲染 | ⚠️ 会渲染为子调用行，样式未专门优化 |
+| Host 工具注册（`a2ui`、`a2ui_catalog`） | 已实现 |
+| A2UI 1.0 消息校验（`createSurface` / `updateComponents` / `updateDataModel` / `deleteSurface`） | 已实现 |
+| 对话流内原生渲染（`tool.call.toolview`） | 已实现 |
+| 官方 basic catalog 全部 18 个组件 | 已实现 |
+| 扩展 catalog：Table / Bar / Line / Pie / Stat / Progress / Plot / FramePlayer | 已实现 |
+| 数据模型绑定 + 本地函数（formatString、formatNumber、校验函数等） | 已实现 |
+| 双向交互（按钮 / 表单 → 当前会话 → Agent） | 已实现 |
+| 多 Surface 并存、同一次调用内增量更新 | 已实现 |
+| 会话恢复、历史回放无副作用 | 已实现（由日志推导） |
+| 明暗主题、响应式、键盘可达、ARIA 标签 | 已实现（样式走 `--dsw-alias-*` 主题变量） |
+| 逐字流式渲染（边生成边画） | 部分：工具调用进入 `start` 阶段即渲染，之后可再次调用工具增量更新；不做逐字符解析 |
+| 跨工具调用「原地替换已有卡片」 | 未实现（见[已知限制](#十已知限制)） |
+| `callRendererFunction` / `agentFunctionResponse` 消息 | 未支持（v0.1.0 明确拒绝，报错文案说明原因） |
+| PTC（Code mode）下的 `run_code` 子调用渲染 | 部分：会渲染为子调用行，样式未专门优化 |
 
 ---
 
@@ -115,115 +115,15 @@ plugin_manager  action=install_bundle  target=<绝对路径>/plugins/a2ui/packag
 | `muteSection` | `false` | 完全关闭提示词段（只保留工具） |
 | `toolName` | `a2ui` | **不建议改**：客户端槽位按该名字注册视图 |
 
+### 示例
 
-### 示例 1：交互卡片
-
-```json
-{
-  "title": "选择方案",
-  "messages": [{
-    "version": "1.0",
-    "createSurface": {
-      "surfaceId": "plan",
-      "dataModel": { "plan": ["pro"] },
-      "components": [
-        { "id": "root", "component": "Card", "child": "body" },
-        { "id": "body", "component": "Column", "children": ["t", "picker", "btn"] },
-        { "id": "t", "component": "Text", "text": "**选择你的方案**" },
-        { "id": "picker", "component": "ChoicePicker", "label": "方案",
-          "options": [{ "label": "入门", "value": "free" }, { "label": "专业", "value": "pro" }],
-          "value": { "@path": "/plan" } },
-        { "id": "btnLabel", "component": "Text", "text": "继续" },
-        { "id": "btn", "component": "Button", "variant": "primary", "child": "btnLabel",
-          "action": { "event": { "name": "choose-plan", "context": { "plan": { "@path": "/plan" } } } } }
-      ]
-    }
-  }]
-}
-```
-
-### 示例 2：柱状图 + 折线图
-
-```json
-{
-  "title": "月度销售",
-  "messages": [{
-    "version": "1.0",
-    "createSurface": {
-      "surfaceId": "sales",
-      "dataModel": { "revenue": [120, 145, 132, 168, 191, 205] },
-      "components": [
-        { "id": "root", "component": "Column", "children": ["bar", "line"] },
-        { "id": "bar", "component": "BarChart", "categories": ["1月","2月","3月","4月","5月","6月"],
-          "series": [{ "label": "营收", "values": { "@path": "/revenue" } }], "valueSuffix": "万元" },
-        { "id": "line", "component": "LineChart", "categories": ["1月","2月","3月","4月","5月","6月"],
-          "series": [{ "label": "营收", "values": { "@path": "/revenue" } }], "area": true }
-      ]
-    }
-  }]
-}
-```
-
-### 示例 3：滑块驱动二次函数图像（本地实时更新，不产生额外模型调用）
-
-```json
-{
-  "messages": [{
-    "version": "1.0",
-    "createSurface": {
-      "surfaceId": "quad",
-      "dataModel": { "a": 1, "b": 0, "c": -4 },
-      "components": [
-        { "id": "root", "component": "Column", "children": ["a", "b", "c", "plot"] },
-        { "id": "a", "component": "Slider", "label": "a", "min": -5, "max": 5, "value": { "@path": "/a" } },
-        { "id": "b", "component": "Slider", "label": "b", "min": -5, "max": 5, "value": { "@path": "/b" } },
-        { "id": "c", "component": "Slider", "label": "c", "min": -10, "max": 10, "value": { "@path": "/c" } },
-        { "id": "plot", "component": "Plot",
-          "plots": [{ "label": "f(x)", "expression": "a*x^2 + b*x + c" }],
-          "variables": { "a": { "@path": "/a" }, "b": { "@path": "/b" }, "c": { "@path": "/c" } },
-          "xMin": -6, "xMax": 6 }
-      ]
-    }
-  }]
-}
-```
-
-### 示例 4：冒泡排序分步动画（帧由模型一次生成，播放全在本地）
-
-```json
-{
-  "messages": [{
-    "version": "1.0",
-    "createSurface": {
-      "surfaceId": "sort",
-      "components": [
-        { "id": "root", "component": "FramePlayer",
-          "frames": [
-            { "label": "初始", "items": [{ "value": 5 }, { "value": 1 }, { "value": 4 }, { "value": 2 }] },
-            { "label": "比较 5,1", "items": [{ "value": 5, "state": "compare" }, { "value": 1, "state": "compare" }, { "value": 4 }, { "value": 2 }] },
-            { "label": "交换", "items": [{ "value": 1, "state": "active" }, { "value": 5, "state": "active" }, { "value": 4 }, { "value": 2 }] },
-            { "label": "完成", "items": [{ "value": 1, "state": "sorted" }, { "value": 2, "state": "sorted" }, { "value": 4, "state": "sorted" }, { "value": 5, "state": "sorted" }] }
-          ],
-          "mode": "bars", "speed": 380 }
-      ]
-    }
-  }]
-}
-```
+一条调用即可组合出完整界面：卡片、`ChoicePicker` 与 `Button` 构成方案选择；`BarChart` 与 `LineChart` 共用同一数据模型；`Slider` 绑定 `Plot` 的 `variables`，拖动即本地重绘；`FramePlayer` 播放预先算好的分步动画。具体参数、组件属性与可选值以 `a2ui_catalog` 的 `full` 输出为准。
 
 ---
 
 ## 五、用户操作如何回到 Agent
 
-点击带 `action.event` 的按钮、或提交表单时，插件生成 A2UI 1.0 的 `action` 消息，并把下面这段文本通过**当前会话的 Conversation 服务**作为一条普通用户消息入队：
-
-````text
-[A2UI action] 生成学习计划
-
-```json
-{"version":"1.0","action":{"name":"generate-plan","surfaceId":"study","sourceComponentId":"submit","timestamp":"2026-11-12T12:34:56.000Z","context":{"level":["beginner"],"hours":8,"goal":"成为后端工程师","algorithms":true}}}
-```
-````
+点击带 `action.event` 的按钮、或提交表单时，插件生成 A2UI 1.0 的 `action` 消息，并把一段以 `[A2UI action]` 开头的文本通过**当前会话的 Conversation 服务**作为一条普通用户消息入队。消息体包含 `name`、`surfaceId`、`sourceComponentId`、`timestamp`，以及按当前数据模型求值的 `context`。
 
 要点：
 

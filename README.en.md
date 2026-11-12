@@ -25,20 +25,20 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 | Capability | Status |
 |---|---|
-| Host tool registration (`a2ui`, `a2ui_catalog`) | ✅ |
-| A2UI 1.0 validation (`createSurface` / `updateComponents` / `updateDataModel` / `deleteSurface`) | ✅ |
-| Inline native rendering via `tool.call.toolview` | ✅ |
-| All 18 official basic-catalog components | ✅ |
-| Extension catalog: Table / Bar / Line / Pie / Stat / Progress / Plot / FramePlayer | ✅ |
-| Data-model bindings + local functions (`formatString`, `formatNumber`, validators, …) | ✅ |
-| Round trip (button/form → session → agent) | ✅ |
-| Multiple surfaces, incremental updates within one call | ✅ |
-| Session restore, replay without side effects | ✅ (derived from the log) |
-| Light/dark theme, responsive, keyboard, ARIA | ✅ (`--dsw-alias-*` tokens) |
-| Character-level streaming render | ⚠️ Partial: renders as soon as the call reaches `start`; further tool calls update incrementally |
-| Replacing an existing card in place across calls | ❌ (see [Known limitations](#known-limitations)) |
-| `callRendererFunction` / `agentFunctionResponse` | ❌ Explicitly rejected with a reason |
-| PTC (`run_code`) sub-call presentation | ⚠️ Renders as a sub-call row, not styled specifically |
+| Host tool registration (`a2ui`, `a2ui_catalog`) | Done |
+| A2UI 1.0 validation (`createSurface` / `updateComponents` / `updateDataModel` / `deleteSurface`) | Done |
+| Inline native rendering via `tool.call.toolview` | Done |
+| All 18 official basic-catalog components | Done |
+| Extension catalog: Table / Bar / Line / Pie / Stat / Progress / Plot / FramePlayer | Done |
+| Data-model bindings + local functions (`formatString`, `formatNumber`, validators, …) | Done |
+| Round trip (button/form → session → agent) | Done |
+| Multiple surfaces, incremental updates within one call | Done |
+| Session restore, replay without side effects | Done (derived from the log) |
+| Light/dark theme, responsive, keyboard, ARIA | Done (`--dsw-alias-*` tokens) |
+| Character-level streaming render | Partial: renders as soon as the call reaches `start`; further tool calls update incrementally |
+| Replacing an existing card in place across calls | Not implemented (see [Known limitations](#known-limitations)) |
+| `callRendererFunction` / `agentFunctionResponse` | Not supported: explicitly rejected with a reason |
+| PTC (`run_code`) sub-call presentation | Partial: renders as a sub-call row, not styled specifically |
 
 ---
 
@@ -94,69 +94,15 @@ Cost: the guidance is ~2.8 KB (~700 tokens) of always-on prompt; the component r
 | `muteSection` | `false` | drop the prompt section entirely (tools stay) |
 | `toolName` | `a2ui` | **not recommended**: the client view is registered under this name |
 
-### Example — interactive card
+### Examples
 
-```json
-{
-  "title": "Choose a plan",
-  "messages": [{
-    "version": "1.0",
-    "createSurface": {
-      "surfaceId": "plan",
-      "dataModel": { "plan": ["pro"] },
-      "components": [
-        { "id": "root", "component": "Card", "child": "body" },
-        { "id": "body", "component": "Column", "children": ["t", "picker", "btn"] },
-        { "id": "t", "component": "Text", "text": "**Choose your plan**" },
-        { "id": "picker", "component": "ChoicePicker", "label": "Plan",
-          "options": [{ "label": "Starter", "value": "free" }, { "label": "Pro", "value": "pro" }],
-          "value": { "@path": "/plan" } },
-        { "id": "btnLabel", "component": "Text", "text": "Continue" },
-        { "id": "btn", "component": "Button", "variant": "primary", "child": "btnLabel",
-          "action": { "event": { "name": "choose-plan", "context": { "plan": { "@path": "/plan" } } } } }
-      ]
-    }
-  }]
-}
-```
-
-### Example — parameter exploration (sliders drive a plot locally)
-
-```json
-{
-  "messages": [{
-    "version": "1.0",
-    "createSurface": {
-      "surfaceId": "quad",
-      "dataModel": { "a": 1, "b": 0, "c": -4 },
-      "components": [
-        { "id": "root", "component": "Column", "children": ["a", "b", "c", "plot"] },
-        { "id": "a", "component": "Slider", "label": "a", "min": -5, "max": 5, "value": { "@path": "/a" } },
-        { "id": "b", "component": "Slider", "label": "b", "min": -5, "max": 5, "value": { "@path": "/b" } },
-        { "id": "c", "component": "Slider", "label": "c", "min": -10, "max": 10, "value": { "@path": "/c" } },
-        { "id": "plot", "component": "Plot",
-          "plots": [{ "label": "f(x)", "expression": "a*x^2 + b*x + c" }],
-          "variables": { "a": { "@path": "/a" }, "b": { "@path": "/b" }, "c": { "@path": "/c" } },
-          "xMin": -6, "xMax": 6 }
-      ]
-    }
-  }]
-}
-```
+A single call can compose a complete surface: a card with `ChoicePicker` and `Button` for choosing a plan; `BarChart` and `LineChart` sharing one data model; `Slider` bound to `Plot` variables for local redraws; `FramePlayer` playing precomputed step animations. Exact parameters, component properties and allowed values are in the `a2ui_catalog` `full` output.
 
 ---
 
 ## How a user action reaches the agent
 
-Clicking a button whose action is `action.event` (or submitting a form) builds an A2UI 1.0 `action` message and sends it through the **session's own Conversation service** as a normal queued user message:
-
-````text
-[A2UI action] Generate a study plan
-
-```json
-{"version":"1.0","action":{"name":"generate-plan","surfaceId":"study","sourceComponentId":"submit","timestamp":"2026-11-12T12:34:56.000Z","context":{"level":["beginner"],"hours":8,"goal":"become a backend dev","algorithms":true}}}
-```
-````
+Clicking a button whose action is `action.event` (or submitting a form) builds an A2UI 1.0 `action` message and sends a message starting with `[A2UI action]` through the **session's own Conversation service** as a normal queued user message. The payload carries `name`, `surfaceId`, `sourceComponentId`, `timestamp` and the `context` resolved against the current data model.
 
 - It uses the native message path, so Host admission rules (running turn, queue limits, permissions) apply exactly as if the user had typed it. A surface cannot grant itself capabilities.
 - `context` values are resolved against the **current data model** at click time, so edited form values are always included.
