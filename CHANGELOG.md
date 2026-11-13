@@ -3,6 +3,15 @@
 All notable changes to this plugin. Version numbers follow [SemVer](https://semver.org/); the
 `engines.dsh` range states which DeepSeek Harness releases a version was verified against.
 
+## 0.2.1 — 2026-11-13
+
+### Fixed
+
+- **Bar chart tooltip placement.** The hover tooltip is now an HTML overlay anchored to the hovered
+  bar and clamped to the plot area, so long labels and narrow cards no longer push it outside the
+  chart or into the axis labels; it also clears when a series is hidden from the legend. Grouped,
+  stacked and horizontal bars are covered by DOM tests that mock the layout geometry.
+
 ## 0.2.0 — 2026-11-13
 
 Correctness and safety release. It aligns the renderer and the validator with the published A2UI

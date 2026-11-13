@@ -223,12 +223,66 @@ export function splitPlotSegments(
 }
 
 /** `BarChart` */
+interface BarHover {
+  series: number
+  category: number
+  element: SVGRectElement
+}
+
+/** Keep the HTML tooltip and the hovered SVG rectangle in the same CSS pixel space. */
+function BarTooltip({ bar, lines }: { bar: SVGRectElement; lines: string[] }): ReturnType<typeof h> {
+  const ref = React.useRef<HTMLDivElement>(null)
+  React.useLayoutEffect(() => {
+    const tip = ref.current
+    const layer = tip?.parentElement
+    if (!tip || !layer) return
+    const update = (): void => {
+      const frame = layer.getBoundingClientRect()
+      const anchor = bar.getBoundingClientRect()
+      const scaleX = frame.width > 0 && layer.clientWidth > 0 ? frame.width / layer.clientWidth : 1
+      const scaleY = frame.height > 0 && layer.clientHeight > 0 ? frame.height / layer.clientHeight : 1
+      const box = tip.getBoundingClientRect()
+      const width = box.width / scaleX
+      const height = box.height / scaleY
+      const left = (anchor.left - frame.left) / scaleX
+      const right = (anchor.right - frame.left) / scaleX
+      const top = (anchor.top - frame.top) / scaleY
+      const bottom = (anchor.bottom - frame.top) / scaleY
+      const gap = 8
+      const inset = 4
+      const maxX = Math.max(inset, layer.clientWidth - width - inset)
+      const maxY = Math.max(inset, layer.clientHeight - height - inset)
+
+      let x: number
+      let y = (top + bottom - height) / 2
+      if (right + gap <= maxX) x = right + gap
+      else if (left - gap - width >= inset) x = left - gap - width
+      else {
+        x = (left + right - width) / 2
+        y = top - gap - height >= inset ? top - gap - height : bottom + gap
+      }
+      tip.style.left = `${Math.max(inset, Math.min(maxX, x))}px`
+      tip.style.top = `${Math.max(inset, Math.min(maxY, y))}px`
+      tip.style.visibility = 'visible'
+    }
+    update()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
+    observer?.observe(layer)
+    observer?.observe(bar)
+    observer?.observe(tip)
+    return () => observer?.disconnect()
+  }, [bar, lines[0], lines[1]])
+  return h('div', { ref, className: 'a2ui-bar-tip', role: 'tooltip' },
+    ...lines.map((line, index) => h('div', { key: index }, line)),
+  )
+}
+
 export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
   const view = scope.view
   const categories = Array.isArray(component.categories) ? (component.categories as unknown[]).map((entry) => text(scope, entry)) : []
   const allSeries = readSeries(scope, component)
   const [hidden, setHidden] = React.useState<Set<number>>(() => new Set())
-  const [hover, setHover] = React.useState<{ series: number; category: number } | null>(null)
+  const [hover, setHover] = React.useState<BarHover | null>(null)
   const series = allSeries.filter((_, index) => !hidden.has(index))
   const horizontal = component.horizontal === true
   const stacked = component.stacked === true
@@ -237,6 +291,7 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
   if (categories.length === 0 || series.length === 0 || all.length === 0) return emptyChart(scope, component, view.t('chartEmpty'))
 
   const toggle = (index: number): void => {
+    setHover(null)
     setHidden((previous) => {
       const next = new Set(previous)
       if (next.has(index)) next.delete(index)
@@ -300,6 +355,10 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     ),
   )
 
+  const barEvents = (series: number, category: number) => ({
+    onMouseEnter: (event: React.MouseEvent<SVGRectElement>) => setHover({ series, category, element: event.currentTarget }),
+    onMouseLeave: () => setHover(null),
+  })
   const bars: Array<ReturnType<typeof h>> = []
   categories.forEach((category, categoryIndex) => {
     const center = PAD.left + band * categoryIndex + band / 2
@@ -323,8 +382,7 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             rx: 2,
             fill: entry.color,
             opacity: hover === null || isHover ? 1 : 0.42,
-            onMouseEnter: () => setHover({ series: seriesIndex, category: categoryIndex }),
-            onMouseLeave: () => setHover(null),
+            ...barEvents(seriesIndex, categoryIndex),
             style: { transition: 'opacity .12s ease' },
           }),
         )
@@ -347,8 +405,7 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             rx: 2,
             fill: entry.color,
             opacity: hover === null || isHover ? 1 : 0.42,
-            onMouseEnter: () => setHover({ series: seriesIndex, category: categoryIndex }),
-            onMouseLeave: () => setHover(null),
+            ...barEvents(seriesIndex, categoryIndex),
             style: { transition: 'opacity .12s ease' },
           }),
         )
@@ -371,8 +428,7 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             opacity: hover === null || isHover ? 1 : 0.5,
             stroke: isHover ? 'var(--dsw-alias-label-primary)' : 'none',
             strokeWidth: isHover ? 1 : 0,
-            onMouseEnter: () => setHover({ series: seriesIndex, category: categoryIndex }),
-            onMouseLeave: () => setHover(null),
+            ...barEvents(seriesIndex, categoryIndex),
             style: { transition: 'opacity .12s ease' },
           }),
         )
@@ -403,10 +459,10 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     const value = entry?.values[hover.category]
     const label = categories[hover.category] ?? ''
     if (entry !== undefined && value !== undefined) {
-      const lines = [label, `${entry.label}: ${trim(value)}${suffix === '' ? '' : ` ${suffix}`}`]
-      const width = textWidth(lines)
-      const x = horizontal ? valueToX(value) : PAD.left + band * hover.category + band / 2
-      tooltip = tooltipLines(x, PAD.top + 2, width, 14 + lines.length * 13, lines, 'start')
+      tooltip = h(BarTooltip, {
+        bar: hover.element,
+        lines: [label, `${entry.label}: ${trim(value)}${suffix === '' ? '' : ` ${suffix}`}`],
+      })
     }
   }
 
@@ -415,16 +471,20 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     { className: 'a2ui-chart-wrap' },
     caption(scope, component),
     h(
-      'svg',
-      {
-        className: 'a2ui-chart-svg a2ui-axis',
-        viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
-        role: 'img',
-        'aria-label': axisSummary(scope, categories, series),
-        style: { maxHeight: `${height}px` },
-      },
-      grid,
-      ...bars,
+      'div',
+      { className: 'a2ui-bar-plot' },
+      h(
+        'svg',
+        {
+          className: 'a2ui-chart-svg a2ui-axis',
+          viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
+          role: 'img',
+          'aria-label': axisSummary(scope, categories, series),
+          style: { maxHeight: `${height}px` },
+        },
+        grid,
+        ...bars,
+      ),
       tooltip,
     ),
     legend({ series: allSeries, hidden, onToggle: toggle }),

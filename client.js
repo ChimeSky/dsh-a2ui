@@ -225,6 +225,8 @@ const CSS = `
 .a2ui-chart-wrap{display:flex;flex-direction:column;gap:6px;min-width:0}
 .a2ui-chart-note{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0}
 .a2ui-chart-svg{width:100%;height:auto;display:block;overflow:visible}
+.a2ui-bar-plot{position:relative;min-width:0}
+.a2ui-bar-tip{position:absolute;left:0;top:0;z-index:1;visibility:hidden;pointer-events:none;width:max-content;max-width:min(280px,calc(100% - 8px));max-height:calc(100% - 8px);overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.4}
 .a2ui-axis text{fill:var(--dsw-alias-label-secondary);font-size:10px}
 .a2ui-grid line{stroke:var(--dsw-alias-border-l1);stroke-width:1}
 .a2ui-legend{display:flex;flex-wrap:wrap;gap:4px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
@@ -4852,7 +4854,53 @@ function splitPlotSegments(points, min, max) {
         segments.push(current);
     return segments;
 }
-/** `BarChart` */
+/** Keep the HTML tooltip and the hovered SVG rectangle in the same CSS pixel space. */
+function BarTooltip({ bar, lines }) {
+    const ref = React.useRef(null);
+    React.useLayoutEffect(() => {
+        const tip = ref.current;
+        const layer = tip?.parentElement;
+        if (!tip || !layer)
+            return;
+        const update = () => {
+            const frame = layer.getBoundingClientRect();
+            const anchor = bar.getBoundingClientRect();
+            const scaleX = frame.width > 0 && layer.clientWidth > 0 ? frame.width / layer.clientWidth : 1;
+            const scaleY = frame.height > 0 && layer.clientHeight > 0 ? frame.height / layer.clientHeight : 1;
+            const box = tip.getBoundingClientRect();
+            const width = box.width / scaleX;
+            const height = box.height / scaleY;
+            const left = (anchor.left - frame.left) / scaleX;
+            const right = (anchor.right - frame.left) / scaleX;
+            const top = (anchor.top - frame.top) / scaleY;
+            const bottom = (anchor.bottom - frame.top) / scaleY;
+            const gap = 8;
+            const inset = 4;
+            const maxX = Math.max(inset, layer.clientWidth - width - inset);
+            const maxY = Math.max(inset, layer.clientHeight - height - inset);
+            let x;
+            let y = (top + bottom - height) / 2;
+            if (right + gap <= maxX)
+                x = right + gap;
+            else if (left - gap - width >= inset)
+                x = left - gap - width;
+            else {
+                x = (left + right - width) / 2;
+                y = top - gap - height >= inset ? top - gap - height : bottom + gap;
+            }
+            tip.style.left = `${Math.max(inset, Math.min(maxX, x))}px`;
+            tip.style.top = `${Math.max(inset, Math.min(maxY, y))}px`;
+            tip.style.visibility = 'visible';
+        };
+        update();
+        const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update);
+        observer?.observe(layer);
+        observer?.observe(bar);
+        observer?.observe(tip);
+        return () => observer?.disconnect();
+    }, [bar, lines[0], lines[1]]);
+    return h('div', { ref, className: 'a2ui-bar-tip', role: 'tooltip' }, ...lines.map((line, index) => h('div', { key: index }, line)));
+}
 function renderBarChart(scope, component) {
     const view = scope.view;
     const categories = Array.isArray(component.categories) ? component.categories.map((entry) => text(scope, entry)) : [];
@@ -4867,6 +4915,7 @@ function renderBarChart(scope, component) {
     if (categories.length === 0 || series.length === 0 || all.length === 0)
         return emptyChart(scope, component, view.t('chartEmpty'));
     const toggle = (index) => {
+        setHover(null);
         setHidden((previous) => {
             const next = new Set(previous);
             if (next.has(index))
@@ -4915,6 +4964,10 @@ function renderBarChart(scope, component) {
     const grid = h('g', { className: 'a2ui-grid' }, ...scale.ticks.map((tick, index) => horizontal
         ? h('g', { key: `g${index}` }, h('line', { x1: valueToX(tick), x2: valueToX(tick), y1: PAD.top, y2: PAD.top + plotHeight }), h('text', { x: valueToX(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, formatTick(tick)))
         : h('g', { key: `g${index}` }, h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: valueToY(tick), y2: valueToY(tick) }), h('text', { x: PAD.left - 6, y: valueToY(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, formatTick(tick)))));
+    const barEvents = (series, category) => ({
+        onMouseEnter: (event) => setHover({ series, category, element: event.currentTarget }),
+        onMouseLeave: () => setHover(null),
+    });
     const bars = [];
     categories.forEach((category, categoryIndex) => {
         const center = PAD.left + band * categoryIndex + band / 2;
@@ -4937,8 +4990,7 @@ function renderBarChart(scope, component) {
                     rx: 2,
                     fill: entry.color,
                     opacity: hover === null || isHover ? 1 : 0.42,
-                    onMouseEnter: () => setHover({ series: seriesIndex, category: categoryIndex }),
-                    onMouseLeave: () => setHover(null),
+                    ...barEvents(seriesIndex, categoryIndex),
                     style: { transition: 'opacity .12s ease' },
                 }));
                 if (value >= 0)
@@ -4962,8 +5014,7 @@ function renderBarChart(scope, component) {
                     rx: 2,
                     fill: entry.color,
                     opacity: hover === null || isHover ? 1 : 0.42,
-                    onMouseEnter: () => setHover({ series: seriesIndex, category: categoryIndex }),
-                    onMouseLeave: () => setHover(null),
+                    ...barEvents(seriesIndex, categoryIndex),
                     style: { transition: 'opacity .12s ease' },
                 }));
             });
@@ -4985,8 +5036,7 @@ function renderBarChart(scope, component) {
                     opacity: hover === null || isHover ? 1 : 0.5,
                     stroke: isHover ? 'var(--dsw-alias-label-primary)' : 'none',
                     strokeWidth: isHover ? 1 : 0,
-                    onMouseEnter: () => setHover({ series: seriesIndex, category: categoryIndex }),
-                    onMouseLeave: () => setHover(null),
+                    ...barEvents(seriesIndex, categoryIndex),
                     style: { transition: 'opacity .12s ease' },
                 }));
             });
@@ -5009,19 +5059,19 @@ function renderBarChart(scope, component) {
         const value = entry?.values[hover.category];
         const label = categories[hover.category] ?? '';
         if (entry !== undefined && value !== undefined) {
-            const lines = [label, `${entry.label}: ${trim(value)}${suffix === '' ? '' : ` ${suffix}`}`];
-            const width = textWidth(lines);
-            const x = horizontal ? valueToX(value) : PAD.left + band * hover.category + band / 2;
-            tooltip = tooltipLines(x, PAD.top + 2, width, 14 + lines.length * 13, lines, 'start');
+            tooltip = h(BarTooltip, {
+                bar: hover.element,
+                lines: [label, `${entry.label}: ${trim(value)}${suffix === '' ? '' : ` ${suffix}`}`],
+            });
         }
     }
-    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('svg', {
+    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('div', { className: 'a2ui-bar-plot' }, h('svg', {
         className: 'a2ui-chart-svg a2ui-axis',
         viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
         role: 'img',
         'aria-label': axisSummary(scope, categories, series),
         style: { maxHeight: `${height}px` },
-    }, grid, ...bars, tooltip), legend({ series: allSeries, hidden, onToggle: toggle }), suffix === '' ? null : h('p', { className: 'a2ui-caption' }, `(${suffix})`));
+    }, grid, ...bars), tooltip), legend({ series: allSeries, hidden, onToggle: toggle }), suffix === '' ? null : h('p', { className: 'a2ui-caption' }, `(${suffix})`));
 }
 /** `LineChart` */
 function renderLineChart(scope, component) {

@@ -25,7 +25,7 @@
 
 ---
 
-## 二、当前状态（v0.2.0）
+## 二、当前状态（v0.2.1）
 
 > 本版为**正确性与安全**版本：对齐 A2UI 1.0 规范（官方 43 个 catalog 样例全部通过）、构建不再删除任何文件、正则改为有界求值。完整条目见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -43,7 +43,7 @@
 | 明暗主题、响应式、键盘可达、ARIA 标签 | 已实现（样式走 `--dsw-alias-*` 主题变量） |
 | 逐字流式渲染（边生成边画） | 部分：工具调用进入 `start` 阶段即渲染，之后可再次调用工具增量更新；不做逐字符解析 |
 | 跨工具调用「原地替换已有卡片」 | 未实现（见[已知限制](#十已知限制)） |
-| `callRendererFunction` / `agentFunctionResponse` 消息 | 未支持（0.2.0 明确拒绝，报错文案说明原因） |
+| `callRendererFunction` / `agentFunctionResponse` 消息 | 未支持（0.2.1 明确拒绝，报错文案说明原因） |
 | PTC（Code mode）下的 `run_code` 子调用渲染 | 部分：会渲染为子调用行，样式未专门优化 |
 
 ---
@@ -54,11 +54,11 @@
 
 ### 方式 A：从 GitHub 安装（推荐）
 
-在 DSH 中执行 `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.0`。`#v0.2.0` 把安装固定到发布标签，`desktop` 按目标 profile 替换（Web 端通常为 `web`）。
+在 DSH 中执行 `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.1`。`#v0.2.1` 把安装固定到发布标签，`desktop` 按目标 profile 替换（Web 端通常为 `web`）。
 
 ### 方式 B：用冻结的 tarball 安装
 
-`vendor/dsh-a2ui-0.2.0.tgz` 与发布测试过的字节一致：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.2.0.tgz`。也可以运行 `tools/install.ps1`，它负责安装、卸载与安装副本校验。
+`vendor/dsh-a2ui-0.2.1.tgz` 与发布测试过的字节一致：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.2.1.tgz`。也可以运行 `tools/install.ps1`，它负责安装、卸载与安装副本校验。
 
 ### 方式 C：在 DSH 插件管理器中安装
 

@@ -25,7 +25,7 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 ---
 
-## Status (v0.2.0)
+## Status (v0.2.1)
 
 > This is the correctness and safety release: A2UI 1.0 alignment (all 43 official catalog examples pass), a build that never deletes a file, and a bounded regex evaluator. See [CHANGELOG.md](CHANGELOG.md) for the itemised list.
 
@@ -52,9 +52,9 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 The plugin ships as a **bundle** (`dsh.bundle` + `dsh.client`): the repository root is the installable package, providing both the Host and browser halves. Build artifacts are committed, so installing does not compile anything.
 
-**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.0`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
+**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.1`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
 
-**B — frozen tarball.** `vendor/dsh-a2ui-0.2.0.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.2.0.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
+**B — frozen tarball.** `vendor/dsh-a2ui-0.2.1.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.2.1.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
 
 **C — DSH plugin manager.** Run `plugin_manager action=install_bundle target=<absolute path or tarball>`. The bundle is written to the active profile (Desktop uses `desktop`) and appears in Settings → Plugins. New bundles activate through HMR; replacing an already-installed package requires a restart to load a fresh JavaScript module generation.
 

@@ -277,6 +277,50 @@ function keyboard(element, key) {
   })
 }
 
+for (const [mode, options, anchor, expectedLeft, expectedTop] of [
+  ['grouped', {}, { left: 60, top: 118, width: 20, height: 66 }, 88, 131],
+  ['stacked', { stacked: true }, { left: 260, top: 104, width: 24, height: 12 }, 148, 90],
+  ['horizontal', { horizontal: true }, { left: 50, top: 163, width: 52, height: 14 }, 110, 150],
+]) {
+  test(`the ${mode} bar tooltip follows the hovered rectangle and stays within the plot`, () => {
+    const category = '末行分类'
+    const label = '中文数据系列说明，包含足够长的文字'
+    const messages = [{ version: '1.0', createSurface: { surfaceId: 'bar', components: [
+      { id: 'root', component: 'BarChart', categories: ['首行', category], series: [
+        { label: 'Series 1', values: [100, 64] },
+        { label, values: [40, 24] },
+      ], valueSuffix: '万元', ...options },
+    ] } }]
+    const { container, unmount } = mount(React.createElement(View, viewProps({ block: surfaceBlock(messages) })))
+    const plot = query(container, '.a2ui-bar-plot')
+    const bar = plot.querySelectorAll('rect').item(3)
+    const measure = (left, top, width, height) => ({
+      left: 150 + left * 2, top: 80 + top * 2, right: 150 + (left + width) * 2, bottom: 80 + (top + height) * 2,
+      width: width * 2, height: height * 2,
+    })
+    Object.defineProperties(plot, { clientWidth: { value: 300 }, clientHeight: { value: 200 } })
+    plot.getBoundingClientRect = () => measure(0, 0, 300, 200)
+    bar.getBoundingClientRect = () => measure(anchor.left, anchor.top, anchor.width, anchor.height)
+    const prototype = window.HTMLElement.prototype
+    const original = prototype.getBoundingClientRect
+    prototype.getBoundingClientRect = function () {
+      return this.matches('.a2ui-bar-tip') ? measure(0, 0, 104, 40) : original.call(this)
+    }
+    try {
+      act(() => bar.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
+      const tip = query(plot, '[role=tooltip]')
+      assert.deepEqual([...tip.children].map((line) => line.textContent), [category, `${label}: 24 万元`])
+      assert.equal(tip.style.left, `${expectedLeft}px`)
+      assert.equal(tip.style.top, `${expectedTop}px`)
+      act(() => bar.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true })))
+      assert.equal(plot.querySelector('[role=tooltip]'), null)
+    } finally {
+      prototype.getBoundingClientRect = original
+      unmount()
+    }
+  })
+}
+
 test('arrow keys move the selected tab and keep focus in the tab strip', () => {
   const messages = [
     {
