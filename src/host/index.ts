@@ -85,14 +85,14 @@ function summarizeValue(value: ToolResultValue): string {
   return parts.join('\n')
 }
 
-function buildTool(toolName: string, proactive: boolean): ToolDefinitionLike {
+function buildTool(toolName: string, proactive: boolean, catalogTool = true): ToolDefinitionLike {
   const parameters = {
     type: 'object',
     properties: {
       messages: {
         type: 'array',
         description:
-          'A2UI 1.0 messages, applied in order. Each message is `{"version":"1.0","createSurface"|"updateComponents"|"updateDataModel"|"deleteSurface":{...}}`. Call a2ui_catalog for the component reference.',
+          'A2UI 1.0 messages, applied in order. Each message is `{"version":"1.0","createSurface"|"updateComponents"|"updateDataModel"|"deleteSurface":{...}}`.' + (catalogTool ? ' Call a2ui_catalog for the component reference.' : ''),
         items: { type: 'object' },
       },
       title: {
@@ -239,7 +239,8 @@ function sectionText(toolName: string, catalogTool: boolean, proactive: boolean)
         'Rules:',
         '- The component graph root id MUST be "root"; components are flat and reference each other by id.',
         '- Bind interactive `value` properties to the data model (`{"@path":"/form/name"}`) and repeat those paths in the action `context`.',
-        `- One message per coherent change; to update a surface, call \`${toolName}\` again with \`updateComponents\`/\`updateDataModel\` for the same surfaceId.`,
+        `- Each call renders its own card from that call's messages. To show a changed interface, send a complete surface (\`createSurface\` with its components and dataModel); \`updateComponents\`/\`updateDataModel\` alone render as an "updated" note, because an earlier card is a separate snapshot.`,
+        '- Keep one surface small: at most a few hundred declared components, a few thousand rendered nodes (templates multiply), and a few thousand table rows plus chart points. Larger payloads are rejected before rendering.',
         catalogTool ? `- Call \`${CATALOG_TOOL_NAME}\` for exact component or property names.` : '',
       ]
     : [
@@ -253,7 +254,8 @@ function sectionText(toolName: string, catalogTool: boolean, proactive: boolean)
         'Rules that keep it working:',
         '- The component graph root id MUST be "root". Components are declared flat and reference each other by id.',
         '- Bind interactive `value` properties to the data model (`{"@path":"/form/name"}`) so edits stay local; put the same paths in the action `context` so the submit button carries the values.',
-        `- Send one message per coherent change. To update an existing surface, call \`${toolName}\` again with \`updateComponents\`/\`updateDataModel\` for the same surfaceId instead of recreating it.`,
+        `- Each call renders its own card from that call's messages. To show a changed interface, send a complete surface (\`createSurface\` with its components and dataModel); \`updateComponents\`/\`updateDataModel\` alone render as an "updated" note, because an earlier card is a separate snapshot.`,
+        '- Keep one surface small: at most a few hundred declared components, a few thousand rendered nodes (templates multiply), and a few thousand table rows plus chart points. Larger payloads are rejected before rendering.',
         catalogTool ? `- Call \`${CATALOG_TOOL_NAME}\` when you need exact component or property names.` : '',
       ]
 
@@ -284,7 +286,7 @@ export function apply(ctx: any, config: PluginConfig = {}): void {
   const sectionOrder = Number.isFinite(config.sectionOrder) ? Number(config.sectionOrder) : DEFAULT_SECTION_ORDER
   const proactive = config.autoRender !== false
 
-  ctx.effect(() => ctx.tools.register(buildTool(toolName, proactive)), 'dsh-a2ui: tool')
+  ctx.effect(() => ctx.tools.register(buildTool(toolName, proactive, catalogTool)), 'dsh-a2ui: tool')
   if (catalogTool) {
     ctx.effect(() => ctx.tools.register(buildCatalogTool()), 'dsh-a2ui: catalog tool')
   }

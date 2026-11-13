@@ -29,6 +29,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+
+# Resolve the home once, to an absolute path, so the manifest lookup, the child
+# process environment and the verification all address the same location even
+# when the caller passes a relative path or the inherited DSH_HOME differs.
+if (-not [System.IO.Path]::IsPathRooted($DshHome)) {
+  $DshHome = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $DshHome))
+}
+$DshHome = [System.IO.Path]::GetFullPath($DshHome)
 $profileDir = Join-Path (Join-Path $DshHome 'profiles') $Profile
 $manifestPath = Join-Path $profileDir 'package.json'
 
@@ -60,6 +68,31 @@ function Invoke-Verify {
   if ($LASTEXITCODE -ne 0) { throw 'Install verification failed.' }
 }
 
+function Invoke-DshPlugin {
+  <#
+    Run `dsh plugin` against the resolved DSH home.
+
+    The child process must use the path this script was given, not whatever
+    DSH_HOME it inherited, so the variable is set for the call and restored in a
+    finally block even when the command fails.
+  #>
+  param([string[]]$PluginArguments)
+  $previous = $env:DSH_HOME
+  try {
+    $env:DSH_HOME = $DshHome
+    & $dsh plugin --profile $Profile @PluginArguments
+    if ($LASTEXITCODE -ne 0) {
+      throw "dsh plugin $($PluginArguments -join ' ') failed with exit $LASTEXITCODE"
+    }
+  } finally {
+    if ($null -eq $previous) {
+      Remove-Item Env:DSH_HOME -ErrorAction SilentlyContinue
+    } else {
+      $env:DSH_HOME = $previous
+    }
+  }
+}
+
 if (-not (Test-Path -LiteralPath $manifestPath)) {
   throw "Profile manifest not found: $manifestPath. Launch DSH once to initialize this profile."
 }
@@ -77,8 +110,7 @@ if ($running) {
 
 if ($Uninstall) {
   Write-Host "Removing dsh-a2ui from profile '$Profile'..."
-  & $dsh plugin --profile $Profile remove dsh-a2ui
-  if ($LASTEXITCODE -ne 0) { throw "dsh plugin remove failed with exit $LASTEXITCODE" }
+  Invoke-DshPlugin -PluginArguments @('remove', 'dsh-a2ui')
 
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
   $bundles = @($manifest.dsh.profile.bundles | Where-Object { $_ -ne 'dsh-a2ui' })
@@ -102,8 +134,7 @@ Write-Host "DSH home : $DshHome"
 Write-Host "Profile  : $Profile"
 Write-Host "Tarball  : $Tarball"
 Write-Host "Installing..."
-& $dsh plugin --profile $Profile add $Tarball
-if ($LASTEXITCODE -ne 0) { throw "dsh plugin add failed with exit $LASTEXITCODE" }
+Invoke-DshPlugin -PluginArguments @('add', $Tarball)
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if (-not ($manifest.dsh.profile.bundles -contains 'dsh-a2ui')) {

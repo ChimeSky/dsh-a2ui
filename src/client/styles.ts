@@ -81,10 +81,12 @@ export const CSS = `
 .a2ui-caption{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin:0}
 .a2ui-chart{display:block;width:100%;overflow:visible}
 .a2ui-chart-wrap{display:flex;flex-direction:column;gap:6px;min-width:0}
+.a2ui-chart-note{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0}
 .a2ui-chart-svg{width:100%;height:auto;display:block;overflow:visible}
 .a2ui-axis text{fill:var(--dsw-alias-label-secondary);font-size:10px}
 .a2ui-grid line{stroke:var(--dsw-alias-border-l1);stroke-width:1}
 .a2ui-legend{display:flex;flex-wrap:wrap;gap:4px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.a2ui-legend-more{align-self:center;padding:0 2px;opacity:.7}
 .a2ui-legend-item{appearance:none;font:inherit;font-size:11.5px;color:inherit;background:none;border:0;border-radius:6px;padding:2px 6px;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
 .a2ui-legend-item:hover{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
 .a2ui-legend-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}

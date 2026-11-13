@@ -5,7 +5,7 @@
  * Why not esbuild: it talks to a native service over pipes, which the DSH file
  * sandbox refuses to create (`spawn EPERM`). Everything here runs in-process:
  *
- *   1. `typescript` compiles `src/**` to ESM in `build/esm`.
+ *   1. `typescript` compiles `src/**` to ESM in memory.
  *   2. The Host half is shipped as ordinary ESM files (`lib/**`), so
  *      Node resolves its imports natively.
  *   3. The browser half is linked into ONE file (`client.js`) by a
@@ -17,7 +17,7 @@
  * output does not expose `apply`/`inject`.
  */
 import ts from 'typescript'
-import { mkdir, readdir, readFile, rm, writeFile, copyFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -27,6 +27,40 @@ const BUILD = path.join(ROOT, 'build')
 const ESM = path.join(BUILD, 'esm')
 const PKG = ROOT
 const CLIENT_ID = 'dsh-a2ui'
+
+/* ------------------------------------------------------------------ */
+/* No deletion, ever                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Report generated files that belong to no current module instead of removing
+ * them.
+ *
+ * This build never deletes anything: the compiler emits into memory, so there is
+ * no intermediate directory to clean, and `lib/` is only ever written to. When a
+ * source module disappears, its stale `lib/` copy is named here so a human can
+ * remove that exact file if they want to; silently wiping a directory (even one
+ * file at a time in a loop) is not this script's decision to make.
+ *
+ * @param folder `lib` subfolder to inspect.
+ * @param expected relative ids this build produced for that folder.
+ */
+async function reportStale(folder, expected) {
+  const dir = path.join(PKG, 'lib', folder)
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  const wanted = new Set(expected.map((id) => id.split('/').pop()))
+  const stale = entries.filter((entry) => entry.isFile() && !wanted.has(entry.name)).map((entry) => path.join(dir, entry.name))
+  if (stale.length > 0) {
+    console.warn(`\nnote: ${stale.length} file(s) under lib/${folder} are not part of this build:`)
+    for (const file of stale) console.warn(`  ${file}`)
+    console.warn('  (left untouched; remove a specific file yourself if it is no longer wanted)')
+  }
+}
 
 const COMPILER_OPTIONS = {
   target: ts.ScriptTarget.ES2022,
@@ -60,12 +94,24 @@ function collectSources(dir) {
   })
 }
 
+/**
+ * Compile `src/**` entirely in memory.
+ *
+ * Nothing is written to disk here, which is why the build has no cleanup step at
+ * all: the emitted module map *is* this build's manifest, and every later step
+ * (client link, test harness, `lib/` copy) reads from it. A leftover file on disk
+ * therefore cannot leak into the output.
+ *
+ * @returns source file list and `Map<relativeId, emittedJs>`.
+ */
 async function compile() {
-  await rm(BUILD, { recursive: true, force: true })
-  await mkdir(ESM, { recursive: true })
   const files = await collectSources(SRC)
   const program = ts.createProgram(files, COMPILER_OPTIONS)
-  const result = program.emit()
+  const outputs = new Map()
+  const result = program.emit(undefined, (fileName, text) => {
+    const id = path.relative(ESM, fileName).split(path.sep).join('/')
+    if (!id.startsWith('..')) outputs.set(id, text)
+  })
   const diagnostics = [...ts.getPreEmitDiagnostics(program), ...result.diagnostics]
   const errors = diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
   if (errors.length > 0) {
@@ -76,18 +122,16 @@ async function compile() {
     }
     throw new Error(`TypeScript emitted ${errors.length} error(s):\n${ts.formatDiagnostics(errors, host)}`)
   }
-  return files
+  return { files, outputs }
 }
 
-async function listEmitted(dir, prefix = '') {
-  const out = []
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name)
-    const id = prefix === '' ? entry.name : `${prefix}/${entry.name}`
-    if (entry.isDirectory()) out.push(...(await listEmitted(full, id)))
-    else if (entry.name.endsWith('.js')) out.push(id)
-  }
-  return out
+/**
+ * Module ids this build produced under one folder, in a stable order.
+ * @param outputs the in-memory emit map.
+ * @param prefix `host`, `shared` or `client`.
+ */
+function listOutputs(outputs, prefix) {
+  return [...outputs.keys()].filter((id) => id.startsWith(`${prefix}/`) && id.endsWith('.js')).sort()
 }
 
 /* ------------------------------------------------------------------ */
@@ -97,6 +141,7 @@ async function listEmitted(dir, prefix = '') {
 const IMPORT_FROM = /^import\s+([^;]*?)\s+from\s+(['"])([^'"]+)\2;?[ \t]*$/gm
 const IMPORT_SIDE_EFFECT = /^import\s+(['"])([^'"]+)\1;?[ \t]*$/gm
 const EXPORT_STAR = /^export\s+\*\s+from\s+(['"])([^'"]+)\1;?[ \t]*$/gm
+const EXPORT_FROM_LIST = /^export\s*\{([^}]*)\}\s+from\s+(['"])([^'"]+)\2;?[ \t]*$/gm
 const EXPORT_DECL = /^export\s+(const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm
 const EXPORT_LIST = /^export\s*\{([^}]*)\};?[ \t]*$/gm
 
@@ -140,6 +185,21 @@ function linkModule(id, source) {
   body = body.replace(EXPORT_STAR, (_match, _quote, specifier) =>
     `Object.assign(exports, require(${JSON.stringify(resolveSpecifier(id, specifier))}));`,
   )
+  // `export { a, b as c } from './x.js'`
+  body = body.replace(EXPORT_FROM_LIST, (_match, inner, _quote, specifier) => {
+    const target = JSON.stringify(resolveSpecifier(id, specifier))
+    const statements = inner
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const alias = entry.split(/\s+as\s+/u)
+        const local = alias[0].trim()
+        const exported = (alias[1] ?? alias[0]).trim()
+        return `exports[${JSON.stringify(exported)}] = __reexport[${JSON.stringify(local)}];`
+      })
+    return `{ const __reexport = require(${target}); ${statements.join(' ')} }`
+  })
   body = body.replace(EXPORT_DECL, (_match, kind, name) => {
     exported.add(name)
     return `${kind} ${name}`
@@ -172,12 +232,12 @@ function linkModule(id, source) {
   return `${body}\n${tail.join('\n')}`
 }
 
-async function buildClient() {
-  const ids = [...(await listEmitted(path.join(ESM, 'shared'), 'shared')), ...(await listEmitted(path.join(ESM, 'client'), 'client'))]
+async function buildClient(outputs) {
+  const ids = [...listOutputs(outputs, 'shared'), ...listOutputs(outputs, 'client')]
   const modules = new Map()
   const dependencies = new Map()
   for (const id of ids) {
-    const source = await readFile(path.join(ESM, ...id.split('/')), 'utf8')
+    const source = outputs.get(id)
     modules.set(`./${id}`, linkModule(`./${id}`, source))
     const specs = new Set()
     for (const match of source.matchAll(/^\s*import\s+(?:[^;]*?\s+from\s+)?(['"])([^'"]+)\1/gmu)) {
@@ -231,22 +291,18 @@ async function buildClient() {
   chunks.push(`    return __load("./client/index.js");`)
   chunks.push(`  },`)
   chunks.push(`});`)
-  const output = `/* dsh-a2ui — generated by tools/build.mjs. Do not edit. */\n${chunks.join('\n')}\n`
+  // Strip trailing spaces: the emit can leave them at line ends, and the
+  // generated bundle is committed, so `git diff --check` must stay clean.
+  const output = `/* dsh-a2ui — generated by tools/build.mjs. Do not edit. */\n${chunks.join('\n').replace(/[ \t]+$/gmu, '')}\n`
   await writeFile(path.join(PKG, 'client.js'), output, 'utf8')
   return output.length
 }
 
-async function buildHost(files) {
-  for (const folder of ['host', 'shared']) {
-    await rm(path.join(PKG, 'lib', folder), { recursive: true, force: true })
-    await mkdir(path.join(PKG, 'lib', folder), { recursive: true })
-  }
-  for (const id of await listEmitted(path.join(ESM, 'host'), 'host')) {
-    await copyEmitted(id)
-  }
-  for (const id of await listEmitted(path.join(ESM, 'shared'), 'shared')) {
-    await copyEmitted(id)
-  }
+async function buildHost(outputs) {
+  const ids = [...listOutputs(outputs, 'host'), ...listOutputs(outputs, 'shared')]
+  for (const id of ids) await writeEmitted(outputs, id)
+  await reportStale('host', listOutputs(outputs, 'host'))
+  await reportStale('shared', listOutputs(outputs, 'shared'))
   await writeFile(
     path.join(PKG, 'index.js'),
     `/* dsh-a2ui — generated by tools/build.mjs. Do not edit. */
@@ -254,43 +310,51 @@ export { apply, inject, name } from './lib/host/index.js'
 `,
     'utf8',
   )
-  return files.length
+  return ids.length
 }
 
-async function copyEmitted(id) {
-  const source = path.join(ESM, ...id.split('/'))
+/**
+ * Write one emitted module to its runtime path (`lib/<id>`), creating only the
+ * directories that are missing.
+ */
+async function writeEmitted(outputs, id) {
+  const source = outputs.get(id)
   const target = path.join(PKG, 'lib', ...id.split('/'))
   await mkdir(path.dirname(target), { recursive: true })
-  await copyFile(source, target)
+  await writeFile(target, source, 'utf8')
 }
 
-async function buildSharedForTests() {
+async function buildSharedForTests(outputs) {
   const target = path.join(BUILD, 'shared.mjs')
-  const ids = await listEmitted(path.join(ESM, 'shared'), 'shared')
+  await mkdir(BUILD, { recursive: true })
+  const ids = [...listOutputs(outputs, 'shared'), ...listOutputs(outputs, 'client')]
   const modules = new Map()
-  for (const id of ids) modules.set(`./${id}`, linkModule(`./${id}`, await readFile(path.join(ESM, ...id.split('/')), 'utf8')))
+  for (const id of ids) modules.set(`./${id}`, linkModule(`./${id}`, outputs.get(id)))
   const chunks = [
     `/* dsh-a2ui — generated by tools/build.mjs. Do not edit. */`,
+    `import * as React from 'react';`,
     `var __cache = {}; var __registry = {};`,
     `function __load(id) { var hit = __cache[id]; if (hit !== undefined) return hit.exports; var f = __registry[id]; if (f === undefined) throw new Error("unknown module " + id); var m = { exports: {} }; __cache[id] = m; f(m, m.exports, __require); return m.exports; }`,
-    `function __require(specifier) { return __load(specifier); }`,
+    `function __require(specifier) { return specifier === "react" ? React : __load(specifier); }`,
   ]
   for (const [id, source] of modules) chunks.push(`__registry[${JSON.stringify(id)}] = function(module, exports, require) {\n${source}\n};`)
   chunks.push(`export const shared = __load("./shared/index.js");`)
+  chunks.push(`export const client = Object.fromEntries(["action", "charts", "claims", "datetime", "surfaces"].map(name => [name, __load("./client/" + name + ".js")]));`)
   await writeFile(target, `${chunks.join('\n')}\n`, 'utf8')
 }
 
 async function main() {
   const started = Date.now()
-  const files = await compile()
-  const clientBytes = await buildClient()
-  await buildHost(files)
-  await buildSharedForTests()
+  const { files, outputs } = await compile()
+  const clientBytes = await buildClient(outputs)
+  const hostFiles = await buildHost(outputs)
+  await buildSharedForTests(outputs)
   console.log(`built ${files.length} TypeScript modules in ${Date.now() - started} ms`)
   console.log(`  index.js  (host ESM entry)`)
-  console.log(`  lib/**    (host + shared modules)`)
+  console.log(`  lib/**    (${hostFiles} generated modules written in place)`)
   console.log(`  client.js (${Math.round(clientBytes / 1024)} KiB browser bundle)`)
   console.log(`  build/shared.mjs  (test harness)`)
+  console.log('  no files were deleted: this build only writes, and reports stale lib/ files by name')
 }
 
 await main()

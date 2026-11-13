@@ -25,7 +25,9 @@
 
 ---
 
-## 二、当前状态（v0.1.0）
+## 二、当前状态（v0.2.0）
+
+> 本版为**正确性与安全**版本：对齐 A2UI 1.0 规范（官方 43 个 catalog 样例全部通过）、构建不再删除任何文件、正则改为有界求值。完整条目见 [CHANGELOG.md](CHANGELOG.md)。
 
 | 能力 | 状态 |
 |---|---|
@@ -41,7 +43,7 @@
 | 明暗主题、响应式、键盘可达、ARIA 标签 | 已实现（样式走 `--dsw-alias-*` 主题变量） |
 | 逐字流式渲染（边生成边画） | 部分：工具调用进入 `start` 阶段即渲染，之后可再次调用工具增量更新；不做逐字符解析 |
 | 跨工具调用「原地替换已有卡片」 | 未实现（见[已知限制](#十已知限制)） |
-| `callRendererFunction` / `agentFunctionResponse` 消息 | 未支持（v0.1.0 明确拒绝，报错文案说明原因） |
+| `callRendererFunction` / `agentFunctionResponse` 消息 | 未支持（0.2.0 明确拒绝，报错文案说明原因） |
 | PTC（Code mode）下的 `run_code` 子调用渲染 | 部分：会渲染为子调用行，样式未专门优化 |
 
 ---
@@ -52,11 +54,11 @@
 
 ### 方式 A：从 GitHub 安装（推荐）
 
-在 DSH 中执行 `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.1.0`。`#v0.1.0` 把安装固定到发布标签，`desktop` 按目标 profile 替换（Web 端通常为 `web`）。
+在 DSH 中执行 `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.0`。`#v0.2.0` 把安装固定到发布标签，`desktop` 按目标 profile 替换（Web 端通常为 `web`）。
 
 ### 方式 B：用冻结的 tarball 安装
 
-`vendor/dsh-a2ui-0.1.0.tgz` 与发布测试过的字节一致：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.1.0.tgz`。也可以运行 `tools/install.ps1`，它负责安装、卸载与安装副本校验。
+`vendor/dsh-a2ui-0.2.0.tgz` 与发布测试过的字节一致：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.2.0.tgz`。也可以运行 `tools/install.ps1`，它负责安装、卸载与安装副本校验。
 
 ### 方式 C：在 DSH 插件管理器中安装
 
@@ -117,7 +119,7 @@
 | `catalogTool` | `true` | 是否注册 `a2ui_catalog` 参考工具 |
 | `sectionOrder` | `120` | 提示词段在 system prompt 中的顺序 |
 | `muteSection` | `false` | 完全关闭提示词段（只保留工具） |
-| `toolName` | `a2ui` | **不建议改**：客户端槽位按该名字注册视图 |
+| `toolName` | `a2ui` | **不建议改**：客户端的内联工具行按该名字注册视图；改名后卡片仍会渲染在轮末（按 `meta.kind === "a2ui"` 匹配），但过程行会退化为通用工具行 |
 
 ### 示例
 
@@ -233,6 +235,10 @@ conversation.send("[A2UI action] …")  →  当前会话 → Agent
 | 恶意 URL | `safeMediaUrl` 只放行 `http(s)`（图片另加 `data:image/*;base64`）；`javascript:`、`file:`、`data:text/html` 全部拒绝；`openUrl` 需要用户手势 |
 | 未知组件 / 属性 | 校验阶段拒绝并给出路径；渲染阶段再降级为可读占位符，不抛异常（渲染器抛错会整块空白） |
 | 超大 / 深层 / 环状图 | 消息数 32、单条组件 300、单表面 400、深度 64、字符串 16K、序列点数 500、帧数 400、载荷 384K；环检测 + 重复 ID 检测 |
+| 展开后过大的界面 | 渲染前估算**实际展开节点数**（模板按数据长度相乘）与数据单元（表格行 + 图表点 + 动画帧项 + Plot 散点）：单表面 > 4000 节点或 > 5000 数据单元、或一次调用跨表面合计 > 6000 节点 / > 6000 数据单元，直接拒绝；Host 与客户端用同一估算器 |
+| 灾难性正则 | `regex` 按官方 §regex-safety-check 的四条规则静态检查（>256 码点、有界量词套无界量词、无界量词套同首字符分支、相邻无界量词字符集重叠），并拒绝反向引用 / 后向断言 / 命名组 / `\p{...}` / `\cX` / 内联旗标；输入上限 4096 码点；字面量在**校验期**报错，动态求值在**执行期**拒绝 |
+| 深层 JSON | `isJsonValue` 为迭代实现并限制 128 层，序列化前先判定；11,000 层数组被拒绝而不是栈溢出 |
+| 恶意 JSON Pointer | 路径长度 ≤ 1024、段数 ≤ 64、数组下标 ≤ 10000，禁止 `__proto__` / `prototype` / `constructor`，拒绝稀疏写入（越界下标不会创建空洞数组），支持 `-` 追加；被拒绝的写入会在 `updateDataModel.path` 上报关，不再谎报成功 |
 | 越权操作 | 界面只能通过普通用户消息请求后续动作；文件、命令、网络等副作用仍由 Agent 走原有工具与审批 |
 | 插件隔离 | 所有注册都通过 `ctx.effect` 归位；停用即移除视图 / 样式 / 词典 / 工具 / 提示词段 |
 
@@ -268,34 +274,43 @@ conversation.send("[A2UI action] …")  →  当前会话 → Agent
    - **过程行**：`tool.call.toolview`，用于工具进行中的内联渲染，以及轮末被卸载时的兜底。
 
    两者通过**副本认领（claims）**协调：轮末副本挂载时认领该调用，过程行退化为一行指针；轮末副本一旦卸载（翻页、新一轮、轮次中止等任何原因），认领立即释放，过程行**自动恢复完整卡片**。因此界面不会因为轮次生命周期而丢失——最坏情况是退回到可展开的过程区，而不是消失。
-2. **跨调用更新表现为新卡片**。A2UI 允许 `updateComponents` 修改既有 surface；本插件按「一条工具调用 = 一张自包含卡片」渲染，所以第二次调用更新同一 surface 时会追加一张新卡片，而不是原地替换旧卡片（旧卡片会显示「仅更新了界面数据」提示）。**同一次调用内**的 `updateComponents` / `updateDataModel` 是完全支持的。
+2. **每张卡片只包含本次调用的消息**。一次工具调用 = 一张自包含卡片：渲染器只折叠这条调用自身的消息，因此同一次调用内的 `createSurface → updateComponents → updateDataModel` 会正确累积（含删除后重建），但**跨调用**的 `updateComponents` / `updateDataModel` / `deleteSurface` 不会修改上一轮已经渲染的卡片——它只会渲染成一条「界面已更新」提示，而不是原地替换。
+   - 想让读者看到**变更后的界面**，请发送**完整的** `createSurface`（组件 + `dataModel` 一起给出），参见[示例 1](#示例-1交互卡片)；
+   - 想移除旧卡片，请在**同一次调用**内 `deleteSurface` 后重建；
+   - 真正的跨调用实时 Surface 生命周期需要 DSH 会话投影改造，属于独立议题，当前保持上述快照契约（该行为有 8 条回归测试锁定）。
 3. **不做逐字符流式解析**。工具进入 `start` 阶段（参数收完）即渲染；`preparing` 阶段显示骨架。模型可以在同一轮里连续调用工具实现「先框架、后数据」的增量效果。
 4. **`callRendererFunction` / `agentFunctionResponse` 未支持**。它们属于 A2UI 1.0 的双向函数调用，但需要 Agent 侧在两次工具调用之间回包，当前工具模型不提供该通道；发送这些消息会得到明确错误。
 5. **PTC / Code mode**：`run_code` 内的子调用会被渲染为嵌套子行，未针对该形态做专门样式。
 6. **图片 / 视频 / 音频依赖网络**（除 `data:` 图片外），离线环境下会显示加载失败占位。
 7. **模板子项内的相对绑定不可写**：编辑需要绝对路径（`/...`），否则控件保持只读语义。
+8. **`regex` 的匹配步数上限**：安全子集内的模式由有界求值器执行，单次匹配上限 100,000 步。命中上限时返回 `valid: false` 并附 `pattern exceeded the match work limit` 说明——极端长的**不匹配**输入可能因此被判为不合法（常见形状不受影响：贪心优先的求值顺序让正常输入无需回溯穷举）。需要更宽松的语义时，可配合输入上限（4096 码点）调高该常量。
 
 ---
 
 ## 十二、开发
 
 ```bash
-npm install --ignore-scripts     # 仅 typescript/@types（esbuild 的 postinstall 在受限沙箱会 EPERM）
+npm install --ignore-scripts     # typescript/@types + react/react-dom/jsdom（只用于测试与渲染校验）
 npm run typecheck                # tsc --noEmit
 npm run build                    # tsc + 模块链接器 → index.js, lib/**, client.js（写回仓库根目录）
-npm test                         # 全部用例（node:test，进程内运行）
+npm test                         # 全部用例（node:test，进程内运行；含 jsdom DOM 用例）
 npm run verify                   # 安装前的 bundle 不变量检查
+npm run render                   # 真实 React 渲染校验（仓库内 fixture，不联网）
 npm run pack:vendor              # 重新生成 vendor/dsh-a2ui-<version>.tgz
 npm run all                      # 以上全部
 ```
 
+> **构建不会删除任何文件。** 编译器只在内存中 emit，链接与 `lib/**` 写回都由本次 emit 清单驱动；若 `lib/` 里残留了不再属于任何模块的文件，构建会**列出它们的完整路径**而不是替你删除——需要清理时请自己对明确的单个文件执行 `Remove-Item "路径"`。
+>
 > 构建不使用 esbuild：受限沙箱禁止其原生服务所需的管道（`spawn EPERM`）。`tools/build.mjs` 用 TypeScript 编译器 API 在进程内编译，再用约 120 行的模块注册链接器把浏览器半边合成单文件，并包进 `__ModuleLoader__.load({ id, factory })`。`npm test` 也用 `tools/run-tests.mjs` 在单进程内加载测试，避免 `node --test` 为每个文件 spawn 子进程。`index.js`、`lib/**`、`client.js` 是构建产物，随仓库提交，便于 `dsh plugin add github:` 直接安装；改源码后重新执行 `npm run build` 再提交。
+>
+> 官方 catalog 样例固定保存在 `tests/fixtures/examples`（commit `58379ad`），由 `npm test` 全量校验；`tools/fetch-fixtures.mjs` 可重新下载。
 
 ---
 
 ## 十三、验收测试结果
 
-见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)：包含 10 个验收场景的实测结论、57 个自动化用例的通过情况，以及「已在真实 DSH Desktop 中验证」与「仅无头验证」的明确分界。
+见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)：包含验收场景的实测结论、130 个自动化用例（含 10 个 jsdom DOM 用例与 43 个官方样例）、11 个真实 React 渲染用例，以及「已在真实 DSH Desktop 中验证」与「仅无头验证」的明确分界。逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

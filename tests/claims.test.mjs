@@ -8,7 +8,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-const { claimCopy, isCopyClaimed, listClaims, resetClaims, subscribeClaims } = await import('../build/esm/client/claims.js')
+const { client } = await import('../build/shared.mjs')
+const { claimCopy, isCopyClaimed, listClaims, resetClaims, subscribeClaims } = client.claims
 
 test('claims are scoped by session and call', () => {
   resetClaims()

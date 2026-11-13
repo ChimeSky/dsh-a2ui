@@ -155,7 +155,13 @@ function renderById(
   if (component === undefined) {
     return h('span', { key }, fallback(scope, `${scope.view.t('childMissing')}: ${id}`))
   }
-  const nextScope: Scope = itemScope === undefined ? { view: scope.view, index: scope.index } : { view: scope.view, item: itemScope.item, index: itemScope.index }
+  // A nested child inside a template row inherits the row's item, so a `Text`
+  // three levels below the template still resolves `{"@path": "title"}` against
+  // that row. Only the component that *renders the template* gets a new scope.
+  const nextScope: Scope =
+    itemScope === undefined
+      ? { view: scope.view, item: scope.item, index: scope.index }
+      : { view: scope.view, item: itemScope.item, index: itemScope.index }
   return h(ComponentNode, { key, component, scope: nextScope, depth })
 }
 
@@ -293,11 +299,41 @@ function TableView(props: { component: A2UIComponent; scope: Scope }): ReturnTyp
   return renderTable(props.scope, props.component)
 }
 
-function renderTabs(scope: Scope, component: A2UIComponent, depth: number): ReturnType<typeof h> {  const view = scope.view
+function renderTabs(scope: Scope, component: A2UIComponent, depth: number): ReturnType<typeof h> {
+  const view = scope.view
   const tabs = Array.isArray(component.tabs) ? component.tabs : []
   const [active, setActive] = React.useState(0)
   const safeIndex = Math.min(active, Math.max(0, tabs.length - 1))
-  const surfacePrefix = `a2ui-${view.surfaceId}-${component.id}`
+  const surfacePrefix = `a2ui-${view.callId}-${view.surfaceId}-${component.id}${scope.index === undefined ? '' : `-r${scope.index}`}`
+  const tabRefs = React.useRef<Array<HTMLButtonElement | null>>([])
+  const focusTab = (index: number): void => {
+    const count = tabs.length
+    if (count === 0) return
+    const next = ((index % count) + count) % count
+    setActive(next)
+    tabRefs.current[next]?.focus()
+  }
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      focusTab(safeIndex + 1)
+      return
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      focusTab(safeIndex - 1)
+      return
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      focusTab(0)
+      return
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      focusTab(tabs.length - 1)
+    }
+  }
   const buttons = tabs.map((tab, index) => {
     const record = tab as Record<string, unknown>
     const title = record.title === undefined ? `Tab ${index + 1}` : text(scope, record.title)
@@ -311,6 +347,12 @@ function renderTabs(scope: Scope, component: A2UIComponent, depth: number): Retu
         'aria-selected': index === safeIndex,
         'aria-controls': `${surfacePrefix}-panel-${index}`,
         id: `${surfacePrefix}-tab-${index}`,
+        // Roving tabindex: only the selected tab is in the tab order, and the
+        // arrow keys move selection (the WAI-ARIA tabs pattern).
+        tabIndex: index === safeIndex ? 0 : -1,
+        ref: (element: HTMLButtonElement | null): void => {
+          tabRefs.current[index] = element
+        },
         onClick: () => setActive(index),
       },
       title,
@@ -321,7 +363,7 @@ function renderTabs(scope: Scope, component: A2UIComponent, depth: number): Retu
   return h(
     'div',
     { className: 'a2ui-tabs' },
-    h('div', { className: 'a2ui-tabbar', role: 'tablist' }, ...buttons),
+    h('div', { className: 'a2ui-tabbar', role: 'tablist', onKeyDown }, ...buttons),
     h(
       'div',
       { role: 'tabpanel', id: `${surfacePrefix}-panel-${safeIndex}`, 'aria-labelledby': `${surfacePrefix}-tab-${safeIndex}` },
@@ -335,16 +377,72 @@ function renderModal(scope: Scope, component: A2UIComponent, depth: number): Ret
   const [open, setOpen] = React.useState(false)
   const triggerId = typeof component.trigger === 'string' ? component.trigger : ''
   const contentId = typeof component.content === 'string' ? component.content : ''
+  const triggerElementId = `a2ui-${view.callId}-${view.surfaceId}-${component.id}-trigger`
+  const dialogRef = React.useRef<HTMLDivElement | null>(null)
+  const triggerRef = React.useRef<HTMLSpanElement | null>(null)
+  /** Set when the dialog closes, so the next committed render can restore focus. */
+  const restoreFocus = React.useRef(false)
   const close = (): void => setOpen(false)
+
+  // Focus management: initial focus inside the dialog, Tab cycles within it, Esc
+  // closes, and closing returns focus to the trigger (WAI-ARIA dialog pattern).
   React.useEffect(() => {
     if (!open) return undefined
+    const dialog = dialogRef.current
+    const focusable = (): HTMLElement[] => {
+      if (dialog === null) return []
+      return [...dialog.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+        (element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true',
+      )
+    }
+    focusable()[0]?.focus()
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setOpen(false)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (items.length === 0) return
+      const index = items.indexOf(document.activeElement as HTMLElement)
+      if (event.shiftKey && index <= 0) {
+        event.preventDefault()
+        items[items.length - 1]?.focus()
+      } else if (!event.shiftKey && (index === -1 || index === items.length - 1)) {
+        event.preventDefault()
+        items[0]?.focus()
+      }
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      restoreFocus.current = true
+    }
   }, [open])
-  const trigger = h('span', { className: 'a2ui-modal-trigger', onClick: () => setOpen(true) }, renderById(scope, triggerId, depth + 1, 'trigger'))
+
+  // Runs after the closed tree is committed, so the trigger node exists again.
+  // Scoped to `open` on purpose: an effect that ran on every render would focus
+  // the trigger repeatedly and spin the component.
+  React.useEffect(() => {
+    if (open || !restoreFocus.current) return
+    restoreFocus.current = false
+    const wrapper = triggerRef.current ?? document.getElementById(triggerElementId)
+    wrapper?.querySelector('button')?.focus()
+  }, [open, triggerElementId])
+
+  const trigger = h(
+    'span',
+    {
+      className: 'a2ui-modal-trigger',
+      id: triggerElementId,
+      ref: (element: HTMLSpanElement | null): void => {
+        triggerRef.current = element
+      },
+      onClick: () => setOpen(true),
+    },
+    renderById(scope, triggerId, depth + 1, 'trigger'),
+  )
   if (!open) return trigger
   return h(
     'span',
@@ -361,7 +459,15 @@ function renderModal(scope: Scope, component: A2UIComponent, depth: number): Ret
       },
       h(
         'div',
-        { className: 'a2ui-modal', role: 'dialog', 'aria-modal': true, 'aria-label': view.t('title') },
+        {
+          className: 'a2ui-modal',
+          role: 'dialog',
+          'aria-modal': true,
+          'aria-label': view.t('title'),
+          ref: (element: HTMLDivElement | null): void => {
+            dialogRef.current = element
+          },
+        },
         h('div', { className: 'a2ui-modal-close' }, h('button', { type: 'button', className: 'a2ui-btn', onClick: close }, view.t('close'))),
         renderById(scope, contentId, depth + 1, 'content'),
       ),

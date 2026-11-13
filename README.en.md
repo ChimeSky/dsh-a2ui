@@ -25,7 +25,9 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 ---
 
-## Status (v0.1.0)
+## Status (v0.2.0)
+
+> This is the correctness and safety release: A2UI 1.0 alignment (all 43 official catalog examples pass), a build that never deletes a file, and a bounded regex evaluator. See [CHANGELOG.md](CHANGELOG.md) for the itemised list.
 
 | Capability | Status |
 |---|---|
@@ -50,9 +52,9 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 The plugin ships as a **bundle** (`dsh.bundle` + `dsh.client`): the repository root is the installable package, providing both the Host and browser halves. Build artifacts are committed, so installing does not compile anything.
 
-**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.1.0`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
+**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.0`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
 
-**B — frozen tarball.** `vendor/dsh-a2ui-0.1.0.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.1.0.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
+**B — frozen tarball.** `vendor/dsh-a2ui-0.2.0.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.2.0.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
 
 **C — DSH plugin manager.** Run `plugin_manager action=install_bundle target=<absolute path or tarball>`. The bundle is written to the active profile (Desktop uses `desktop`) and appears in Settings → Plugins. New bundles activate through HMR; replacing an already-installed package requires a restart to load a fresh JavaScript module generation.
 
@@ -179,6 +181,10 @@ Design choices:
 | Hostile URLs | `safeMediaUrl` admits only `http(s)` (plus `data:image/*;base64` for images); `javascript:`, `file:`, `data:text/html` are rejected; `openUrl` requires a user gesture |
 | Unknown components/properties | Rejected at validation with a JSON path; the renderer additionally degrades to a readable placeholder instead of throwing (a throw blanks the whole slot) |
 | Oversized/deep/cyclic graphs | 32 messages, 300 components per message, 400 per surface, depth 64, 16K strings, 500 series points, 400 frames, 384K payload; cycle and duplicate-id detection |
+| Expanded-size budget | Before rendering, the expanded **node** count (templates multiply by data length) and data units (table rows + chart points + animation items + Plot scatter points) are estimated: one surface above 4000 nodes or 5000 units, or one call above 6000 nodes / 6000 units in total, is rejected. Host and client share the estimator |
+| Catastrophic regex | `regex` runs the specification's static safety check (longer than 256 code points; a bounded-above-1 quantifier over a subexpression with an unbounded one; an unbounded quantifier over alternatives sharing a first character; adjacent unbounded quantifiers with overlapping character sets) and rejects backreferences, lookbehind, named groups, `\p{...}`, `\cX` and inline flags. Input is capped at 4096 code points. A literal pattern fails validation; a bound one is refused at evaluation |
+| Deep JSON | `isJsonValue` is iterative and bounded at 128 levels, checked before any serialization: an 11,000-level array is rejected instead of overflowing the stack |
+| Hostile JSON Pointers | Path ≤ 1024 chars, ≤ 64 segments, array index ≤ 10000, no `__proto__`/`prototype`/`constructor`, sparse writes refused (no hole-punched arrays), `-` append supported. A refused write is reported at `updateDataModel.path` instead of claiming success |
 | Privilege escalation | A surface can only ask the agent for work through a normal user message; files/commands/network still go through the agent's tools and approvals |
 | Plugin isolation | Every registration is owned by `ctx.effect`; disabling removes the view, styles, dictionaries, tools and prompt section |
 
@@ -216,34 +222,43 @@ The rule: anything the interface can do locally must not send a message. Sorting
 ## Known limitations
 
 1. **Placement and the "never disappears" guarantee.** The card has two hosts: the **turn tail** (`conversation.chat.turnTail`), which renders after the turn's answer in the main flow and never folds with the process area, and the **process row** (`tool.call.toolview`), used while the tool is still running and as the fallback. They coordinate through **copy claims**: while the tail copy is mounted it claims the call and the process row collapses to a one-line pointer; the moment the tail copy unmounts for any reason (paging, a new turn, an aborted turn) the claim is released and the process row restores the full card. The interface therefore degrades to an expandable row instead of vanishing.
-2. **Cross-call updates appear as a new card.** A2UI allows `updateComponents` to modify an existing surface; this renderer treats one tool call as one self-contained card, so a later call updating the same surface appends a card (the older one shows "interface data updated") instead of replacing it in place. Updates *within* one call are fully supported.
+2. **Each card contains only its own call's messages.** One tool call is one self-contained card: the renderer folds that call's messages, so `createSurface → updateComponents → updateDataModel` inside one call composes correctly (including delete-then-create), but a **cross-call** `updateComponents` / `updateDataModel` / `deleteSurface` does not modify a card rendered in an earlier turn — it renders as an "interface updated" note instead of replacing the card in place.
+   - To show a **changed** interface, send a **complete** `createSurface` (components plus `dataModel`); see [Example — interactive card](#example--interactive-card).
+   - To remove an old card, `deleteSurface` and re-create it **within the same call**.
+   - True cross-call live surfaces need a DSH session-projection change and are a separate piece of work; the snapshot contract above is what this release supports (locked by 8 regression tests).
 3. **No character-level streaming.** The surface renders when the call reaches `start`; `preparing` shows a skeleton. Chained tool calls in one turn produce incremental UI.
 4. **`callRendererFunction` / `agentFunctionResponse` unsupported.** They need an agent→renderer channel between tool calls, which the tool model does not provide; sending them yields an explicit error.
 5. **PTC / code mode**: `run_code` sub-calls render as nested rows without dedicated styling.
 6. **Media needs the network** except `data:` images.
 7. **Relative bindings inside template items are read-only**; editing requires an absolute `/...` path.
+8. **`regex` has a match work limit.** Accepted patterns run on a bounded evaluator capped at 100,000 steps per match; hitting the cap returns `valid: false` with `pattern exceeded the match work limit`. An extremely long **non-matching** input can therefore be reported as invalid (common shapes are unaffected: greedy-first evaluation means ordinary inputs never need exhaustive backtracking). Combine a higher constant with the 4096-code-point input cap if you need looser semantics.
 
 ---
 
 ## Development
 
 ```bash
-npm install --ignore-scripts     # typescript/@types only (esbuild's postinstall needs pipes the sandbox forbids)
+npm install --ignore-scripts     # typescript/@types + react/react-dom/jsdom (test and render checks only)
 npm run typecheck                # tsc --noEmit
 npm run build                    # tsc + module linker → index.js, lib/**, client.js (written into the repo root)
-npm test                         # all cases (node:test, in-process)
+npm test                         # all cases (node:test, in-process; includes the jsdom DOM cases)
 npm run verify                   # pre-install bundle invariants
+npm run render                   # real-React render check over in-repo fixtures (no network)
 npm run pack:vendor              # regenerate vendor/dsh-a2ui-<version>.tgz
 npm run all                      # all of the above
 ```
 
+**The build never deletes a file.** The compiler emits into memory; linking and the `lib/**` copy are driven by that emit manifest. If `lib/` still holds a file that belongs to no current module, the build **prints its full path** rather than removing it — remove that exact file yourself with `Remove-Item "path"` if it is unwanted.
+
 The build does not use esbuild: its native service needs pipes that the Windows sandbox refuses (`spawn EPERM`). `tools/build.mjs` compiles in-process through the TypeScript compiler API, then links the browser half into one file with a ~120-line module registry wrapped in `__ModuleLoader__.load({ id, factory })`. `npm test` uses `tools/run-tests.mjs` for the same reason (no child process per file). `index.js`, `lib/**` and `client.js` are build artifacts committed to the repository so that `dsh plugin add github:` works without a build step; rerun `npm run build` and commit after changing `src/`.
+
+The pinned official catalog examples live in `tests/fixtures/examples` (commit `58379ad`) and are validated by `npm test`; `tools/fetch-fixtures.mjs` downloads them again.
 
 ---
 
 ## Test results
 
-See [docs/TEST-REPORT.md](docs/TEST-REPORT.md) for the ten acceptance scenarios, the 57 automated cases, and an explicit split between "verified in a real DSH Desktop session" and "verified headlessly only".
+See [docs/TEST-REPORT.md](docs/TEST-REPORT.md) for the acceptance scenarios, the 130 automated cases (including 10 jsdom DOM cases and the 43 official examples), the 11 real-React render cases, and an explicit split between "verified in a real DSH Desktop session" and "verified headlessly only".
 
 ---
 

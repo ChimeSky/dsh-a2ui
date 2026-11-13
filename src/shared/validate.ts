@@ -5,8 +5,10 @@
  * the browser calls {@link applyMessageBatch} to fold a validated batch into the
  * renderer state. Both share one implementation so the two sides cannot drift.
  */
-import { isJsonValue, isPlainObject, pointerSet, type JsonValue } from './json.js'
+import { isJsonValue, isPlainObject, MAX_JSON_DEPTH, pointerViolation, pointerWrite, type JsonValue } from './json.js'
 import { LIMITS, limitMessage } from './limits.js'
+import { childReferences } from './graph.js'
+import { estimateExpansion } from './budget.js'
 import {
   BASIC_CATALOG_ID,
   CATALOG_IDS,
@@ -71,6 +73,15 @@ export interface SurfaceState {
   sendDataModel: boolean
 }
 
+/** A `updateDataModel` write the fold could not apply. */
+export interface DataModelRefusal {
+  /** Index of the message in the batch. */
+  messageIndex: number
+  surfaceId: string
+  path: string
+  reason: string
+}
+
 /** What one validated batch does to one surface. */
 export interface SurfaceTouch {
   surfaceId: string
@@ -96,6 +107,12 @@ export interface ToolValidation {
   /** Surface summary the tool reports back to the model. */
   surfaces: Array<{ surfaceId: string; catalogId: string; components: number; deleted: boolean }>
   messages: AgentToRendererMessage[]
+  /**
+   * The folded state this batch produces, computed once and shared by the Host
+   * summary, the tests and (through the normalized messages) the renderer, so the
+   * two halves cannot disagree about what a batch means.
+   */
+  states: Map<string, SurfaceState>
 }
 
 function invalidEnvelope(message: Record<string, unknown>, path: string, out: Violation[]): string | undefined {
@@ -114,7 +131,7 @@ function invalidEnvelope(message: Record<string, unknown>, path: string, out: Vi
   }
   const kind = kinds[0] as string
   if (kind === 'callRendererFunction' || kind === 'agentFunctionResponse') {
-    fail(out, `${path}/${kind}`, `is a valid A2UI 1.0 message but is not supported by dsh-a2ui 0.1.0; send createSurface/updateComponents/updateDataModel/deleteSurface instead`)
+    fail(out, `${path}/${kind}`, `is a valid A2UI 1.0 message but is not supported by dsh-a2ui; send createSurface/updateComponents/updateDataModel/deleteSurface instead`)
     return undefined
   }
   return kind
@@ -155,6 +172,43 @@ function checkDataModel(value: unknown, path: string, out: Violation[]): void {
     return
   }
   if (!isJsonValue(value)) fail(out, path, 'must be a lossless JSON value')
+}
+
+/**
+ * Property aliases the published v1.0 catalog examples use.
+ *
+ * The upstream examples spell some system properties with a leading `@`
+ * (`"@checks"`); this renderer's components use the plain name. Both are
+ * accepted, an alias and its plain form must agree, and the alias is dropped so
+ * the rest of the pipeline only ever sees one shape.
+ */
+const PROPERTY_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ['@checks', 'checks'],
+  ['@catalogId', 'catalogId'],
+  ['@accessibility', 'accessibility'],
+  ['@metadata', 'metadata'],
+]
+
+function normalizeAliases(component: unknown, path: string, out: Violation[]): unknown {
+  if (!isPlainObject(component)) return component
+  let normalized: Record<string, unknown> | undefined
+  for (const [alias, name] of PROPERTY_ALIASES) {
+    if (!Object.prototype.hasOwnProperty.call(component, alias)) continue
+    const value = component[alias]
+    if (Object.prototype.hasOwnProperty.call(component, name)) {
+      if (JSON.stringify(component[name]) !== JSON.stringify(value)) {
+        fail(out, `${path}/${alias}`, `conflicts with "${name}"; keep one of them`)
+        continue
+      }
+      normalized = normalized ?? { ...component }
+      delete normalized[alias]
+      continue
+    }
+    normalized = normalized ?? { ...component }
+    delete normalized[alias]
+    normalized[name] = value
+  }
+  return normalized ?? component
 }
 
 function checkComponentShape(component: unknown, path: string, out: Violation[]): A2UIComponent | undefined {
@@ -231,30 +285,11 @@ function checkComponentProperties(
   if (isExtensionCatalog && spec.origin === 'basic') return
 }
 
-/** Collect child component ids a component references, with their property names. */
-export function childReferences(component: A2UIComponent): Array<{ id: string; field: string }> {
-  const out: Array<{ id: string; field: string }> = []
-  const single = (field: string): void => {
-    const value = component[field]
-    if (typeof value === 'string' && value !== '') out.push({ id: value, field })
-  }
-  single('child')
-  single('trigger')
-  single('content')
-  const children = component.children
-  if (Array.isArray(children)) {
-    for (const entry of children) if (typeof entry === 'string' && entry !== '') out.push({ id: entry, field: 'children' })
-  } else if (isPlainObject(children) && typeof children.componentId === 'string') {
-    out.push({ id: children.componentId, field: 'children' })
-  }
-  const tabs = component.tabs
-  if (Array.isArray(tabs)) {
-    for (const tab of tabs) {
-      if (isPlainObject(tab) && typeof tab.child === 'string' && tab.child !== '') out.push({ id: tab.child, field: 'tabs' })
-    }
-  }
-  return out
-}
+/**
+ * Child references are collected by `graph.ts`, which the render budget also
+ * uses; re-exported here for callers that already import from the validator.
+ */
+export { childReferences }
 
 interface GraphCheck {
   components: Map<string, A2UIComponent>
@@ -350,8 +385,12 @@ function applyComponents(
 export function applyMessageBatch(
   surfaces: ReadonlyMap<string, SurfaceState>,
   messages: readonly AgentToRendererMessage[],
+  onRefuse?: (refusal: DataModelRefusal) => void,
 ): { surfaces: Map<string, SurfaceState>; touches: SurfaceTouch[] } {
-  const next = new Map(surfaces)
+  // Every message reads the *latest* state of this batch, so a create followed
+  // by an update/data update/delete in the same tool call composes instead of
+  // silently losing the earlier message.
+  const current = new Map(surfaces)
   const touched = new Map<string, { created: boolean; deleted: boolean; changed: string[]; dataModel: boolean }>()
   const mark = (surfaceId: string) => {
     let entry = touched.get(surfaceId)
@@ -361,11 +400,11 @@ export function applyMessageBatch(
     }
     return entry
   }
-  for (const message of messages) {
+  for (const [messageIndex, message] of messages.entries()) {
     if ('createSurface' in message) {
       const payload = message.createSurface
-      const catalogId = payload.catalogId ?? (surfaces.get(payload.surfaceId)?.catalogId ?? '')
-      const base = surfaces.get(payload.surfaceId)
+      const base = current.get(payload.surfaceId)
+      const catalogId = payload.catalogId ?? base?.catalogId ?? ''
       const dataModel = (payload.dataModel as JsonValue | undefined) ?? base?.dataModel ?? {}
       const { state, changed } = applyComponents(
         base,
@@ -375,15 +414,17 @@ export function applyMessageBatch(
         payload.sendDataModel ?? base?.sendDataModel ?? false,
         dataModel,
       )
-      next.set(payload.surfaceId, state)
+      current.set(payload.surfaceId, state)
       const entry = mark(payload.surfaceId)
       entry.created = true
+      // A surface re-created after a delete in the same batch is live again.
+      entry.deleted = false
       entry.changed.push(...changed)
       continue
     }
     if ('updateComponents' in message) {
       const payload = message.updateComponents
-      const base = surfaces.get(payload.surfaceId)
+      const base = current.get(payload.surfaceId)
       const catalogId = base?.catalogId ?? ''
       const { state, changed } = applyComponents(
         base,
@@ -393,24 +434,33 @@ export function applyMessageBatch(
         base?.sendDataModel ?? false,
         base?.dataModel ?? {},
       )
-      next.set(payload.surfaceId, state)
+      current.set(payload.surfaceId, state)
       mark(payload.surfaceId).changed.push(...changed)
       continue
     }
     if ('updateDataModel' in message) {
       const payload = message.updateDataModel
-      const base = surfaces.get(payload.surfaceId)
+      const base = current.get(payload.surfaceId)
       if (base === undefined) continue
       const path = payload.path === undefined || payload.path === '/' ? '/' : payload.path
-      const dataModel = pointerSet(base.dataModel, path, payload.value as JsonValue)
-      next.set(payload.surfaceId, { ...base, dataModel })
+      const write = pointerWrite(base.dataModel, path, payload.value as JsonValue)
+      if (write.status === 'refused' && write.reason !== undefined) {
+        // The write is dropped, so the caller must hear about it instead of
+        // reporting a successful update that changed nothing.
+        onRefuse?.({ messageIndex, surfaceId: payload.surfaceId, path, reason: write.reason })
+        continue
+      }
+      current.set(payload.surfaceId, { ...base, dataModel: write.value })
       mark(payload.surfaceId).dataModel = true
       continue
     }
     if ('deleteSurface' in message) {
       const payload = message.deleteSurface
-      next.delete(payload.surfaceId)
-      mark(payload.surfaceId).deleted = true
+      current.delete(payload.surfaceId)
+      const entry = mark(payload.surfaceId)
+      entry.deleted = true
+      entry.created = false
+      entry.changed = []
     }
   }
   const touches: SurfaceTouch[] = [...touched.entries()].map(([surfaceId, entry]) => ({
@@ -420,7 +470,7 @@ export function applyMessageBatch(
     changedComponentIds: entry.changed,
     dataModelChanged: entry.dataModel,
   }))
-  return { surfaces: next, touches }
+  return { surfaces: current, touches }
 }
 
 // `pointerSet` is imported from json.ts above.
@@ -436,7 +486,7 @@ export function validateToolArguments(input: unknown): ToolValidation {
   const messages: AgentToRendererMessage[] = []
 
   if (!isPlainObject(input)) {
-    return { ok: false, errors: [{ path: '', message: 'arguments must be an object' }], warnings, surfaces: [], messages: [] }
+    return { ok: false, errors: [{ path: '', message: 'arguments must be an object' }], warnings, surfaces: [], messages: [], states: new Map() }
   }
   const unknownRoot = Object.keys(input).filter((key) => key !== 'messages' && key !== 'title')
   if (unknownRoot.length > 0) fail(errors, '', `has unsupported properties: ${unknownRoot.join(', ')}`)
@@ -446,11 +496,18 @@ export function validateToolArguments(input: unknown): ToolValidation {
   const raw = input.messages
   if (!Array.isArray(raw)) {
     fail(errors, '/messages', 'is required and must be an array of A2UI 1.0 messages')
-    return { ok: false, errors, warnings, surfaces: [], messages: [] }
+    return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() }
   }
   if (raw.length === 0) fail(errors, '/messages', 'must contain at least one message')
   if (raw.length > LIMITS.maxMessages) {
     fail(errors, '/messages', limitMessage('message count', LIMITS.maxMessages, raw.length))
+  }
+  // Depth is checked before anything walks the payload: `JSON.stringify` and a
+  // recursive validator both overflow on a deeply nested array, so the bound is
+  // enforced here, in the same iterative pass that proves it is JSON at all.
+  if (!isJsonValue(raw)) {
+    fail(errors, '/messages', `must be lossless JSON no deeper than ${MAX_JSON_DEPTH} levels`)
+    return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() }
   }
   const serialized = safeStringify(raw)
   if (serialized !== undefined && serialized.length > LIMITS.maxPayloadChars) {
@@ -459,8 +516,9 @@ export function validateToolArguments(input: unknown): ToolValidation {
 
   // Surface bookkeeping is local to this batch: the Host holds no per-session
   // surface state, so an update may legitimately address a surface an earlier
-  // call created.
+  // call created. `liveSurfaces` therefore only tracks what this batch made.
   const createdHere = new Set<string>()
+  const liveSurfaces = new Map<string, string>()
   const batchComponents = new Map<string, Map<string, A2UIComponent>>()
 
   for (let index = 0; index < raw.length; index += 1) {
@@ -491,6 +549,11 @@ export function validateToolArguments(input: unknown): ToolValidation {
     const surfaceCatalogId = checkCatalogId(payload.catalogId, `${path}/${kind}/catalogId`, errors)
 
     if (kind === 'deleteSurface') {
+      // Removing the surface also removes this lifecycle's graph, catalog and
+      // creation record, so a later create in the same batch starts fresh.
+      createdHere.delete(surfaceId)
+      liveSurfaces.delete(surfaceId)
+      batchComponents.delete(surfaceId)
       messages.push({ version: PROTOCOL_VERSION, deleteSurface: { surfaceId } })
       continue
     }
@@ -502,8 +565,8 @@ export function validateToolArguments(input: unknown): ToolValidation {
         fail(errors, `${path}/${kind}/value`, 'must be a lossless JSON value')
       }
       if (payload.path !== undefined) {
-        if (typeof payload.path !== 'string') fail(errors, `${path}/${kind}/path`, 'must be a JSON Pointer string')
-        else if (payload.path !== '' && !payload.path.startsWith('/')) fail(errors, `${path}/${kind}/path`, 'must start with "/"')
+        const violation = pointerViolation(payload.path)
+        if (violation !== undefined) fail(errors, `${path}/${kind}/path`, violation)
       }
       messages.push({
         version: PROTOCOL_VERSION,
@@ -513,19 +576,53 @@ export function validateToolArguments(input: unknown): ToolValidation {
     }
 
     // createSurface / updateComponents
+    // A create must be validated the same way whether or not it inlines
+    // components, and a second create for a surface that is still live in this
+    // batch is a protocol error rather than a silent merge.
+    if (kind === 'createSurface') {
+      if (liveSurfaces.has(surfaceId)) {
+        fail(
+          errors,
+          `${path}/${kind}/surfaceId`,
+          `surface "${surfaceId}" already exists in this batch; send deleteSurface first, or use updateComponents to change it`,
+        )
+        continue
+      }
+      if (payload.sendDataModel !== undefined && typeof payload.sendDataModel !== 'boolean') {
+        fail(errors, `${path}/${kind}/sendDataModel`, 'must be a boolean')
+      }
+      if (payload.dataModel !== undefined) checkDataModel(payload.dataModel, `${path}/${kind}/dataModel`, errors)
+      if (payload.metadata !== undefined) {
+        if (!isPlainObject(payload.metadata)) fail(errors, `${path}/${kind}/metadata`, 'must be an object')
+        else if (payload.metadata.extensions !== undefined && !isPlainObject(payload.metadata.extensions)) {
+          fail(errors, `${path}/${kind}/metadata/extensions`, 'must be an object')
+        }
+      }
+    }
+
     const rawComponents = payload.components
+    // A surface created in this batch owns its catalog; later component updates
+    // in the same batch inherit it instead of falling back to the default.
+    const inheritedCatalog =
+      kind === 'createSurface' ? (surfaceCatalogId ?? EXTENSION_CATALOG_ID) : (liveSurfaces.get(surfaceId) ?? EXTENSION_CATALOG_ID)
+    const effectiveCatalog = resolveCatalogId(inheritedCatalog, undefined) ?? inheritedCatalog
+
     if (rawComponents === undefined) {
       if (kind === 'updateComponents') fail(errors, `${path}/${kind}`, 'is missing required property "components"')
       messages.push({
         version: PROTOCOL_VERSION,
         createSurface: {
           surfaceId,
-          catalogId: surfaceCatalogId ?? EXTENSION_CATALOG_ID,
+          catalogId: effectiveCatalog,
           ...(payload.sendDataModel === undefined ? {} : { sendDataModel: payload.sendDataModel as boolean }),
           ...(payload.dataModel === undefined ? {} : { dataModel: payload.dataModel as Record<string, JsonValue> }),
         },
       })
-      if (kind === 'createSurface') createdHere.add(surfaceId)
+      if (kind === 'createSurface') {
+        createdHere.add(surfaceId)
+        liveSurfaces.set(surfaceId, effectiveCatalog)
+        batchComponents.set(surfaceId, new Map())
+      }
       continue
     }
     if (!Array.isArray(rawComponents)) {
@@ -536,20 +633,19 @@ export function validateToolArguments(input: unknown): ToolValidation {
     if (rawComponents.length > LIMITS.maxComponentsPerMessage) {
       fail(errors, `${path}/${kind}/components`, limitMessage('components per message', LIMITS.maxComponentsPerMessage, rawComponents.length))
     }
-    if (payload.sendDataModel !== undefined && typeof payload.sendDataModel !== 'boolean') {
-      fail(errors, `${path}/${kind}/sendDataModel`, 'must be a boolean')
-    }
-    if (payload.dataModel !== undefined) checkDataModel(payload.dataModel, `${path}/${kind}/dataModel`, errors)
-    if (payload.metadata !== undefined && !isPlainObject(payload.metadata)) {
-      fail(errors, `${path}/${kind}/metadata`, 'must be an object')
-    }
 
-    const effectiveCatalog = resolveCatalogId(surfaceCatalogId, undefined) ?? (surfaceCatalogId ?? '')
+    if (kind === 'createSurface') {
+      // A fresh instance: never inherit components from a deleted one.
+      createdHere.add(surfaceId)
+      liveSurfaces.set(surfaceId, effectiveCatalog)
+      batchComponents.set(surfaceId, new Map())
+    }
     const seen = new Map<string, number>()
     const accepted: A2UIComponent[] = []
     for (let position = 0; position < rawComponents.length; position += 1) {
       const componentPath = `${path}/${kind}/components/${position}`
-      const component = checkComponentShape(rawComponents[position], componentPath, errors)
+      const raw = normalizeAliases(rawComponents[position], componentPath, errors)
+      const component = checkComponentShape(raw, componentPath, errors)
       if (component === undefined) continue
       if (seen.has(component.id)) {
         fail(errors, componentPath, `duplicates component id "${component.id}" already declared at index ${seen.get(component.id) ?? 0} in this message`)
@@ -605,10 +701,47 @@ export function validateToolArguments(input: unknown): ToolValidation {
   }
 
   if (errors.length > 0) {
-    return { ok: false, errors, warnings, surfaces: [], messages: [] }
+    return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() }
   }
 
-  const folded = applyMessageBatch(surfaces, messages)
+  // The fold both produces the final state and reports writes it had to drop, so
+  // a refused `updateDataModel` becomes a locatable error instead of a silent
+  // success.
+  const refusals: DataModelRefusal[] = []
+  const folded = applyMessageBatch(surfaces, messages, (refusal) => refusals.push(refusal))
+  for (const refusal of refusals) {
+    fail(
+      errors,
+      `/messages/${refusal.messageIndex}/updateDataModel/path`,
+      `cannot write ${JSON.stringify(refusal.path)} on surface "${refusal.surfaceId}": ${refusal.reason}`,
+    )
+  }
+
+  // Render budget: a small definition graph can still expand into a huge React
+  // tree through template repetition. Reject it here, before any element exists.
+  // The per-surface cap is applied together with a whole-call total, because a
+  // multi-surface payload could otherwise stay under every per-surface limit.
+  let totalNodes = 0
+  let totalDataUnits = 0
+  for (const touch of folded.touches) {
+    if (touch.deleted) continue
+    const state = folded.surfaces.get(touch.surfaceId)
+    if (state === undefined) continue
+    const estimate = estimateExpansion(state)
+    if (estimate.reason !== undefined) {
+      fail(errors, `/surfaces/${touch.surfaceId}`, `surface "${touch.surfaceId}" ${estimate.reason}`)
+      continue
+    }
+    totalNodes += estimate.nodes
+    totalDataUnits += estimate.dataUnits
+  }
+  if (totalNodes > LIMITS.maxTotalExpandedNodes) {
+    fail(errors, '', `this call renders ${totalNodes} components in total across its surfaces, above the ${LIMITS.maxTotalExpandedNodes} limit`)
+  }
+  if (totalDataUnits > LIMITS.maxTotalExpandedDataUnits) {
+    fail(errors, '', `this call renders ${totalDataUnits} data rows, points or animation items in total across its surfaces, above the ${LIMITS.maxTotalExpandedDataUnits} limit`)
+  }
+  if (errors.length > 0) return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() }
   const summary = folded.touches
     .filter((touch) => touch.created || touch.changedComponentIds.length > 0 || touch.dataModelChanged || touch.deleted)
     .map((touch) => {
@@ -631,7 +764,7 @@ export function validateToolArguments(input: unknown): ToolValidation {
     }
   }
 
-  return { ok: true, errors, warnings, surfaces: summary, messages }
+  return { ok: true, errors, warnings, surfaces: summary, messages, states: folded.surfaces }
 }
 
 function safeStringify(value: unknown): string | undefined {

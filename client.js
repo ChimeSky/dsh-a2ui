@@ -78,6 +78,9 @@ const zh = {
     atTurnTail: '界面在本轮末尾',
     sortHint: '点击排序（仅本地）',
     sendsMessage: '点击后会向 AI 发送一条消息',
+    failedGeneric: '这次调用失败了，没有可显示的界面。',
+    otherSlices: '其他',
+    groupedSlices: '归入「其他」的类别数',
 };
 const en = {
     title: 'Generative UI',
@@ -125,6 +128,9 @@ const en = {
     atTurnTail: 'shown at the end of this turn',
     sortHint: 'Click to sort (local only)',
     sendsMessage: 'Clicking sends a message to the agent',
+    failedGeneric: 'This call failed, so there is no interface to show.',
+    otherSlices: 'Other',
+    groupedSlices: 'Categories grouped as Other',
 };
 const DICTS = { zh, en };
 
@@ -217,10 +223,12 @@ const CSS = `
 .a2ui-caption{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin:0}
 .a2ui-chart{display:block;width:100%;overflow:visible}
 .a2ui-chart-wrap{display:flex;flex-direction:column;gap:6px;min-width:0}
+.a2ui-chart-note{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0}
 .a2ui-chart-svg{width:100%;height:auto;display:block;overflow:visible}
 .a2ui-axis text{fill:var(--dsw-alias-label-secondary);font-size:10px}
 .a2ui-grid line{stroke:var(--dsw-alias-border-l1);stroke-width:1}
 .a2ui-legend{display:flex;flex-wrap:wrap;gap:4px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.a2ui-legend-more{align-self:center;padding:0 2px;opacity:.7}
 .a2ui-legend-item{appearance:none;font:inherit;font-size:11.5px;color:inherit;background:none;border:0;border-radius:6px;padding:2px 6px;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
 .a2ui-legend-item:hover{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
 .a2ui-legend-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
@@ -294,29 +302,60 @@ function isPlainObject(value) {
     const ctor = Object.prototype.hasOwnProperty.call(proto, 'constructor') ? proto.constructor : undefined;
     return typeof ctor === 'function' && ctor.name === 'Object';
 }
-function isJsonValue(value, seen = new Set()) {
-    if (value === null)
-        return true;
-    const t = typeof value;
-    if (t === 'string' || t === 'boolean')
-        return true;
-    if (t === 'number')
-        return Number.isFinite(value);
-    if (t !== 'object')
-        return false;
-    if (seen.has(value))
-        return false;
-    seen.add(value);
-    try {
-        if (Array.isArray(value))
-            return value.every((entry) => isJsonValue(entry, seen));
-        if (!isPlainObject(value))
+/** Deepest accepted JSON nesting; deeper values are rejected, not traversed. */
+const MAX_JSON_DEPTH = 128;
+/**
+ * Whether a value is lossless JSON, checked **iteratively**.
+ *
+ * A recursive walk overflows the stack on adversarial input (an 11,000-level
+ * array overflows in a few kilobytes), so the traversal is explicit and stops at
+ * {@link MAX_JSON_DEPTH}. Cycles are rejected by the depth bound as well, which
+ * also keeps a self-referencing object from looping forever.
+ */
+function isJsonValue(value) {
+    const stack = [{ value, depth: 0 }];
+    while (stack.length > 0) {
+        const frame = stack.pop();
+        const current = frame.value;
+        if (current === null)
+            continue;
+        const type = typeof current;
+        if (type === 'string' || type === 'boolean')
+            continue;
+        if (type === 'number') {
+            if (!Number.isFinite(current))
+                return false;
+            continue;
+        }
+        if (type !== 'object')
             return false;
-        return Object.values(value).every((entry) => isJsonValue(entry, seen));
+        if (frame.depth >= MAX_JSON_DEPTH)
+            return false;
+        let entries;
+        if (Array.isArray(current)) {
+            entries = current;
+        }
+        else {
+            if (!isPlainObject(current))
+                return false;
+            try {
+                entries = Object.values(current);
+            }
+            catch {
+                return false;
+            }
+        }
+        for (const entry of entries)
+            stack.push({ value: entry, depth: frame.depth + 1 });
     }
-    finally {
-        seen.delete(value);
-    }
+    return true;
+}
+/**
+ * Why a value is not acceptable JSON, or `undefined` when it is.
+ * Uses the same iterative traversal, so it is safe on hostile input.
+ */
+function jsonProblem(value) {
+    return isJsonValue(value) ? undefined : `must be lossless JSON no deeper than ${MAX_JSON_DEPTH} levels`;
 }
 /** JSON Pointer decoding: RFC 6901 `~1` -> `/`, `~0` -> `~`. */
 function decodeSegment(segment) {
@@ -340,18 +379,54 @@ function pointerJoin(base, segment) {
 }
 /** Segments that must never address an object's prototype chain. */
 const DANGEROUS_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
+/** Longest accepted JSON Pointer, in characters. */
+const MAX_POINTER_LENGTH = 1_024;
+/** Largest accepted number of path segments. */
+const MAX_POINTER_SEGMENTS = 64;
+/** Largest array index a write may address; larger ones would build a sparse array. */
+const MAX_ARRAY_INDEX = 10_000;
+const ARRAY_INDEX = /^(0|[1-9]\d*)$/u;
+/**
+ * Why a pointer may not be used, or `undefined` when it is admissible.
+ *
+ * Shared by the validator (so a bad `updateDataModel.path` is reported at its
+ * field) and by the accessors (so a bad binding degrades instead of throwing).
+ */
+function pointerViolation(pointer) {
+    if (typeof pointer !== 'string')
+        return 'must be a string';
+    if (pointer === '' || pointer === '/')
+        return undefined;
+    if (!pointer.startsWith('/'))
+        return 'must start with "/"';
+    if (pointer.length > MAX_POINTER_LENGTH)
+        return `is longer than ${MAX_POINTER_LENGTH} characters`;
+    const segments = pointerSegments(pointer);
+    if (segments.length > MAX_POINTER_SEGMENTS)
+        return `has more than ${MAX_POINTER_SEGMENTS} segments`;
+    for (const segment of segments) {
+        if (DANGEROUS_SEGMENTS.has(segment))
+            return `must not address "${segment}"`;
+        if (ARRAY_INDEX.test(segment) && Number(segment) > MAX_ARRAY_INDEX) {
+            return `array index ${segment} exceeds the ${MAX_ARRAY_INDEX} limit`;
+        }
+    }
+    return undefined;
+}
 /**
  * Read a pointer from a value.
  * @returns `{ found, value }` so a stored `undefined`/`null` is distinguishable.
  */
 function pointerGet(root, pointer) {
+    if (pointerViolation(pointer) !== undefined)
+        return { found: false, value: undefined };
     let cursor = root;
     for (const segment of pointerSegments(pointer)) {
-        if (DANGEROUS_SEGMENTS.has(segment))
-            return { found: false, value: undefined };
         if (Array.isArray(cursor)) {
+            if (!ARRAY_INDEX.test(segment))
+                return { found: false, value: undefined };
             const index = Number(segment);
-            if (!Number.isInteger(index) || index < 0 || index >= cursor.length)
+            if (index >= cursor.length)
                 return { found: false, value: undefined };
             cursor = cursor[index];
             continue;
@@ -364,40 +439,88 @@ function pointerGet(root, pointer) {
     return { found: true, value: cursor };
 }
 /**
- * Copy-on-write pointer assignment. A `null` value deletes the addressed key,
- * matching the protocol's "set value explicitly to null to delete" rule.
+ * Copy-on-write pointer assignment with an explicit outcome.
+ *
+ * A `null` value deletes the addressed key, matching the protocol's "set value
+ * explicitly to null to delete" rule. A write is *refused* (never silently
+ * dropped) for an inadmissible path, a prototype-chain segment, or a sparse
+ * array index, so a caller can report the exact field instead of claiming
+ * success; it is *unchanged* when the value was already there.
  */
-function pointerSet(root, pointer, value) {
+function pointerWrite(root, pointer, value) {
+    const violation = pointerViolation(pointer);
+    if (violation !== undefined)
+        return { status: 'refused', value: root, reason: `path ${violation}` };
     const segments = pointerSegments(pointer);
-    if (segments.length === 0)
-        return value;
+    if (segments.length === 0) {
+        if (deepEqual(root, value))
+            return { status: 'unchanged', value: root };
+        return { status: 'ok', value };
+    }
+    let refused;
+    let changed = false;
+    const refuse = (reason, container) => {
+        if (refused === undefined)
+            refused = reason;
+        return container;
+    };
     const write = (container, index) => {
         const segment = segments[index];
         if (DANGEROUS_SEGMENTS.has(segment))
-            return container;
+            return refuse(`segment "${segment}" must not address an object prototype`, container);
         const isLast = index === segments.length - 1;
         if (Array.isArray(container)) {
-            const array = container.slice();
-            const position = Number(segment);
-            if (!Number.isInteger(position) || position < 0)
-                return container;
-            if (isLast) {
+            if (segment === '-') {
+                // JSON Pointer's append token.
+                if (!isLast)
+                    return refuse('"-" is only valid as the last segment', container);
                 if (value === null)
-                    array.splice(position, 1);
-                else
-                    array[position] = value;
-                return array;
+                    return container;
+                changed = true;
+                return [...container, value];
             }
-            const existing = array[position];
-            array[position] = write(isPlainObject(existing) || Array.isArray(existing) ? existing : {}, index + 1);
-            return array;
+            if (!ARRAY_INDEX.test(segment))
+                return refuse(`"${segment}" is not an array index`, container);
+            const position = Number(segment);
+            if (position > MAX_ARRAY_INDEX) {
+                return refuse(`array index ${position} exceeds the ${MAX_ARRAY_INDEX} limit`, container);
+            }
+            if (position > container.length) {
+                return refuse(`array index ${position} is past the end of a ${container.length}-element array; append at ${container.length} or "-"`, container);
+            }
+            if (isLast) {
+                const next = container.slice();
+                if (value === null) {
+                    if (position >= container.length)
+                        return container;
+                    next.splice(position, 1);
+                }
+                else {
+                    if (deepEqual(container[position], value))
+                        return container;
+                    next[position] = value;
+                }
+                changed = true;
+                return next;
+            }
+            const existing = container[position];
+            const next = container.slice();
+            next[position] = write(isPlainObject(existing) || Array.isArray(existing) ? existing : {}, index + 1);
+            return next;
         }
         const record = isPlainObject(container) ? { ...container } : {};
         if (isLast) {
-            if (value === null)
+            if (value === null) {
+                if (!Object.prototype.hasOwnProperty.call(record, segment))
+                    return container;
                 delete record[segment];
-            else
+            }
+            else {
+                if (Object.prototype.hasOwnProperty.call(record, segment) && deepEqual(record[segment], value))
+                    return container;
                 record[segment] = value;
+            }
+            changed = true;
             return record;
         }
         const existing = record[segment];
@@ -405,14 +528,52 @@ function pointerSet(root, pointer, value) {
         return record;
     };
     const result = write(root, 0);
-    return result;
+    if (refused !== undefined)
+        return { status: 'refused', value: root, reason: refused };
+    return { status: changed ? 'ok' : 'unchanged', value: result };
+}
+/**
+ * Convenience wrapper around {@link pointerWrite} that returns only the value.
+ * Refusals come back as the input unchanged, so this form cannot report them —
+ * the validator and the renderer use `pointerWrite` when the outcome matters.
+ */
+function pointerSet(root, pointer, value) {
+    return pointerWrite(root, pointer, value).value;
+}
+/** Structural equality for JSON values (cheap rejection for primitives). */
+function deepEqual(left, right) {
+    if (left === right)
+        return true;
+    if (typeof left !== 'object' || typeof right !== 'object' || left === null || right === null)
+        return false;
+    if (Array.isArray(left) !== Array.isArray(right))
+        return false;
+    if (Array.isArray(left)) {
+        const other = right;
+        if (left.length !== other.length)
+            return false;
+        return left.every((entry, index) => deepEqual(entry, other[index]));
+    }
+    if (!isPlainObject(left) || !isPlainObject(right))
+        return false;
+    const keys = Object.keys(left);
+    if (keys.length !== Object.keys(right).length)
+        return false;
+    return keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && deepEqual(left[key], right[key]));
 }
 
 exports["isPlainObject"] = isPlainObject;
+exports["MAX_JSON_DEPTH"] = MAX_JSON_DEPTH;
 exports["isJsonValue"] = isJsonValue;
+exports["jsonProblem"] = jsonProblem;
 exports["pointerSegments"] = pointerSegments;
 exports["pointerJoin"] = pointerJoin;
+exports["MAX_POINTER_LENGTH"] = MAX_POINTER_LENGTH;
+exports["MAX_POINTER_SEGMENTS"] = MAX_POINTER_SEGMENTS;
+exports["MAX_ARRAY_INDEX"] = MAX_ARRAY_INDEX;
+exports["pointerViolation"] = pointerViolation;
 exports["pointerGet"] = pointerGet;
+exports["pointerWrite"] = pointerWrite;
 exports["pointerSet"] = pointerSet;
 };
 __registry["./shared/limits.js"] = function(module, exports, require) {
@@ -438,6 +599,21 @@ const LIMITS = {
     maxPayloadChars: 384_000,
     /** Maximum nesting depth of the component graph (logical child edges). */
     maxDepth: 64,
+    /**
+     * Maximum number of component *instances* one surface may expand to after
+     * template repetition, before any React element is created.
+     */
+    maxExpandedNodes: 4_000,
+    /** Maximum rows + chart points + animation items one surface may render. */
+    maxExpandedDataUnits: 5_000,
+    /**
+     * Maximum rendered components across *all* surfaces of one call. A payload with
+     * several surfaces could otherwise stay under every per-surface cap while
+     * still building a huge tree.
+     */
+    maxTotalExpandedNodes: 6_000,
+    /** Maximum data rows + points + animation items across all surfaces of a call. */
+    maxTotalExpandedDataUnits: 6_000,
     /** Maximum length of one string property value. */
     maxStringLength: 16_384,
     /** Maximum length of a component id or surface id. */
@@ -469,6 +645,582 @@ function limitMessage(what, limit, actual) {
 exports["LIMITS"] = LIMITS;
 exports["limitMessage"] = limitMessage;
 };
+__registry["./shared/graph.js"] = function(module, exports, require) {
+/**
+ * Component-graph helpers shared by validation and the renderer budget.
+ *
+ * Kept out of `validate.ts` so the expansion estimator can use it without
+ * creating an import cycle with the validator that calls the estimator.
+ */
+const { isPlainObject } = require("./shared/json.js");
+/** Whether a `children` value is a `{componentId, path}` template. */
+function isChildTemplate(value) {
+    return isPlainObject(value) && typeof value.componentId === 'string' && typeof value.path === 'string';
+}
+/**
+ * Collect the child component ids a component references, with their property
+ * names. A `{componentId, path}` template is reported once as its template
+ * component id; per-item expansion is the renderer's business.
+ */
+function childReferences(component) {
+    const out = [];
+    const single = (field) => {
+        const value = component[field];
+        if (typeof value === 'string' && value !== '')
+            out.push({ id: value, field });
+    };
+    single('child');
+    single('trigger');
+    single('content');
+    const children = component.children;
+    if (Array.isArray(children)) {
+        for (const entry of children)
+            if (typeof entry === 'string' && entry !== '')
+                out.push({ id: entry, field: 'children' });
+    }
+    else if (isChildTemplate(children)) {
+        out.push({ id: children.componentId, field: 'children' });
+    }
+    const tabs = component.tabs;
+    if (Array.isArray(tabs)) {
+        for (const tab of tabs) {
+            if (isPlainObject(tab) && typeof tab.child === 'string' && tab.child !== '')
+                out.push({ id: tab.child, field: 'tabs' });
+        }
+    }
+    return out;
+}
+
+exports["isChildTemplate"] = isChildTemplate;
+exports["childReferences"] = childReferences;
+};
+__registry["./shared/regex.js"] = function(module, exports, require) {
+/**
+ * A2UI v1.0 `regex` dialect and static safety check.
+ *
+ * Implements `specification/v1_0/docs/a2ui_protocol.md` §"The `regex` function":
+ * the portable dialect subset plus the four static rejection rules, before any
+ * matching runs. The check also rejects repeated ambiguous groups before the
+ * pattern reaches JavaScript's backtracking engine.
+ *
+ * Rules (verbatim from the spec):
+ *  1. longer than 256 code points;
+ *  2. a quantifier with upper bound > 1 applied to a subexpression containing an
+ *     unbounded quantifier;
+ *  3. an unbounded quantifier applied to an alternation where two branches can
+ *     start with the same character;
+ *  4. two unbounded-quantified atoms with overlapping character sets adjacent in
+ *     one concatenation, where only zero-width or empty-matching items lie
+ *     between them.
+ */
+/** Longest accepted pattern, in code points (spec §1). */
+const MAX_REGEX_PATTERN = 256;
+/** Longest accepted input, in code points (spec: no match, not an error). */
+const MAX_REGEX_INPUT = 4_096;
+/** Largest explicit repetition bound accepted by the dialect. */
+const MAX_REPEAT_BOUND = 100_000;
+/** A pattern is admissible when this returns `undefined`. */
+function regexUnsafeReason(pattern) {
+    try {
+        checkedBranches(pattern);
+    }
+    catch (error) {
+        return error instanceof RegexSyntaxError ? error.message : 'pattern could not be parsed';
+    }
+    return undefined;
+}
+function checkedBranches(pattern) {
+    if (pattern.length === 0)
+        throw new RegexSyntaxError('pattern is empty');
+    if ([...pattern].length > MAX_REGEX_PATTERN)
+        throw new RegexSyntaxError(`pattern is longer than ${MAX_REGEX_PATTERN} code points`);
+    const dialect = dialectProblem(pattern);
+    if (dialect !== undefined)
+        throw new RegexSyntaxError(dialect);
+    const branches = parseAlternation(pattern);
+    const problem = checkBranches(branches);
+    if (problem !== undefined)
+        throw new RegexSyntaxError(problem);
+    return branches;
+}
+/** Whether a pattern may be executed. */
+function isSafeRegexPattern(pattern) {
+    return regexUnsafeReason(pattern) === undefined;
+}
+/** Whether the input is too long to test (no match, no error). */
+function regexInputUnsafeReason(input) {
+    return [...input].length > MAX_REGEX_INPUT ? `input is longer than ${MAX_REGEX_INPUT} code points` : undefined;
+}
+/** Dialect-level rejections — constructs the portable subset does not allow. */
+function dialectProblem(pattern) {
+    if (/\\[1-9]/u.test(pattern))
+        return 'backreferences are not allowed';
+    if (/\(\?<(?=[=!])/u.test(pattern))
+        return 'lookbehind assertions are not allowed';
+    if (/\(\?<[A-Za-z]/u.test(pattern))
+        return 'named groups are not allowed';
+    if (/\\[pP]\{/u.test(pattern))
+        return '\\p{...} character properties are not allowed';
+    if (/\\c[A-Za-z]/u.test(pattern))
+        return '\\cX control escapes are not allowed';
+    if (/\(\?[A-Za-z-]+[:)]/u.test(pattern))
+        return 'inline flags are not allowed';
+    if (/\(\?>/u.test(pattern))
+        return 'atomic groups are not allowed';
+    if (/\\k</u.test(pattern))
+        return 'named backreferences are not allowed';
+    return undefined;
+}
+const DIGITS = '0123456789';
+const WORD = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_';
+const SPACE = ' \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000';
+function setOf(text) {
+    return { any: false, chars: new Set([...text]) };
+}
+const ANY = { any: true, chars: new Set() };
+function emptySet() {
+    return { any: false, chars: new Set() };
+}
+function unionSet(into, other) {
+    if (other.any) {
+        into.any = true;
+        into.chars.clear();
+        return;
+    }
+    if (into.any)
+        return;
+    for (const char of other.chars)
+        into.chars.add(char);
+}
+function overlaps(left, right) {
+    if (left.any || right.any)
+        return true;
+    for (const char of left.chars)
+        if (right.chars.has(char))
+            return true;
+    return false;
+}
+/* ------------------------------------------------------------------ */
+/* Parser                                                              */
+/* ------------------------------------------------------------------ */
+class RegexSyntaxError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'RegexSyntaxError';
+    }
+}
+function newFrame() {
+    return { branches: [], terms: [] };
+}
+function finishBranch(frame) {
+    const first = emptySet();
+    let nullable = true;
+    for (const term of frame.terms) {
+        if (!term.zeroWidth && term.quantifier?.max !== 0)
+            unionSet(first, term.set);
+        if (!term.nullable && !term.zeroWidth) {
+            nullable = false;
+            break;
+        }
+    }
+    frame.branches.push({
+        terms: frame.terms,
+        nullable,
+        first,
+        containsUnbounded: frame.terms.some((term) => term.containsUnbounded),
+    });
+    frame.terms = [];
+}
+function parseAlternation(pattern) {
+    const root = newFrame();
+    const stack = [];
+    let frames = root;
+    let index = 0;
+    const pushTerm = (term, source) => {
+        if (source !== undefined)
+            term.atom = new RegExp(source, 'uy');
+        frames.terms.push(term);
+    };
+    while (index < pattern.length) {
+        const char = String.fromCodePoint(pattern.codePointAt(index));
+        if (char === '\\') {
+            const { term, next } = parseEscape(pattern, index);
+            pushTerm(term, pattern.slice(index, next));
+            index = next;
+            continue;
+        }
+        if (char === '[') {
+            const { set, next } = parseClass(pattern, index);
+            pushTerm({ set, nullable: false, zeroWidth: false, containsUnbounded: false }, pattern.slice(index, next));
+            index = next;
+            continue;
+        }
+        if (char === '.') {
+            pushTerm({ set: ANY, nullable: false, zeroWidth: false, containsUnbounded: false }, char);
+            index += 1;
+            continue;
+        }
+        if (char === '(') {
+            // `(?:`, `(?=`, `(?!` are the accepted group openers.
+            const rest = pattern.slice(index);
+            const lookahead = rest.startsWith('(?=') ? 'positive' : rest.startsWith('(?!') ? 'negative' : undefined;
+            const opener = /^\(\?(?:[:=!])/u.test(rest) ? 3 : 1;
+            const frame = newFrame();
+            stack.push({ frame, lookahead });
+            frames = frame;
+            index += opener;
+            continue;
+        }
+        if (char === ')') {
+            const entry = stack.pop();
+            if (entry === undefined)
+                throw new RegexSyntaxError('unbalanced ")"');
+            finishBranch(entry.frame);
+            const branches = entry.frame.branches;
+            const first = emptySet();
+            let nullable = false;
+            let containsUnbounded = false;
+            for (const branch of branches) {
+                unionSet(first, branch.first);
+                nullable = nullable || branch.nullable;
+                containsUnbounded = containsUnbounded || branch.containsUnbounded;
+            }
+            frames = stack.length > 0 ? stack[stack.length - 1].frame : root;
+            const assertion = entry.lookahead !== undefined;
+            pushTerm({
+                set: assertion ? emptySet() : first,
+                nullable: assertion || nullable,
+                zeroWidth: assertion,
+                containsUnbounded,
+                groupBranches: branches,
+                lookahead: entry.lookahead,
+            });
+            index += 1;
+            continue;
+        }
+        if (char === '|') {
+            finishBranch(frames);
+            index += 1;
+            continue;
+        }
+        if (char === '*' || char === '+' || char === '?' || char === '{') {
+            index = applyQuantifier(frames, pattern, index);
+            continue;
+        }
+        if (char === '^' || char === '$') {
+            pushTerm({ set: emptySet(), nullable: true, zeroWidth: true, containsUnbounded: false }, char);
+            index += 1;
+            continue;
+        }
+        // A literal character.
+        if (char === ']' || char === '}')
+            throw new RegexSyntaxError(`unexpected "${char}"`);
+        pushTerm({ set: setOf(char), nullable: false, zeroWidth: false, containsUnbounded: false }, char);
+        index += char.length;
+    }
+    if (stack.length > 0)
+        throw new RegexSyntaxError('unbalanced "("');
+    finishBranch(root);
+    return root.branches;
+}
+function applyQuantifier(frame, pattern, index) {
+    const last = frame.terms[frame.terms.length - 1];
+    if (last === undefined)
+        throw new RegexSyntaxError('quantifier without a target');
+    if (last.quantifier !== undefined)
+        throw new RegexSyntaxError('a quantifier cannot follow another quantifier');
+    const char = pattern[index];
+    let quantifier;
+    let next = index + 1;
+    if (char === '*')
+        quantifier = { min: 0, max: Infinity };
+    else if (char === '+')
+        quantifier = { min: 1, max: Infinity };
+    else if (char === '?')
+        quantifier = { min: 0, max: 1 };
+    else {
+        const match = /^\{(\d+)(?:,(\d*))?\}/u.exec(pattern.slice(index));
+        if (match === null)
+            throw new RegexSyntaxError('malformed repetition quantifier');
+        const min = Number(match[1]);
+        const max = match[2] === undefined ? min : match[2] === '' ? Infinity : Number(match[2]);
+        if (min > MAX_REPEAT_BOUND || (Number.isFinite(max) && max > MAX_REPEAT_BOUND)) {
+            throw new RegexSyntaxError(`repetition bound exceeds ${MAX_REPEAT_BOUND}`);
+        }
+        if (Number.isFinite(max) && max < min)
+            throw new RegexSyntaxError('repetition range is inverted');
+        quantifier = { min, max };
+        next = index + match[0].length;
+    }
+    if (pattern[next] === '?') {
+        quantifier.lazy = true;
+        next += 1;
+    }
+    applyQuantifierTo(last, quantifier);
+    return next;
+}
+function applyQuantifierTo(term, quantifier) {
+    if (term.zeroWidth)
+        throw new RegexSyntaxError('an assertion cannot be quantified');
+    // Rule 2: a bounded-but-above-1 quantifier over a subexpression that itself
+    // repeats without bound is the nested-quantifier shape.
+    if (quantifier.max > 1 && term.containsUnbounded) {
+        throw new RegexSyntaxError('a repeated subexpression must not contain an unbounded repetition');
+    }
+    // Even a bounded repeat can backtrack exponentially over overlapping alternatives.
+    if (quantifier.max > 1 && term.groupBranches !== undefined) {
+        const branches = term.groupBranches;
+        for (let left = 0; left < branches.length; left += 1) {
+            for (let right = left + 1; right < branches.length; right += 1) {
+                if (overlaps(branches[left].first, branches[right].first)) {
+                    throw new RegexSyntaxError('a repeated group over alternatives that can start the same way is not allowed');
+                }
+            }
+        }
+    }
+    term.quantifier = quantifier;
+    term.nullable = term.nullable || quantifier.min === 0;
+    if (quantifier.max === Infinity)
+        term.containsUnbounded = true;
+}
+/** Work limit shared by search, repeats and nested lookaheads for one match. */
+const MAX_MATCH_STEPS = 100_000;
+/**
+ * Execute only single atoms with native RegExp. The explicit worklist bounds
+ * group expansion and backtracking even for patterns the static checks accept.
+ */
+function matchRegex(pattern, input) {
+    const branches = checkedBranches(pattern);
+    let remaining = MAX_MATCH_STEPS;
+    const spend = () => {
+        if (--remaining < 0)
+            throw new RegexSyntaxError('pattern exceeded the match work limit');
+    };
+    const search = (options, start) => {
+        const pending = [];
+        const pushBranches = (choices, position, next) => {
+            for (let index = choices.length - 1; index >= 0; index -= 1) {
+                spend();
+                pending.push({ position, step: { kind: 'branch', terms: choices[index].terms, index: 0, next } });
+            }
+        };
+        pushBranches(options, start);
+        while (pending.length > 0) {
+            spend();
+            const { position, step } = pending.pop();
+            if (step === undefined)
+                return true;
+            if (step.kind === 'branch') {
+                const term = step.terms[step.index];
+                if (term === undefined) {
+                    pending.push({ position, step: step.next });
+                }
+                else {
+                    const next = { ...step, index: step.index + 1 };
+                    pending.push({ position, step: { kind: 'repeat', term, count: 0, next } });
+                }
+                continue;
+            }
+            const { term, count, previous, next } = step;
+            const min = term.quantifier?.min ?? 1;
+            const max = term.quantifier?.max ?? 1;
+            const canStop = count >= min;
+            const lazy = term.quantifier?.lazy === true;
+            if (canStop && !lazy)
+                pending.push({ position, step: next });
+            if (count < max && !(position === previous && canStop)) {
+                const repeat = { ...step, count: count + 1, previous: position };
+                if (term.atom !== undefined) {
+                    term.atom.lastIndex = position;
+                    if (term.atom.test(input))
+                        pending.push({ position: term.atom.lastIndex, step: repeat });
+                }
+                else if (term.groupBranches !== undefined) {
+                    if (term.lookahead === undefined)
+                        pushBranches(term.groupBranches, position, repeat);
+                    else if (search(term.groupBranches, position) === (term.lookahead === 'positive')) {
+                        pending.push({ position, step: repeat });
+                    }
+                }
+            }
+            if (canStop && lazy)
+                pending.push({ position, step: next });
+        }
+        return false;
+    };
+    for (let start = 0; start <= input.length;) {
+        if (search(branches, start))
+            return true;
+        const code = input.codePointAt(start);
+        start += code !== undefined && code > 0xffff ? 2 : 1;
+    }
+    return false;
+}
+function checkBranches(branches) {
+    for (const branch of branches) {
+        // Rule 4: two unbounded atoms whose character sets overlap, with only
+        // zero-width or empty-matching items between them. An item that can match
+        // empty keeps the previous candidates reachable, so the candidates are kept
+        // as a set rather than a single "last" value.
+        const active = [];
+        for (const term of branch.terms) {
+            if (term.groupBranches !== undefined) {
+                const problem = checkBranches(term.groupBranches);
+                if (problem !== undefined)
+                    return problem;
+            }
+            const unbounded = term.quantifier !== undefined && term.quantifier.max === Infinity;
+            const trivial = term.zeroWidth || term.nullable;
+            if (unbounded) {
+                for (const set of active) {
+                    if (overlaps(set, term.set))
+                        return 'two adjacent unbounded repetitions can match the same characters';
+                }
+                if (trivial)
+                    active.push(term.set);
+                else {
+                    active.length = 0;
+                    active.push(term.set);
+                }
+                continue;
+            }
+            if (trivial)
+                continue;
+            // A consuming item that cannot match empty separates the repetitions.
+            active.length = 0;
+        }
+    }
+    return undefined;
+}
+/* ------------------------------------------------------------------ */
+/* Lexical helpers                                                     */
+/* ------------------------------------------------------------------ */
+function parseEscape(pattern, index) {
+    const char = pattern[index + 1];
+    if (char === undefined)
+        throw new RegexSyntaxError('pattern ends with a backslash');
+    const simple = (text) => ({
+        term: { set: setOf(text), nullable: false, zeroWidth: false, containsUnbounded: false },
+        next: index + 2,
+    });
+    if (char === 'd')
+        return { term: { set: setOf(DIGITS), nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + 2 };
+    if (char === 'w')
+        return { term: { set: setOf(WORD), nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + 2 };
+    if (char === 's')
+        return { term: { set: setOf(SPACE), nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + 2 };
+    if (char === 'D' || char === 'W' || char === 'S') {
+        return { term: { set: ANY, nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + 2 };
+    }
+    if (char === 'b' || char === 'B') {
+        return { term: { set: emptySet(), nullable: true, zeroWidth: true, containsUnbounded: false }, next: index + 2 };
+    }
+    if (char === 'n')
+        return simple('\n');
+    if (char === 't')
+        return simple('\t');
+    if (char === 'r')
+        return simple('\r');
+    if (char === 'v')
+        return simple('\v');
+    if (char === 'f')
+        return simple('\f');
+    if (char === '0') {
+        if (/\d/u.test(pattern[index + 2] ?? ''))
+            throw new RegexSyntaxError('octal escapes are not allowed');
+        return simple('\0');
+    }
+    if (char === 'x') {
+        const hex = pattern.slice(index + 2, index + 4);
+        if (!/^[0-9A-Fa-f]{2}$/u.test(hex))
+            throw new RegexSyntaxError('malformed \\xHH escape');
+        return { term: { set: setOf(String.fromCharCode(Number.parseInt(hex, 16))), nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + 4 };
+    }
+    if (char === 'u') {
+        const braced = /^u\{([0-9A-Fa-f]{1,6})\}/u.exec(pattern.slice(index + 1));
+        if (braced !== null) {
+            const code = Number.parseInt(braced[1], 16);
+            if (code > 0x10ffff)
+                throw new RegexSyntaxError('code point out of range');
+            return { term: { set: setOf(String.fromCodePoint(code)), nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + 1 + braced[0].length };
+        }
+        const hex = pattern.slice(index + 2, index + 6);
+        if (!/^[0-9A-Fa-f]{4}$/u.test(hex))
+            throw new RegexSyntaxError('malformed \\uHHHH escape');
+        const high = Number.parseInt(hex, 16);
+        const low = /^\\u([dD][c-fC-F][0-9A-Fa-f]{2})/u.exec(pattern.slice(index + 6));
+        const pair = high >= 0xd800 && high <= 0xdbff && low !== null;
+        const value = pair ? String.fromCharCode(high, Number.parseInt(low[1], 16)) : String.fromCharCode(high);
+        return { term: { set: setOf(value), nullable: false, zeroWidth: false, containsUnbounded: false }, next: index + (pair ? 12 : 6) };
+    }
+    // Identity escape of a syntax character or any literal.
+    return simple(char);
+}
+function parseClass(pattern, index) {
+    const end = skipClass(pattern, index + 1);
+    let cursor = index + 1;
+    if (pattern[cursor] === '^')
+        return { set: ANY, next: end };
+    const chars = new Set();
+    while (cursor < end - 1) {
+        const char = String.fromCodePoint(pattern.codePointAt(cursor));
+        const after = cursor + char.length;
+        if (char === '\\') {
+            // Native Unicode classes interpret \b as backspace, and escapes can
+            // participate in ranges. Use a conservative set for these classes.
+            if (pattern[cursor + 1] === 'b')
+                return { set: ANY, next: end };
+            const { term, next } = parseEscape(pattern, cursor);
+            if (term.set.any || pattern[next] === '-')
+                return { set: ANY, next: end };
+            for (const member of term.set.chars)
+                chars.add(member);
+            cursor = next;
+            continue;
+        }
+        // Range `a-z`.
+        if (pattern[after] === '-' && after + 1 < end - 1) {
+            if (pattern[after + 1] === '\\')
+                return { set: ANY, next: end };
+            const from = char.codePointAt(0);
+            const to = pattern.codePointAt(after + 1);
+            if (to < from)
+                throw new RegexSyntaxError('character class range is inverted');
+            if (to - from > 5_000)
+                return { set: ANY, next: end };
+            for (let code = from; code <= to; code += 1)
+                chars.add(String.fromCodePoint(code));
+            cursor = after + (to > 0xffff ? 3 : 2);
+            continue;
+        }
+        chars.add(char);
+        cursor = after;
+    }
+    return { set: { any: false, chars }, next: end };
+}
+/** Skip to the end of a character class without expanding it. */
+function skipClass(pattern, index) {
+    let cursor = index;
+    while (cursor < pattern.length) {
+        if (pattern[cursor] === '\\') {
+            cursor += 2;
+            continue;
+        }
+        if (pattern[cursor] === ']')
+            return cursor + 1;
+        cursor += 1;
+    }
+    throw new RegexSyntaxError('unterminated character class');
+}
+
+exports["MAX_REGEX_PATTERN"] = MAX_REGEX_PATTERN;
+exports["MAX_REGEX_INPUT"] = MAX_REGEX_INPUT;
+exports["regexUnsafeReason"] = regexUnsafeReason;
+exports["isSafeRegexPattern"] = isSafeRegexPattern;
+exports["regexInputUnsafeReason"] = regexInputUnsafeReason;
+exports["RegexSyntaxError"] = RegexSyntaxError;
+exports["matchRegex"] = matchRegex;
+};
 __registry["./shared/schema.js"] = function(module, exports, require) {
 /**
  * A tiny, side-effect-free validation DSL.
@@ -480,6 +1232,7 @@ __registry["./shared/schema.js"] = function(module, exports, require) {
  */
 const { isJsonValue, isPlainObject } = require("./shared/json.js");
 const { LIMITS, limitMessage } = require("./shared/limits.js");
+const { MAX_REGEX_INPUT, regexUnsafeReason } = require("./shared/regex.js");
 function fail(out, path, message) {
     out.push({ path, message });
 }
@@ -576,9 +1329,31 @@ function checkCall(value, path, out) {
     }
     if (Object.prototype.hasOwnProperty.call(value, 'args')) {
         if (!isPlainObject(value.args))
-            fail(out, `${path}.args`, 'must be an object');
+            fail(out, `${path}/args`, 'must be an object');
         else if (!isJsonValue(value.args))
-            fail(out, `${path}.args`, 'must be a lossless JSON value');
+            fail(out, `${path}/args`, 'must be a lossless JSON value');
+        else if (name === 'regex')
+            checkRegexArguments(value.args, `${path}/args`, out);
+    }
+}
+/**
+ * A literal `regex` pattern is admitted here so the model gets a path-qualified
+ * error instead of a silently failing check. A pattern bound from the data model
+ * is admitted again when it is evaluated.
+ */
+function checkRegexArguments(args, path, out) {
+    const pattern = args.pattern;
+    if (typeof pattern === 'string') {
+        const unsafe = regexUnsafeReason(pattern);
+        if (unsafe !== undefined)
+            fail(out, `${path}/pattern`, unsafe);
+    }
+    else if (!isBindingValue(pattern) && !isCallValue(pattern) && pattern !== undefined) {
+        fail(out, `${path}/pattern`, 'must be a string, a data binding, or a function call');
+    }
+    const value = args.value;
+    if (typeof value === 'string' && value.length > MAX_REGEX_INPUT) {
+        fail(out, `${path}/value`, `input is longer than ${MAX_REGEX_INPUT} characters`);
     }
 }
 /** A string, a data binding, or a function call. */
@@ -827,6 +1602,773 @@ exports["oneOf"] = oneOf;
 exports["optional"] = optional;
 exports["isDataBinding"] = isDataBinding;
 exports["isFunctionCall"] = isFunctionCall;
+};
+__registry["./shared/functions.js"] = function(module, exports, require) {
+const { matchRegex, regexInputUnsafeReason, RegexSyntaxError } = require("./shared/regex.js");
+function asString(value) {
+    if (typeof value === 'string')
+        return value;
+    if (value === undefined || value === null)
+        return '';
+    if (typeof value === 'number' || typeof value === 'boolean')
+        return String(value);
+    return '';
+}
+function asFiniteNumber(value) {
+    if (typeof value === 'number' && Number.isFinite(value))
+        return value;
+    if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)))
+        return Number(value);
+    return undefined;
+}
+function asBoolean(value) {
+    if (typeof value === 'boolean')
+        return value;
+    if (value !== null && typeof value === 'object' && 'valid' in value) {
+        return value.valid === true;
+    }
+    return false;
+}
+/** `required(value)` */
+const required = (args) => {
+    const value = args.value;
+    const empty = value === undefined ||
+        value === null ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0) ||
+        (typeof value === 'string' && value.trim() === '');
+    return empty ? { valid: false } : { valid: true };
+};
+/** `regex(value, pattern)` with dialect and backtracking checks. */
+const regex = (args) => {
+    const text = asString(args.value);
+    const pattern = asString(args.pattern);
+    const unsafe = regexInputUnsafeReason(text);
+    if (unsafe !== undefined)
+        return { valid: false, message: unsafe };
+    try {
+        return { valid: matchRegex(pattern, text) };
+    }
+    catch (error) {
+        return error instanceof RegexSyntaxError ? { valid: false, message: error.message } : { valid: false };
+    }
+};
+function lengthOf(value) {
+    if (typeof value === 'string')
+        return [...value].length;
+    if (Array.isArray(value))
+        return value.length;
+    return undefined;
+}
+/** `length(value, min?, max?)` */
+const length = (args) => {
+    const size = lengthOf(args.value);
+    if (size === undefined)
+        return { valid: false };
+    const min = asFiniteNumber(args.min);
+    const max = asFiniteNumber(args.max);
+    if (min !== undefined && size < min)
+        return { valid: false };
+    if (max !== undefined && size > max)
+        return { valid: false };
+    return { valid: true };
+};
+/** `numeric(value, min?, max?)` */
+const numeric = (args) => {
+    const value = asFiniteNumber(args.value);
+    if (value === undefined)
+        return { valid: false };
+    const min = asFiniteNumber(args.min);
+    const max = asFiniteNumber(args.max);
+    if (min !== undefined && value < min)
+        return { valid: false };
+    if (max !== undefined && value > max)
+        return { valid: false };
+    return { valid: true };
+};
+const EMAIL = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/u;
+/** `email(value)` */
+const email = (args) => ({ valid: EMAIL.test(asString(args.value)) });
+/** `and(values)` / `or(values)` / `not(value)` */
+const and = (args) => {
+    const values = Array.isArray(args.values) ? args.values : [];
+    return values.length > 0 && values.every(asBoolean);
+};
+const or = (args) => {
+    const values = Array.isArray(args.values) ? args.values : [];
+    return values.some(asBoolean);
+};
+const not = (args) => !asBoolean(args.value);
+/* ------------------------------------------------------------------ */
+/* formatString                                                        */
+/* ------------------------------------------------------------------ */
+const MAX_TEMPLATE_DEPTH = 4;
+const MAX_TEMPLATE_LENGTH = 8_192;
+function skipSpace(reader) {
+    while (reader.position < reader.text.length && /\s/u.test(reader.text[reader.position]))
+        reader.position += 1;
+}
+function readIdentifier(reader) {
+    const start = reader.position;
+    while (reader.position < reader.text.length && /[A-Za-z0-9_@$./~-]/u.test(reader.text[reader.position])) {
+        reader.position += 1;
+    }
+    return reader.text.slice(start, reader.position);
+}
+function readQuoted(reader) {
+    const quote = reader.text[reader.position];
+    if (quote !== "'" && quote !== '"')
+        return undefined;
+    reader.position += 1;
+    let out = '';
+    while (reader.position < reader.text.length) {
+        const character = reader.text[reader.position];
+        if (character === '\\' && reader.position + 1 < reader.text.length) {
+            out += reader.text[reader.position + 1];
+            reader.position += 2;
+            continue;
+        }
+        reader.position += 1;
+        if (character === quote)
+            return out;
+        out += character;
+    }
+    return undefined;
+}
+function readExpression(reader, depth) {
+    skipSpace(reader);
+    const character = reader.text[reader.position];
+    if (character === undefined)
+        return '';
+    if (character === "'" || character === '"') {
+        const value = readQuoted(reader);
+        return value ?? '';
+    }
+    if (character === '/' || character === '.') {
+        const pointer = readIdentifier(reader);
+        return reader.env.evaluate?.({ '@path': pointer });
+    }
+    if (/[0-9-]/u.test(character)) {
+        const start = reader.position;
+        reader.position += 1;
+        while (reader.position < reader.text.length && /[0-9.eE+-]/u.test(reader.text[reader.position]))
+            reader.position += 1;
+        const value = Number(reader.text.slice(start, reader.position));
+        return Number.isFinite(value) ? value : 0;
+    }
+    const name = readIdentifier(reader);
+    skipSpace(reader);
+    if (reader.text[reader.position] !== '(') {
+        // A bare identifier resolves as a relative data-model path when possible.
+        const resolved = reader.env.evaluate?.({ '@path': `/${name}` });
+        return resolved === undefined ? '' : resolved;
+    }
+    reader.position += 1;
+    const args = {};
+    while (reader.position < reader.text.length) {
+        skipSpace(reader);
+        if (reader.text[reader.position] === ')') {
+            reader.position += 1;
+            break;
+        }
+        const argumentName = readIdentifier(reader);
+        skipSpace(reader);
+        if (reader.text[reader.position] === ':') {
+            reader.position += 1;
+            args[argumentName] = depth >= MAX_TEMPLATE_DEPTH ? '' : readExpression(reader, depth + 1);
+        }
+        skipSpace(reader);
+        if (reader.text[reader.position] === ',') {
+            reader.position += 1;
+            continue;
+        }
+        if (reader.text[reader.position] === ')') {
+            reader.position += 1;
+            break;
+        }
+        break;
+    }
+    const implementation = FUNCTIONS[name];
+    if (implementation === undefined)
+        return '';
+    try {
+        return implementation(args, reader.env);
+    }
+    catch {
+        return '';
+    }
+}
+function formatTemplate(template, env) {
+    if (template.length > MAX_TEMPLATE_LENGTH)
+        return template.slice(0, MAX_TEMPLATE_LENGTH);
+    let out = '';
+    let index = 0;
+    while (index < template.length) {
+        const start = template.indexOf('${', index);
+        if (start < 0) {
+            out += template.slice(index);
+            break;
+        }
+        out += template.slice(index, start);
+        if (start > 0 && template[start - 1] === '\\') {
+            out = `${out.slice(0, -1)}${template.slice(start, start + 2)}`;
+            index = start + 2;
+            continue;
+        }
+        let depth = 0;
+        let cursor = start + 2;
+        let end = -1;
+        while (cursor < template.length) {
+            const character = template[cursor];
+            if (character === "'" || character === '"') {
+                const close = template.indexOf(character, cursor + 1);
+                if (close < 0)
+                    break;
+                cursor = close + 1;
+                continue;
+            }
+            if (character === '{')
+                depth += 1;
+            else if (character === '}') {
+                if (depth === 0) {
+                    end = cursor;
+                    break;
+                }
+                depth -= 1;
+            }
+            cursor += 1;
+        }
+        if (end < 0) {
+            out += template.slice(start);
+            break;
+        }
+        const inner = template.slice(start + 2, end);
+        const reader = { text: inner, position: 0, depth: 0, env };
+        const value = readExpression(reader, 0);
+        out += typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value);
+        index = end + 1;
+    }
+    return out;
+}
+/** `formatString(value)` — `${/path}` and `${fn(arg:value)}` interpolation. */
+const formatString = (args, env) => formatTemplate(asString(args.value), env);
+/* ------------------------------------------------------------------ */
+/* Localized formatting                                                */
+/* ------------------------------------------------------------------ */
+function decimalOptions(args) {
+    const decimals = asFiniteNumber(args.decimals);
+    const grouping = args.grouping === undefined ? true : asBoolean(args.grouping);
+    return {
+        decimals: decimals === undefined ? undefined : Math.max(0, Math.min(6, Math.trunc(decimals))),
+        grouping,
+    };
+}
+/** `formatNumber(value, decimals?, grouping?)` */
+const formatNumber = (args, env) => {
+    const value = asFiniteNumber(args.value);
+    if (value === undefined)
+        return '';
+    const { decimals, grouping } = decimalOptions(args);
+    try {
+        return new Intl.NumberFormat(env.locale, {
+            minimumFractionDigits: decimals ?? 0,
+            maximumFractionDigits: decimals ?? 3,
+            useGrouping: grouping,
+        }).format(value);
+    }
+    catch {
+        return String(value);
+    }
+};
+/** `formatCurrency(value, currency, decimals?, grouping?)` */
+const formatCurrency = (args, env) => {
+    const value = asFiniteNumber(args.value);
+    const currency = asString(args.currency).toUpperCase();
+    if (value === undefined || !/^[A-Z]{3}$/u.test(currency))
+        return '';
+    const { decimals } = decimalOptions(args);
+    try {
+        return new Intl.NumberFormat(env.locale, {
+            style: 'currency',
+            currency,
+            ...(decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals }),
+        }).format(value);
+    }
+    catch {
+        return '';
+    }
+};
+function toDate(value) {
+    if (typeof value === 'number' && Number.isFinite(value))
+        return new Date(value);
+    if (typeof value === 'string' && value !== '') {
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+    }
+    return undefined;
+}
+/** `formatDate(value, format)` — the TR35 subset the basic catalog documents. */
+const formatDate = (args, env) => {
+    const date = toDate(args.value);
+    const pattern = asString(args.format);
+    if (date === undefined || pattern === '')
+        return '';
+    const pad = (value) => String(value).padStart(2, '0');
+    let out = '';
+    let index = 0;
+    const monthLong = () => {
+        try {
+            return new Intl.DateTimeFormat(env.locale, { month: 'long' }).format(date);
+        }
+        catch {
+            return String(date.getMonth() + 1);
+        }
+    };
+    const monthShort = () => {
+        try {
+            return new Intl.DateTimeFormat(env.locale, { month: 'short' }).format(date);
+        }
+        catch {
+            return String(date.getMonth() + 1);
+        }
+    };
+    const weekdayLong = () => {
+        try {
+            return new Intl.DateTimeFormat(env.locale, { weekday: 'long' }).format(date);
+        }
+        catch {
+            return '';
+        }
+    };
+    const weekdayShort = () => {
+        try {
+            return new Intl.DateTimeFormat(env.locale, { weekday: 'short' }).format(date);
+        }
+        catch {
+            return '';
+        }
+    };
+    while (index < pattern.length) {
+        const rest = pattern.slice(index);
+        const take = (token, render) => {
+            if (!rest.startsWith(token))
+                return false;
+            out += render();
+            index += token.length;
+            return true;
+        };
+        if (take('yyyy', () => String(date.getFullYear())))
+            continue;
+        if (take('yy', () => pad(date.getFullYear() % 100)))
+            continue;
+        if (take('MMMM', monthLong))
+            continue;
+        if (take('MMM', monthShort))
+            continue;
+        if (take('MM', () => pad(date.getMonth() + 1)))
+            continue;
+        if (take('M', () => String(date.getMonth() + 1)))
+            continue;
+        if (take('dd', () => pad(date.getDate())))
+            continue;
+        if (take('d', () => String(date.getDate())))
+            continue;
+        if (take('EEEE', weekdayLong))
+            continue;
+        if (take('E', weekdayShort))
+            continue;
+        if (take('HH', () => pad(date.getHours())))
+            continue;
+        if (take('H', () => String(date.getHours())))
+            continue;
+        if (take('hh', () => pad(date.getHours() % 12 === 0 ? 12 : date.getHours() % 12)))
+            continue;
+        if (take('h', () => String(date.getHours() % 12 === 0 ? 12 : date.getHours() % 12)))
+            continue;
+        if (take('mm', () => pad(date.getMinutes())))
+            continue;
+        if (take('ss', () => pad(date.getSeconds())))
+            continue;
+        if (take('a', () => (date.getHours() < 12 ? 'AM' : 'PM')))
+            continue;
+        out += pattern[index];
+        index += 1;
+    }
+    return out;
+};
+/** `pluralize(value, zero?, one?, two?, few?, many?, other)` */
+const pluralize = (args, env) => {
+    const value = asFiniteNumber(args.value) ?? 0;
+    let category = 'other';
+    try {
+        category = new Intl.PluralRules(env.locale).select(value);
+    }
+    catch {
+        category = Math.abs(value) === 1 ? 'one' : 'other';
+    }
+    const candidates = [category, 'other', 'many', 'few', 'two', 'one', 'zero'];
+    for (const key of candidates) {
+        const text = args[key];
+        if (typeof text === 'string' && text !== '')
+            return text;
+    }
+    return '';
+};
+/** `openUrl(url)` returns a marker the renderer turns into a user-gesture navigation. */
+const openUrl = (args) => {
+    const url = asString(args.url);
+    return url === '' ? '' : { __a2uiOpenUrl: url };
+};
+/** `@index(offset?)` */
+const atIndex = (args, env) => {
+    const offset = asFiniteNumber(args.offset) ?? 0;
+    return (env.index ?? 0) + offset;
+};
+/** Every function implementation, keyed by the wire name. */
+const FUNCTIONS = {
+    required,
+    regex,
+    length,
+    numeric,
+    email,
+    formatString,
+    formatNumber,
+    formatCurrency,
+    formatDate,
+    pluralize,
+    openUrl,
+    and,
+    or,
+    not,
+    '@index': atIndex,
+};
+/** A formatter usable by the renderer without re-creating `Intl` objects per cell. */
+function makeNumberFormatter(locale, options) {
+    try {
+        const formatter = new Intl.NumberFormat(locale, options);
+        return (value) => formatter.format(value);
+    }
+    catch {
+        return (value) => String(value);
+    }
+}
+/** Truthiness used when a validation result stands in for a boolean. */
+function truthyValidation(value) {
+    if (typeof value === 'boolean')
+        return value;
+    if (value !== null && typeof value === 'object' && 'valid' in value) {
+        return value.valid === true;
+    }
+    return value !== undefined && value !== null && value !== '' && value !== 0;
+}
+
+exports["FUNCTIONS"] = FUNCTIONS;
+exports["makeNumberFormatter"] = makeNumberFormatter;
+exports["truthyValidation"] = truthyValidation;
+};
+__registry["./shared/binding.js"] = function(module, exports, require) {
+/**
+ * Data-model binding resolution.
+ *
+ * The same resolver runs in the Host (to check that a payload's bindings are
+ * well formed) and in the browser (to render values). It never executes a
+ * string: a `{"@call": "name"}` object can only select an entry of the closed
+ * `FUNCTIONS` table.
+ */
+const { isFunctionCall, isDataBinding } = require("./shared/schema.js");
+const { pointerGet } = require("./shared/json.js");
+const { FUNCTIONS, truthyValidation } = require("./shared/functions.js");
+const MAX_RESOLVE_DEPTH = 16;
+function bindingPath(value) {
+    const pointer = value['@path'] ?? value.path;
+    return typeof pointer === 'string' ? pointer : undefined;
+}
+function callName(value) {
+    const name = value['@call'] ?? value.call;
+    return typeof name === 'string' ? name : undefined;
+}
+/** Resolve a `{"@path": ...}` binding, honouring relative paths inside a template item. */
+function resolveBinding(pointer, context) {
+    if (pointer === '' || pointer === '/')
+        return context.dataModel;
+    if (pointer.startsWith('/')) {
+        const result = pointerGet(context.dataModel, pointer);
+        return result.found ? result.value : undefined;
+    }
+    const relative = pointerGet(context.item, `/${pointer}`);
+    if (relative.found)
+        return relative.value;
+    const absolute = pointerGet(context.dataModel, `/${pointer}`);
+    return absolute.found ? absolute.value : undefined;
+}
+function resolveArgs(args, context, depth) {
+    if (args === null || typeof args !== 'object' || Array.isArray(args))
+        return {};
+    const out = {};
+    for (const [key, value] of Object.entries(args)) {
+        out[key] = resolveValue(value, context, depth + 1);
+    }
+    return out;
+}
+function makeEnvironment(context, depth) {
+    return {
+        locale: context.locale,
+        index: context.index,
+        now: context.now,
+        evaluate: (value) => resolveValue(value, context, depth + 1),
+    };
+}
+/** Resolve any dynamic value: literal, data binding, or function call. */
+function resolveValue(value, context, depth = 0) {
+    if (depth > MAX_RESOLVE_DEPTH)
+        return undefined;
+    if (value === null || value === undefined)
+        return value;
+    if (Array.isArray(value))
+        return value.map((entry) => resolveValue(entry, context, depth + 1));
+    if (typeof value !== 'object')
+        return value;
+    if (isDataBinding(value)) {
+        const pointer = bindingPath(value);
+        return pointer === undefined ? undefined : resolveBinding(pointer, context);
+    }
+    if (isFunctionCall(value)) {
+        const name = callName(value);
+        if (name === undefined)
+            return undefined;
+        const implementation = FUNCTIONS[name];
+        if (implementation === undefined)
+            return undefined;
+        const args = resolveArgs(value.args, context, depth);
+        try {
+            return implementation(args, makeEnvironment(context, depth));
+        }
+        catch {
+            return undefined;
+        }
+    }
+    return value;
+}
+/** Resolve to display text; never returns `undefined`. */
+function resolveString(value, context) {
+    const resolved = resolveValue(value, context);
+    if (resolved === undefined || resolved === null)
+        return '';
+    if (typeof resolved === 'string')
+        return resolved;
+    if (typeof resolved === 'number')
+        return Number.isFinite(resolved) ? String(resolved) : '';
+    if (typeof resolved === 'boolean')
+        return resolved ? 'true' : 'false';
+    if (typeof resolved === 'object' && resolved !== null && '__a2uiOpenUrl' in resolved)
+        return '';
+    try {
+        return JSON.stringify(resolved);
+    }
+    catch {
+        return '';
+    }
+}
+/** Resolve to a finite number, or `undefined`. */
+function resolveNumber(value, context) {
+    const resolved = resolveValue(value, context);
+    if (typeof resolved === 'number' && Number.isFinite(resolved))
+        return resolved;
+    if (typeof resolved === 'string' && resolved.trim() !== '') {
+        const parsed = Number(resolved);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+}
+/** Resolve to a boolean, coercing a validation result through its `valid` flag. */
+function resolveBoolean(value, context) {
+    const resolved = resolveValue(value, context);
+    if (typeof resolved === 'boolean')
+        return resolved;
+    return truthyValidation(resolved);
+}
+/** Resolve to a string list, tolerating a single string and numeric entries. */
+function resolveStringList(value, context) {
+    const resolved = resolveValue(value, context);
+    if (Array.isArray(resolved))
+        return resolved.map((entry) => (typeof entry === 'string' ? entry : String(entry ?? '')));
+    if (resolved === undefined || resolved === null || resolved === '')
+        return [];
+    return [String(resolved)];
+}
+/** Resolve to a number list, dropping non-finite entries. */
+function resolveNumberList(value, context) {
+    const resolved = resolveValue(value, context);
+    if (Array.isArray(resolved)) {
+        return resolved.flatMap((entry) => {
+            if (typeof entry === 'number' && Number.isFinite(entry))
+                return [entry];
+            if (typeof entry === 'string' && entry.trim() !== '' && Number.isFinite(Number(entry)))
+                return [Number(entry)];
+            return [];
+        });
+    }
+    if (typeof resolved === 'number' && Number.isFinite(resolved))
+        return [resolved];
+    return [];
+}
+/** Resolve a `context` record of an `action.event`, keeping only JSON-safe values. */
+function resolveActionContext(context, resolve) {
+    if (context === undefined)
+        return {};
+    const out = {};
+    for (const [key, value] of Object.entries(context)) {
+        const resolved = resolveValue(value, resolve);
+        if (resolved === undefined)
+            continue;
+        out[key] = resolved;
+    }
+    return out;
+}
+/** Expand a child-list template against the data model. */
+function expandTemplate(componentId, pointer, resolve, max) {
+    const value = resolveBinding(pointer, resolve);
+    if (!Array.isArray(value))
+        return [];
+    return value.slice(0, max).map((data, index) => ({ componentId, data: data, index }));
+}
+
+exports["resolveBinding"] = resolveBinding;
+exports["resolveValue"] = resolveValue;
+exports["resolveString"] = resolveString;
+exports["resolveNumber"] = resolveNumber;
+exports["resolveBoolean"] = resolveBoolean;
+exports["resolveStringList"] = resolveStringList;
+exports["resolveNumberList"] = resolveNumberList;
+exports["resolveActionContext"] = resolveActionContext;
+exports["expandTemplate"] = expandTemplate;
+};
+__registry["./shared/budget.js"] = function(module, exports, require) {
+/**
+ * Render-budget estimation.
+ *
+ * A model-authored graph can stay small as *definitions* while expanding to a
+ * huge React tree: seven components that each render six children per level
+ * reach 46,656 leaves, and one template bound to a long data list does the same.
+ * The validator and the renderer therefore ask the same estimator — before any
+ * element is created — how many nodes a surface would actually produce, and
+ * reject or degrade the card when the answer is too large.
+ */
+const { isPlainObject } = require("./shared/json.js");
+const { LIMITS } = require("./shared/limits.js");
+const { isChildTemplate, childReferences } = require("./shared/graph.js");
+const { resolveBinding, resolveValue } = require("./shared/binding.js");
+function contextFor(state, item) {
+    return { dataModel: state.dataModel, item, locale: 'en', now: 0 };
+}
+/** Rows/points/items a single component would materialise. */
+function dataUnitsOf(component, state, item) {
+    const context = contextFor(state, item);
+    const name = component.component;
+    try {
+        if (name === 'Table') {
+            const rows = resolveValue(component.rows, context);
+            return Array.isArray(rows) ? rows.length : 0;
+        }
+        if (name === 'BarChart' || name === 'LineChart') {
+            const categories = Array.isArray(component.categories) ? component.categories.length : 0;
+            const series = Array.isArray(component.series) ? component.series : [];
+            let points = 0;
+            for (const entry of series) {
+                if (!isPlainObject(entry))
+                    continue;
+                const values = resolveValue(entry.values, context);
+                points += Array.isArray(values) ? values.length : 0;
+            }
+            return categories + points;
+        }
+        if (name === 'PieChart') {
+            return Array.isArray(component.slices) ? component.slices.length : 0;
+        }
+        if (name === 'FramePlayer') {
+            const frames = Array.isArray(component.frames) ? component.frames : [];
+            let items = 0;
+            for (const frame of frames) {
+                if (isPlainObject(frame) && Array.isArray(frame.items))
+                    items += frame.items.length;
+            }
+            return items;
+        }
+        if (name === 'Plot') {
+            // Count what the renderer actually draws: every scatter point becomes a
+            // circle, and every function plot adds `samples` computed points. The old
+            // `plots × samples` estimate ignored data-bound scatter series entirely.
+            const plots = Array.isArray(component.plots) ? component.plots : [];
+            const requested = typeof component.samples === 'number' ? component.samples : 240;
+            const samples = Math.max(8, Math.min(1200, requested));
+            let units = 0;
+            for (const plot of plots) {
+                if (!isPlainObject(plot))
+                    continue;
+                const points = resolveValue(plot.points, context);
+                if (Array.isArray(points))
+                    units += points.length;
+                const scatter = plot.kind === 'scatter' || typeof plot.expression !== 'string';
+                if (!scatter)
+                    units += samples;
+            }
+            return units;
+        }
+    }
+    catch {
+        return 0;
+    }
+    return 0;
+}
+/**
+ * Estimate how large a surface becomes when rendered.
+ *
+ * @param state folded surface (components + data model).
+ * @param maxNodes override the node budget (defaults to `LIMITS.maxExpandedNodes`).
+ * @param maxDataUnits override the data-unit budget.
+ */
+function estimateExpansion(state, maxNodes = LIMITS.maxExpandedNodes, maxDataUnits = LIMITS.maxExpandedDataUnits) {
+    let nodes = 0;
+    let dataUnits = 0;
+    const stack = [{ id: 'root', depth: 0 }];
+    while (stack.length > 0) {
+        const frame = stack.pop();
+        if (frame.depth > LIMITS.maxDepth) {
+            nodes += 1;
+            if (nodes > maxNodes)
+                return { nodes, dataUnits, reason: `expands to more than ${maxNodes} rendered components` };
+            continue;
+        }
+        const component = state.components.get(frame.id);
+        if (component === undefined)
+            continue;
+        nodes += 1;
+        if (nodes > maxNodes)
+            return { nodes, dataUnits, reason: `expands to more than ${maxNodes} rendered components` };
+        dataUnits += dataUnitsOf(component, state, frame.item);
+        if (dataUnits > maxDataUnits)
+            return { nodes, dataUnits, reason: `renders more than ${maxDataUnits} data rows, points or animation items` };
+        // Template child list: expand it here so the estimate counts repetitions.
+        const children = component.children;
+        if (isChildTemplate(children)) {
+            const list = resolveBinding(children.path, contextFor(state, frame.item));
+            if (Array.isArray(list)) {
+                if (nodes + list.length > maxNodes) {
+                    return { nodes: nodes + list.length, dataUnits, reason: `expands to more than ${maxNodes} rendered components` };
+                }
+                for (const item of list)
+                    stack.push({ id: children.componentId, item: item, depth: frame.depth + 1 });
+                continue;
+            }
+        }
+        for (const reference of childReferences(component)) {
+            stack.push({ id: reference.id, item: frame.item, depth: frame.depth + 1 });
+        }
+    }
+    return { nodes, dataUnits };
+}
+
+exports["estimateExpansion"] = estimateExpansion;
 };
 __registry["./shared/catalog.js"] = function(module, exports, require) {
 /**
@@ -1368,8 +2910,10 @@ __registry["./shared/validate.js"] = function(module, exports, require) {
  * the browser calls {@link applyMessageBatch} to fold a validated batch into the
  * renderer state. Both share one implementation so the two sides cannot drift.
  */
-const { isJsonValue, isPlainObject, pointerSet } = require("./shared/json.js");
+const { isJsonValue, isPlainObject, MAX_JSON_DEPTH, pointerViolation, pointerWrite } = require("./shared/json.js");
 const { LIMITS, limitMessage } = require("./shared/limits.js");
+const { childReferences } = require("./shared/graph.js");
+const { estimateExpansion } = require("./shared/budget.js");
 const { BASIC_CATALOG_ID, CATALOG_IDS, COMPONENT_BY_NAME, EXTENSION_CATALOG_ID, PROTOCOL_VERSION, accessibilityValidator, componentAllowedIn, metadataValidator, resolveCatalogId } = require("./shared/catalog.js");
 const { fail } = require("./shared/schema.js");
 const MESSAGE_KINDS = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface'];
@@ -1399,7 +2943,7 @@ function invalidEnvelope(message, path, out) {
     }
     const kind = kinds[0];
     if (kind === 'callRendererFunction' || kind === 'agentFunctionResponse') {
-        fail(out, `${path}/${kind}`, `is a valid A2UI 1.0 message but is not supported by dsh-a2ui 0.1.0; send createSurface/updateComponents/updateDataModel/deleteSurface instead`);
+        fail(out, `${path}/${kind}`, `is a valid A2UI 1.0 message but is not supported by dsh-a2ui; send createSurface/updateComponents/updateDataModel/deleteSurface instead`);
         return undefined;
     }
     return kind;
@@ -1439,6 +2983,43 @@ function checkDataModel(value, path, out) {
     }
     if (!isJsonValue(value))
         fail(out, path, 'must be a lossless JSON value');
+}
+/**
+ * Property aliases the published v1.0 catalog examples use.
+ *
+ * The upstream examples spell some system properties with a leading `@`
+ * (`"@checks"`); this renderer's components use the plain name. Both are
+ * accepted, an alias and its plain form must agree, and the alias is dropped so
+ * the rest of the pipeline only ever sees one shape.
+ */
+const PROPERTY_ALIASES = [
+    ['@checks', 'checks'],
+    ['@catalogId', 'catalogId'],
+    ['@accessibility', 'accessibility'],
+    ['@metadata', 'metadata'],
+];
+function normalizeAliases(component, path, out) {
+    if (!isPlainObject(component))
+        return component;
+    let normalized;
+    for (const [alias, name] of PROPERTY_ALIASES) {
+        if (!Object.prototype.hasOwnProperty.call(component, alias))
+            continue;
+        const value = component[alias];
+        if (Object.prototype.hasOwnProperty.call(component, name)) {
+            if (JSON.stringify(component[name]) !== JSON.stringify(value)) {
+                fail(out, `${path}/${alias}`, `conflicts with "${name}"; keep one of them`);
+                continue;
+            }
+            normalized = normalized ?? { ...component };
+            delete normalized[alias];
+            continue;
+        }
+        normalized = normalized ?? { ...component };
+        delete normalized[alias];
+        normalized[name] = value;
+    }
+    return normalized ?? component;
 }
 function checkComponentShape(component, path, out) {
     if (!isPlainObject(component)) {
@@ -1510,35 +3091,11 @@ function checkComponentProperties(component, catalogId, path, out, isExtensionCa
     if (isExtensionCatalog && spec.origin === 'basic')
         return;
 }
-/** Collect child component ids a component references, with their property names. */
-function childReferences(component) {
-    const out = [];
-    const single = (field) => {
-        const value = component[field];
-        if (typeof value === 'string' && value !== '')
-            out.push({ id: value, field });
-    };
-    single('child');
-    single('trigger');
-    single('content');
-    const children = component.children;
-    if (Array.isArray(children)) {
-        for (const entry of children)
-            if (typeof entry === 'string' && entry !== '')
-                out.push({ id: entry, field: 'children' });
-    }
-    else if (isPlainObject(children) && typeof children.componentId === 'string') {
-        out.push({ id: children.componentId, field: 'children' });
-    }
-    const tabs = component.tabs;
-    if (Array.isArray(tabs)) {
-        for (const tab of tabs) {
-            if (isPlainObject(tab) && typeof tab.child === 'string' && tab.child !== '')
-                out.push({ id: tab.child, field: 'tabs' });
-        }
-    }
-    return out;
-}
+/**
+ * Child references are collected by `graph.ts`, which the render budget also
+ * uses; re-exported here for callers that already import from the validator.
+ */
+
 function checkGraph(graph) {
     const { components, strict, errors, warnings, pathPrefix } = graph;
     if (components.size === 0)
@@ -1626,8 +3183,11 @@ function applyComponents(previous, surfaceId, catalogId, components, sendDataMod
  * @param surfaces current state (not mutated).
  * @param messages validated messages.
  */
-function applyMessageBatch(surfaces, messages) {
-    const next = new Map(surfaces);
+function applyMessageBatch(surfaces, messages, onRefuse) {
+    // Every message reads the *latest* state of this batch, so a create followed
+    // by an update/data update/delete in the same tool call composes instead of
+    // silently losing the earlier message.
+    const current = new Map(surfaces);
     const touched = new Map();
     const mark = (surfaceId) => {
         let entry = touched.get(surfaceId);
@@ -1637,43 +3197,54 @@ function applyMessageBatch(surfaces, messages) {
         }
         return entry;
     };
-    for (const message of messages) {
+    for (const [messageIndex, message] of messages.entries()) {
         if ('createSurface' in message) {
             const payload = message.createSurface;
-            const catalogId = payload.catalogId ?? (surfaces.get(payload.surfaceId)?.catalogId ?? '');
-            const base = surfaces.get(payload.surfaceId);
+            const base = current.get(payload.surfaceId);
+            const catalogId = payload.catalogId ?? base?.catalogId ?? '';
             const dataModel = payload.dataModel ?? base?.dataModel ?? {};
             const { state, changed } = applyComponents(base, payload.surfaceId, catalogId, payload.components ?? [], payload.sendDataModel ?? base?.sendDataModel ?? false, dataModel);
-            next.set(payload.surfaceId, state);
+            current.set(payload.surfaceId, state);
             const entry = mark(payload.surfaceId);
             entry.created = true;
+            // A surface re-created after a delete in the same batch is live again.
+            entry.deleted = false;
             entry.changed.push(...changed);
             continue;
         }
         if ('updateComponents' in message) {
             const payload = message.updateComponents;
-            const base = surfaces.get(payload.surfaceId);
+            const base = current.get(payload.surfaceId);
             const catalogId = base?.catalogId ?? '';
             const { state, changed } = applyComponents(base, payload.surfaceId, catalogId, payload.components, base?.sendDataModel ?? false, base?.dataModel ?? {});
-            next.set(payload.surfaceId, state);
+            current.set(payload.surfaceId, state);
             mark(payload.surfaceId).changed.push(...changed);
             continue;
         }
         if ('updateDataModel' in message) {
             const payload = message.updateDataModel;
-            const base = surfaces.get(payload.surfaceId);
+            const base = current.get(payload.surfaceId);
             if (base === undefined)
                 continue;
             const path = payload.path === undefined || payload.path === '/' ? '/' : payload.path;
-            const dataModel = pointerSet(base.dataModel, path, payload.value);
-            next.set(payload.surfaceId, { ...base, dataModel });
+            const write = pointerWrite(base.dataModel, path, payload.value);
+            if (write.status === 'refused' && write.reason !== undefined) {
+                // The write is dropped, so the caller must hear about it instead of
+                // reporting a successful update that changed nothing.
+                onRefuse?.({ messageIndex, surfaceId: payload.surfaceId, path, reason: write.reason });
+                continue;
+            }
+            current.set(payload.surfaceId, { ...base, dataModel: write.value });
             mark(payload.surfaceId).dataModel = true;
             continue;
         }
         if ('deleteSurface' in message) {
             const payload = message.deleteSurface;
-            next.delete(payload.surfaceId);
-            mark(payload.surfaceId).deleted = true;
+            current.delete(payload.surfaceId);
+            const entry = mark(payload.surfaceId);
+            entry.deleted = true;
+            entry.created = false;
+            entry.changed = [];
         }
     }
     const touches = [...touched.entries()].map(([surfaceId, entry]) => ({
@@ -1683,7 +3254,7 @@ function applyMessageBatch(surfaces, messages) {
         changedComponentIds: entry.changed,
         dataModelChanged: entry.dataModel,
     }));
-    return { surfaces: next, touches };
+    return { surfaces: current, touches };
 }
 // `pointerSet` is imported from json.ts above.
 /**
@@ -1696,7 +3267,7 @@ function validateToolArguments(input) {
     const surfaces = new Map();
     const messages = [];
     if (!isPlainObject(input)) {
-        return { ok: false, errors: [{ path: '', message: 'arguments must be an object' }], warnings, surfaces: [], messages: [] };
+        return { ok: false, errors: [{ path: '', message: 'arguments must be an object' }], warnings, surfaces: [], messages: [], states: new Map() };
     }
     const unknownRoot = Object.keys(input).filter((key) => key !== 'messages' && key !== 'title');
     if (unknownRoot.length > 0)
@@ -1708,12 +3279,19 @@ function validateToolArguments(input) {
     const raw = input.messages;
     if (!Array.isArray(raw)) {
         fail(errors, '/messages', 'is required and must be an array of A2UI 1.0 messages');
-        return { ok: false, errors, warnings, surfaces: [], messages: [] };
+        return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() };
     }
     if (raw.length === 0)
         fail(errors, '/messages', 'must contain at least one message');
     if (raw.length > LIMITS.maxMessages) {
         fail(errors, '/messages', limitMessage('message count', LIMITS.maxMessages, raw.length));
+    }
+    // Depth is checked before anything walks the payload: `JSON.stringify` and a
+    // recursive validator both overflow on a deeply nested array, so the bound is
+    // enforced here, in the same iterative pass that proves it is JSON at all.
+    if (!isJsonValue(raw)) {
+        fail(errors, '/messages', `must be lossless JSON no deeper than ${MAX_JSON_DEPTH} levels`);
+        return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() };
     }
     const serialized = safeStringify(raw);
     if (serialized !== undefined && serialized.length > LIMITS.maxPayloadChars) {
@@ -1721,8 +3299,9 @@ function validateToolArguments(input) {
     }
     // Surface bookkeeping is local to this batch: the Host holds no per-session
     // surface state, so an update may legitimately address a surface an earlier
-    // call created.
+    // call created. `liveSurfaces` therefore only tracks what this batch made.
     const createdHere = new Set();
+    const liveSurfaces = new Map();
     const batchComponents = new Map();
     for (let index = 0; index < raw.length; index += 1) {
         const path = `/messages/${index}`;
@@ -1754,6 +3333,11 @@ function validateToolArguments(input) {
             continue;
         const surfaceCatalogId = checkCatalogId(payload.catalogId, `${path}/${kind}/catalogId`, errors);
         if (kind === 'deleteSurface') {
+            // Removing the surface also removes this lifecycle's graph, catalog and
+            // creation record, so a later create in the same batch starts fresh.
+            createdHere.delete(surfaceId);
+            liveSurfaces.delete(surfaceId);
+            batchComponents.delete(surfaceId);
             messages.push({ version: PROTOCOL_VERSION, deleteSurface: { surfaceId } });
             continue;
         }
@@ -1765,10 +3349,9 @@ function validateToolArguments(input) {
                 fail(errors, `${path}/${kind}/value`, 'must be a lossless JSON value');
             }
             if (payload.path !== undefined) {
-                if (typeof payload.path !== 'string')
-                    fail(errors, `${path}/${kind}/path`, 'must be a JSON Pointer string');
-                else if (payload.path !== '' && !payload.path.startsWith('/'))
-                    fail(errors, `${path}/${kind}/path`, 'must start with "/"');
+                const violation = pointerViolation(payload.path);
+                if (violation !== undefined)
+                    fail(errors, `${path}/${kind}/path`, violation);
             }
             messages.push({
                 version: PROTOCOL_VERSION,
@@ -1777,7 +3360,32 @@ function validateToolArguments(input) {
             continue;
         }
         // createSurface / updateComponents
+        // A create must be validated the same way whether or not it inlines
+        // components, and a second create for a surface that is still live in this
+        // batch is a protocol error rather than a silent merge.
+        if (kind === 'createSurface') {
+            if (liveSurfaces.has(surfaceId)) {
+                fail(errors, `${path}/${kind}/surfaceId`, `surface "${surfaceId}" already exists in this batch; send deleteSurface first, or use updateComponents to change it`);
+                continue;
+            }
+            if (payload.sendDataModel !== undefined && typeof payload.sendDataModel !== 'boolean') {
+                fail(errors, `${path}/${kind}/sendDataModel`, 'must be a boolean');
+            }
+            if (payload.dataModel !== undefined)
+                checkDataModel(payload.dataModel, `${path}/${kind}/dataModel`, errors);
+            if (payload.metadata !== undefined) {
+                if (!isPlainObject(payload.metadata))
+                    fail(errors, `${path}/${kind}/metadata`, 'must be an object');
+                else if (payload.metadata.extensions !== undefined && !isPlainObject(payload.metadata.extensions)) {
+                    fail(errors, `${path}/${kind}/metadata/extensions`, 'must be an object');
+                }
+            }
+        }
         const rawComponents = payload.components;
+        // A surface created in this batch owns its catalog; later component updates
+        // in the same batch inherit it instead of falling back to the default.
+        const inheritedCatalog = kind === 'createSurface' ? (surfaceCatalogId ?? EXTENSION_CATALOG_ID) : (liveSurfaces.get(surfaceId) ?? EXTENSION_CATALOG_ID);
+        const effectiveCatalog = resolveCatalogId(inheritedCatalog, undefined) ?? inheritedCatalog;
         if (rawComponents === undefined) {
             if (kind === 'updateComponents')
                 fail(errors, `${path}/${kind}`, 'is missing required property "components"');
@@ -1785,13 +3393,16 @@ function validateToolArguments(input) {
                 version: PROTOCOL_VERSION,
                 createSurface: {
                     surfaceId,
-                    catalogId: surfaceCatalogId ?? EXTENSION_CATALOG_ID,
+                    catalogId: effectiveCatalog,
                     ...(payload.sendDataModel === undefined ? {} : { sendDataModel: payload.sendDataModel }),
                     ...(payload.dataModel === undefined ? {} : { dataModel: payload.dataModel }),
                 },
             });
-            if (kind === 'createSurface')
+            if (kind === 'createSurface') {
                 createdHere.add(surfaceId);
+                liveSurfaces.set(surfaceId, effectiveCatalog);
+                batchComponents.set(surfaceId, new Map());
+            }
             continue;
         }
         if (!Array.isArray(rawComponents)) {
@@ -1803,20 +3414,18 @@ function validateToolArguments(input) {
         if (rawComponents.length > LIMITS.maxComponentsPerMessage) {
             fail(errors, `${path}/${kind}/components`, limitMessage('components per message', LIMITS.maxComponentsPerMessage, rawComponents.length));
         }
-        if (payload.sendDataModel !== undefined && typeof payload.sendDataModel !== 'boolean') {
-            fail(errors, `${path}/${kind}/sendDataModel`, 'must be a boolean');
+        if (kind === 'createSurface') {
+            // A fresh instance: never inherit components from a deleted one.
+            createdHere.add(surfaceId);
+            liveSurfaces.set(surfaceId, effectiveCatalog);
+            batchComponents.set(surfaceId, new Map());
         }
-        if (payload.dataModel !== undefined)
-            checkDataModel(payload.dataModel, `${path}/${kind}/dataModel`, errors);
-        if (payload.metadata !== undefined && !isPlainObject(payload.metadata)) {
-            fail(errors, `${path}/${kind}/metadata`, 'must be an object');
-        }
-        const effectiveCatalog = resolveCatalogId(surfaceCatalogId, undefined) ?? (surfaceCatalogId ?? '');
         const seen = new Map();
         const accepted = [];
         for (let position = 0; position < rawComponents.length; position += 1) {
             const componentPath = `${path}/${kind}/components/${position}`;
-            const component = checkComponentShape(rawComponents[position], componentPath, errors);
+            const raw = normalizeAliases(rawComponents[position], componentPath, errors);
+            const component = checkComponentShape(raw, componentPath, errors);
             if (component === undefined)
                 continue;
             if (seen.has(component.id)) {
@@ -1871,9 +3480,44 @@ function validateToolArguments(input) {
         fail(errors, '', limitMessage('surfaces per call', LIMITS.maxSurfacesPerCall, createdHere.size));
     }
     if (errors.length > 0) {
-        return { ok: false, errors, warnings, surfaces: [], messages: [] };
+        return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() };
     }
-    const folded = applyMessageBatch(surfaces, messages);
+    // The fold both produces the final state and reports writes it had to drop, so
+    // a refused `updateDataModel` becomes a locatable error instead of a silent
+    // success.
+    const refusals = [];
+    const folded = applyMessageBatch(surfaces, messages, (refusal) => refusals.push(refusal));
+    for (const refusal of refusals) {
+        fail(errors, `/messages/${refusal.messageIndex}/updateDataModel/path`, `cannot write ${JSON.stringify(refusal.path)} on surface "${refusal.surfaceId}": ${refusal.reason}`);
+    }
+    // Render budget: a small definition graph can still expand into a huge React
+    // tree through template repetition. Reject it here, before any element exists.
+    // The per-surface cap is applied together with a whole-call total, because a
+    // multi-surface payload could otherwise stay under every per-surface limit.
+    let totalNodes = 0;
+    let totalDataUnits = 0;
+    for (const touch of folded.touches) {
+        if (touch.deleted)
+            continue;
+        const state = folded.surfaces.get(touch.surfaceId);
+        if (state === undefined)
+            continue;
+        const estimate = estimateExpansion(state);
+        if (estimate.reason !== undefined) {
+            fail(errors, `/surfaces/${touch.surfaceId}`, `surface "${touch.surfaceId}" ${estimate.reason}`);
+            continue;
+        }
+        totalNodes += estimate.nodes;
+        totalDataUnits += estimate.dataUnits;
+    }
+    if (totalNodes > LIMITS.maxTotalExpandedNodes) {
+        fail(errors, '', `this call renders ${totalNodes} components in total across its surfaces, above the ${LIMITS.maxTotalExpandedNodes} limit`);
+    }
+    if (totalDataUnits > LIMITS.maxTotalExpandedDataUnits) {
+        fail(errors, '', `this call renders ${totalDataUnits} data rows, points or animation items in total across its surfaces, above the ${LIMITS.maxTotalExpandedDataUnits} limit`);
+    }
+    if (errors.length > 0)
+        return { ok: false, errors, warnings, surfaces: [], messages: [], states: new Map() };
     const summary = folded.touches
         .filter((touch) => touch.created || touch.changedComponentIds.length > 0 || touch.dataModelChanged || touch.deleted)
         .map((touch) => {
@@ -1893,7 +3537,7 @@ function validateToolArguments(input) {
             warnings.push(`surface "${touch.surfaceId}" was updated here but not created in this tool call; if no earlier call created it, nothing will render. Send a createSurface message first.`);
         }
     }
-    return { ok: true, errors, warnings, surfaces: summary, messages };
+    return { ok: true, errors, warnings, surfaces: summary, messages, states: folded.surfaces };
 }
 function safeStringify(value) {
     try {
@@ -1908,472 +3552,128 @@ function looksLikeMessage(value) {
     return isPlainObject(value) && (MESSAGE_KINDS.some((kind) => kind in value) || 'version' in value);
 }
 
-exports["childReferences"] = childReferences;
 exports["applyMessageBatch"] = applyMessageBatch;
 exports["validateToolArguments"] = validateToolArguments;
 exports["looksLikeMessage"] = looksLikeMessage;
+exports["childReferences"] = childReferences;
 };
-__registry["./shared/functions.js"] = function(module, exports, require) {
-const MAX_PATTERN = 512;
-function asString(value) {
-    if (typeof value === 'string')
-        return value;
-    if (value === undefined || value === null)
-        return '';
-    if (typeof value === 'number' || typeof value === 'boolean')
-        return String(value);
-    return '';
+__registry["./client/model-store.js"] = function(module, exports, require) {
+const { pointerWrite } = require("./shared/json.js");
+/** Entries kept before the oldest is dropped. */
+const MAX_ENTRIES = 200;
+const entries = new Map();
+let version = 0;
+const listeners = new Set();
+/** Key for one card's editable state. */
+function stateKey(sessionId, callId, surfaceId) {
+    return `${sessionId ?? '-'}\u0000${callId}\u0000${surfaceId}`;
 }
-function asFiniteNumber(value) {
-    if (typeof value === 'number' && Number.isFinite(value))
-        return value;
-    if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)))
-        return Number(value);
-    return undefined;
-}
-function asBoolean(value) {
-    if (typeof value === 'boolean')
-        return value;
-    if (value !== null && typeof value === 'object' && 'valid' in value) {
-        return value.valid === true;
-    }
-    return false;
-}
-/** `required(value)` */
-const required = (args) => {
-    const value = args.value;
-    const empty = value === undefined ||
-        value === null ||
-        value === '' ||
-        (Array.isArray(value) && value.length === 0) ||
-        (typeof value === 'string' && value.trim() === '');
-    return empty ? { valid: false } : { valid: true };
-};
-/** `regex(value, pattern)` */
-const regex = (args) => {
-    const text = asString(args.value);
-    const pattern = asString(args.pattern);
-    if (pattern.length === 0 || pattern.length > MAX_PATTERN)
-        return { valid: false };
-    try {
-        return { valid: new RegExp(pattern, 'u').test(text) };
-    }
-    catch {
-        return { valid: false };
-    }
-};
-function lengthOf(value) {
-    if (typeof value === 'string')
-        return [...value].length;
-    if (Array.isArray(value))
-        return value.length;
-    return undefined;
-}
-/** `length(value, min?, max?)` */
-const length = (args) => {
-    const size = lengthOf(args.value);
-    if (size === undefined)
-        return { valid: false };
-    const min = asFiniteNumber(args.min);
-    const max = asFiniteNumber(args.max);
-    if (min !== undefined && size < min)
-        return { valid: false };
-    if (max !== undefined && size > max)
-        return { valid: false };
-    return { valid: true };
-};
-/** `numeric(value, min?, max?)` */
-const numeric = (args) => {
-    const value = asFiniteNumber(args.value);
-    if (value === undefined)
-        return { valid: false };
-    const min = asFiniteNumber(args.min);
-    const max = asFiniteNumber(args.max);
-    if (min !== undefined && value < min)
-        return { valid: false };
-    if (max !== undefined && value > max)
-        return { valid: false };
-    return { valid: true };
-};
-const EMAIL = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/u;
-/** `email(value)` */
-const email = (args) => ({ valid: EMAIL.test(asString(args.value)) });
-/** `and(values)` / `or(values)` / `not(value)` */
-const and = (args) => {
-    const values = Array.isArray(args.values) ? args.values : [];
-    return values.length > 0 && values.every(asBoolean);
-};
-const or = (args) => {
-    const values = Array.isArray(args.values) ? args.values : [];
-    return values.some(asBoolean);
-};
-const not = (args) => !asBoolean(args.value);
-/* ------------------------------------------------------------------ */
-/* formatString                                                        */
-/* ------------------------------------------------------------------ */
-const MAX_TEMPLATE_DEPTH = 4;
-const MAX_TEMPLATE_LENGTH = 8_192;
-function skipSpace(reader) {
-    while (reader.position < reader.text.length && /\s/u.test(reader.text[reader.position]))
-        reader.position += 1;
-}
-function readIdentifier(reader) {
-    const start = reader.position;
-    while (reader.position < reader.text.length && /[A-Za-z0-9_@$./~-]/u.test(reader.text[reader.position])) {
-        reader.position += 1;
-    }
-    return reader.text.slice(start, reader.position);
-}
-function readQuoted(reader) {
-    const quote = reader.text[reader.position];
-    if (quote !== "'" && quote !== '"')
-        return undefined;
-    reader.position += 1;
-    let out = '';
-    while (reader.position < reader.text.length) {
-        const character = reader.text[reader.position];
-        if (character === '\\' && reader.position + 1 < reader.text.length) {
-            out += reader.text[reader.position + 1];
-            reader.position += 2;
-            continue;
-        }
-        reader.position += 1;
-        if (character === quote)
-            return out;
-        out += character;
-    }
-    return undefined;
-}
-function readExpression(reader, depth) {
-    skipSpace(reader);
-    const character = reader.text[reader.position];
-    if (character === undefined)
-        return '';
-    if (character === "'" || character === '"') {
-        const value = readQuoted(reader);
-        return value ?? '';
-    }
-    if (character === '/' || character === '.') {
-        const pointer = readIdentifier(reader);
-        return reader.env.evaluate?.({ '@path': pointer });
-    }
-    if (/[0-9-]/u.test(character)) {
-        const start = reader.position;
-        reader.position += 1;
-        while (reader.position < reader.text.length && /[0-9.eE+-]/u.test(reader.text[reader.position]))
-            reader.position += 1;
-        const value = Number(reader.text.slice(start, reader.position));
-        return Number.isFinite(value) ? value : 0;
-    }
-    const name = readIdentifier(reader);
-    skipSpace(reader);
-    if (reader.text[reader.position] !== '(') {
-        // A bare identifier resolves as a relative data-model path when possible.
-        const resolved = reader.env.evaluate?.({ '@path': `/${name}` });
-        return resolved === undefined ? '' : resolved;
-    }
-    reader.position += 1;
-    const args = {};
-    while (reader.position < reader.text.length) {
-        skipSpace(reader);
-        if (reader.text[reader.position] === ')') {
-            reader.position += 1;
-            break;
-        }
-        const argumentName = readIdentifier(reader);
-        skipSpace(reader);
-        if (reader.text[reader.position] === ':') {
-            reader.position += 1;
-            args[argumentName] = depth >= MAX_TEMPLATE_DEPTH ? '' : readExpression(reader, depth + 1);
-        }
-        skipSpace(reader);
-        if (reader.text[reader.position] === ',') {
-            reader.position += 1;
-            continue;
-        }
-        if (reader.text[reader.position] === ')') {
-            reader.position += 1;
-            break;
-        }
-        break;
-    }
-    const implementation = FUNCTIONS[name];
-    if (implementation === undefined)
-        return '';
-    try {
-        return implementation(args, reader.env);
-    }
-    catch {
-        return '';
-    }
-}
-function formatTemplate(template, env) {
-    if (template.length > MAX_TEMPLATE_LENGTH)
-        return template.slice(0, MAX_TEMPLATE_LENGTH);
-    let out = '';
-    let index = 0;
-    while (index < template.length) {
-        const start = template.indexOf('${', index);
-        if (start < 0) {
-            out += template.slice(index);
-            break;
-        }
-        out += template.slice(index, start);
-        if (start > 0 && template[start - 1] === '\\') {
-            out = `${out.slice(0, -1)}${template.slice(start, start + 2)}`;
-            index = start + 2;
-            continue;
-        }
-        let depth = 0;
-        let cursor = start + 2;
-        let end = -1;
-        while (cursor < template.length) {
-            const character = template[cursor];
-            if (character === "'" || character === '"') {
-                const close = template.indexOf(character, cursor + 1);
-                if (close < 0)
-                    break;
-                cursor = close + 1;
-                continue;
-            }
-            if (character === '{')
-                depth += 1;
-            else if (character === '}') {
-                if (depth === 0) {
-                    end = cursor;
-                    break;
-                }
-                depth -= 1;
-            }
-            cursor += 1;
-        }
-        if (end < 0) {
-            out += template.slice(start);
-            break;
-        }
-        const inner = template.slice(start + 2, end);
-        const reader = { text: inner, position: 0, depth: 0, env };
-        const value = readExpression(reader, 0);
-        out += typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value);
-        index = end + 1;
-    }
-    return out;
-}
-/** `formatString(value)` — `${/path}` and `${fn(arg:value)}` interpolation. */
-const formatString = (args, env) => formatTemplate(asString(args.value), env);
-/* ------------------------------------------------------------------ */
-/* Localized formatting                                                */
-/* ------------------------------------------------------------------ */
-function decimalOptions(args) {
-    const decimals = asFiniteNumber(args.decimals);
-    const grouping = args.grouping === undefined ? true : asBoolean(args.grouping);
-    return {
-        decimals: decimals === undefined ? undefined : Math.max(0, Math.min(6, Math.trunc(decimals))),
-        grouping,
-    };
-}
-/** `formatNumber(value, decimals?, grouping?)` */
-const formatNumber = (args, env) => {
-    const value = asFiniteNumber(args.value);
-    if (value === undefined)
-        return '';
-    const { decimals, grouping } = decimalOptions(args);
-    try {
-        return new Intl.NumberFormat(env.locale, {
-            minimumFractionDigits: decimals ?? 0,
-            maximumFractionDigits: decimals ?? 3,
-            useGrouping: grouping,
-        }).format(value);
-    }
-    catch {
-        return String(value);
-    }
-};
-/** `formatCurrency(value, currency, decimals?, grouping?)` */
-const formatCurrency = (args, env) => {
-    const value = asFiniteNumber(args.value);
-    const currency = asString(args.currency).toUpperCase();
-    if (value === undefined || !/^[A-Z]{3}$/u.test(currency))
-        return '';
-    const { decimals } = decimalOptions(args);
-    try {
-        return new Intl.NumberFormat(env.locale, {
-            style: 'currency',
-            currency,
-            ...(decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals }),
-        }).format(value);
-    }
-    catch {
-        return '';
-    }
-};
-function toDate(value) {
-    if (typeof value === 'number' && Number.isFinite(value))
-        return new Date(value);
-    if (typeof value === 'string' && value !== '') {
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-    }
-    return undefined;
-}
-/** `formatDate(value, format)` — the TR35 subset the basic catalog documents. */
-const formatDate = (args, env) => {
-    const date = toDate(args.value);
-    const pattern = asString(args.format);
-    if (date === undefined || pattern === '')
-        return '';
-    const pad = (value) => String(value).padStart(2, '0');
-    let out = '';
-    let index = 0;
-    const monthLong = () => {
+function notify() {
+    version += 1;
+    for (const listener of [...listeners]) {
         try {
-            return new Intl.DateTimeFormat(env.locale, { month: 'long' }).format(date);
+            listener();
         }
         catch {
-            return String(date.getMonth() + 1);
+            /* one bad subscriber must not stop the others */
         }
-    };
-    const monthShort = () => {
-        try {
-            return new Intl.DateTimeFormat(env.locale, { month: 'short' }).format(date);
-        }
-        catch {
-            return String(date.getMonth() + 1);
-        }
-    };
-    const weekdayLong = () => {
-        try {
-            return new Intl.DateTimeFormat(env.locale, { weekday: 'long' }).format(date);
-        }
-        catch {
-            return '';
-        }
-    };
-    const weekdayShort = () => {
-        try {
-            return new Intl.DateTimeFormat(env.locale, { weekday: 'short' }).format(date);
-        }
-        catch {
-            return '';
-        }
-    };
-    while (index < pattern.length) {
-        const rest = pattern.slice(index);
-        const take = (token, render) => {
-            if (!rest.startsWith(token))
-                return false;
-            out += render();
-            index += token.length;
-            return true;
-        };
-        if (take('yyyy', () => String(date.getFullYear())))
-            continue;
-        if (take('yy', () => pad(date.getFullYear() % 100)))
-            continue;
-        if (take('MMMM', monthLong))
-            continue;
-        if (take('MMM', monthShort))
-            continue;
-        if (take('MM', () => pad(date.getMonth() + 1)))
-            continue;
-        if (take('M', () => String(date.getMonth() + 1)))
-            continue;
-        if (take('dd', () => pad(date.getDate())))
-            continue;
-        if (take('d', () => String(date.getDate())))
-            continue;
-        if (take('EEEE', weekdayLong))
-            continue;
-        if (take('E', weekdayShort))
-            continue;
-        if (take('HH', () => pad(date.getHours())))
-            continue;
-        if (take('H', () => String(date.getHours())))
-            continue;
-        if (take('hh', () => pad(date.getHours() % 12 === 0 ? 12 : date.getHours() % 12)))
-            continue;
-        if (take('h', () => String(date.getHours() % 12 === 0 ? 12 : date.getHours() % 12)))
-            continue;
-        if (take('mm', () => pad(date.getMinutes())))
-            continue;
-        if (take('ss', () => pad(date.getSeconds())))
-            continue;
-        if (take('a', () => (date.getHours() < 12 ? 'AM' : 'PM')))
-            continue;
-        out += pattern[index];
-        index += 1;
-    }
-    return out;
-};
-/** `pluralize(value, zero?, one?, two?, few?, many?, other)` */
-const pluralize = (args, env) => {
-    const value = asFiniteNumber(args.value) ?? 0;
-    let category = 'other';
-    try {
-        category = new Intl.PluralRules(env.locale).select(value);
-    }
-    catch {
-        category = Math.abs(value) === 1 ? 'one' : 'other';
-    }
-    const candidates = [category, 'other', 'many', 'few', 'two', 'one', 'zero'];
-    for (const key of candidates) {
-        const text = args[key];
-        if (typeof text === 'string' && text !== '')
-            return text;
-    }
-    return '';
-};
-/** `openUrl(url)` returns a marker the renderer turns into a user-gesture navigation. */
-const openUrl = (args) => {
-    const url = asString(args.url);
-    return url === '' ? '' : { __a2uiOpenUrl: url };
-};
-/** `@index(offset?)` */
-const atIndex = (args, env) => {
-    const offset = asFiniteNumber(args.offset) ?? 0;
-    return (env.index ?? 0) + offset;
-};
-/** Every function implementation, keyed by the wire name. */
-const FUNCTIONS = {
-    required,
-    regex,
-    length,
-    numeric,
-    email,
-    formatString,
-    formatNumber,
-    formatCurrency,
-    formatDate,
-    pluralize,
-    openUrl,
-    and,
-    or,
-    not,
-    '@index': atIndex,
-};
-/** A formatter usable by the renderer without re-creating `Intl` objects per cell. */
-function makeNumberFormatter(locale, options) {
-    try {
-        const formatter = new Intl.NumberFormat(locale, options);
-        return (value) => formatter.format(value);
-    }
-    catch {
-        return (value) => String(value);
     }
 }
-/** Truthiness used when a validation result stands in for a boolean. */
-function truthyValidation(value) {
-    if (typeof value === 'boolean')
-        return value;
-    if (value !== null && typeof value === 'object' && 'valid' in value) {
-        return value.valid === true;
+/** Subscribe to any change; returns the unsubscribe function. */
+function subscribeStore(listener) {
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
+}
+/** Monotonic change counter, for `useSyncExternalStore`. */
+function storeVersion() {
+    return version;
+}
+function evict() {
+    while (entries.size > MAX_ENTRIES) {
+        const oldest = entries.keys().next();
+        if (oldest.done === true)
+            return;
+        entries.delete(oldest.value);
     }
-    return value !== undefined && value !== null && value !== '' && value !== 0;
+}
+/**
+ * The current model for a card, seeded from the surface's data model on first
+ * use so both hosts start from the same base.
+ */
+function modelFor(key, seed) {
+    const existing = entries.get(key);
+    if (existing !== undefined)
+        return existing.model;
+    entries.set(key, { model: seed, interaction: { state: 'idle' } });
+    evict();
+    return seed;
+}
+/** The current action state for a card. */
+function interactionFor(key) {
+    return entries.get(key)?.interaction ?? { state: 'idle' };
+}
+/**
+ * Apply a local edit.
+ * @returns `ok`, `unchanged`, or `refused` when the path is not writable.
+ */
+function writeModel(key, pointer, value) {
+    const entry = entries.get(key);
+    if (entry === undefined)
+        return 'refused';
+    const result = pointerWrite(entry.model, pointer, value);
+    if (result.status === 'ok') {
+        entry.model = result.value;
+        notify();
+    }
+    return result.status;
+}
+/** Replace the interaction state shown for a card. */
+function setInteractionState(key, state) {
+    const entry = entries.get(key);
+    if (entry === undefined)
+        return;
+    if (entry.interaction.state === state.state && entry.interaction.message === state.message)
+        return;
+    entry.interaction = state;
+    notify();
+}
+/** Drop every entry belonging to one session. */
+function resetSession(sessionId) {
+    const prefix = `${sessionId}\u0000`;
+    let changed = false;
+    for (const key of [...entries.keys()]) {
+        if (key.startsWith(prefix)) {
+            entries.delete(key);
+            changed = true;
+        }
+    }
+    if (changed)
+        notify();
+}
+/** Drop everything (tests). */
+function resetAll() {
+    if (entries.size === 0)
+        return;
+    entries.clear();
+    notify();
+}
+/** Number of live entries (tests). */
+function entryCount() {
+    return entries.size;
 }
 
-exports["FUNCTIONS"] = FUNCTIONS;
-exports["makeNumberFormatter"] = makeNumberFormatter;
-exports["truthyValidation"] = truthyValidation;
+exports["stateKey"] = stateKey;
+exports["subscribeStore"] = subscribeStore;
+exports["storeVersion"] = storeVersion;
+exports["modelFor"] = modelFor;
+exports["interactionFor"] = interactionFor;
+exports["writeModel"] = writeModel;
+exports["setInteractionState"] = setInteractionState;
+exports["resetSession"] = resetSession;
+exports["resetAll"] = resetAll;
+exports["entryCount"] = entryCount;
 };
 __registry["./shared/url.js"] = function(module, exports, require) {
 /**
@@ -2428,183 +3728,6 @@ function safeSvgPath(value) {
 exports["safeMediaUrl"] = safeMediaUrl;
 exports["safeExternalUrl"] = safeExternalUrl;
 exports["safeSvgPath"] = safeSvgPath;
-};
-__registry["./shared/binding.js"] = function(module, exports, require) {
-/**
- * Data-model binding resolution.
- *
- * The same resolver runs in the Host (to check that a payload's bindings are
- * well formed) and in the browser (to render values). It never executes a
- * string: a `{"@call": "name"}` object can only select an entry of the closed
- * `FUNCTIONS` table.
- */
-const { isFunctionCall, isDataBinding } = require("./shared/schema.js");
-const { pointerGet } = require("./shared/json.js");
-const { FUNCTIONS, truthyValidation } = require("./shared/functions.js");
-const MAX_RESOLVE_DEPTH = 16;
-function bindingPath(value) {
-    const pointer = value['@path'] ?? value.path;
-    return typeof pointer === 'string' ? pointer : undefined;
-}
-function callName(value) {
-    const name = value['@call'] ?? value.call;
-    return typeof name === 'string' ? name : undefined;
-}
-/** Resolve a `{"@path": ...}` binding, honouring relative paths inside a template item. */
-function resolveBinding(pointer, context) {
-    if (pointer === '' || pointer === '/')
-        return context.dataModel;
-    if (pointer.startsWith('/')) {
-        const result = pointerGet(context.dataModel, pointer);
-        return result.found ? result.value : undefined;
-    }
-    const relative = pointerGet(context.item, `/${pointer}`);
-    if (relative.found)
-        return relative.value;
-    const absolute = pointerGet(context.dataModel, `/${pointer}`);
-    return absolute.found ? absolute.value : undefined;
-}
-function resolveArgs(args, context, depth) {
-    if (args === null || typeof args !== 'object' || Array.isArray(args))
-        return {};
-    const out = {};
-    for (const [key, value] of Object.entries(args)) {
-        out[key] = resolveValue(value, context, depth + 1);
-    }
-    return out;
-}
-function makeEnvironment(context, depth) {
-    return {
-        locale: context.locale,
-        index: context.index,
-        now: context.now,
-        evaluate: (value) => resolveValue(value, context, depth + 1),
-    };
-}
-/** Resolve any dynamic value: literal, data binding, or function call. */
-function resolveValue(value, context, depth = 0) {
-    if (depth > MAX_RESOLVE_DEPTH)
-        return undefined;
-    if (value === null || value === undefined)
-        return value;
-    if (Array.isArray(value))
-        return value.map((entry) => resolveValue(entry, context, depth + 1));
-    if (typeof value !== 'object')
-        return value;
-    if (isDataBinding(value)) {
-        const pointer = bindingPath(value);
-        return pointer === undefined ? undefined : resolveBinding(pointer, context);
-    }
-    if (isFunctionCall(value)) {
-        const name = callName(value);
-        if (name === undefined)
-            return undefined;
-        const implementation = FUNCTIONS[name];
-        if (implementation === undefined)
-            return undefined;
-        const args = resolveArgs(value.args, context, depth);
-        try {
-            return implementation(args, makeEnvironment(context, depth));
-        }
-        catch {
-            return undefined;
-        }
-    }
-    return value;
-}
-/** Resolve to display text; never returns `undefined`. */
-function resolveString(value, context) {
-    const resolved = resolveValue(value, context);
-    if (resolved === undefined || resolved === null)
-        return '';
-    if (typeof resolved === 'string')
-        return resolved;
-    if (typeof resolved === 'number')
-        return Number.isFinite(resolved) ? String(resolved) : '';
-    if (typeof resolved === 'boolean')
-        return resolved ? 'true' : 'false';
-    if (typeof resolved === 'object' && resolved !== null && '__a2uiOpenUrl' in resolved)
-        return '';
-    try {
-        return JSON.stringify(resolved);
-    }
-    catch {
-        return '';
-    }
-}
-/** Resolve to a finite number, or `undefined`. */
-function resolveNumber(value, context) {
-    const resolved = resolveValue(value, context);
-    if (typeof resolved === 'number' && Number.isFinite(resolved))
-        return resolved;
-    if (typeof resolved === 'string' && resolved.trim() !== '') {
-        const parsed = Number(resolved);
-        return Number.isFinite(parsed) ? parsed : undefined;
-    }
-    return undefined;
-}
-/** Resolve to a boolean, coercing a validation result through its `valid` flag. */
-function resolveBoolean(value, context) {
-    const resolved = resolveValue(value, context);
-    if (typeof resolved === 'boolean')
-        return resolved;
-    return truthyValidation(resolved);
-}
-/** Resolve to a string list, tolerating a single string and numeric entries. */
-function resolveStringList(value, context) {
-    const resolved = resolveValue(value, context);
-    if (Array.isArray(resolved))
-        return resolved.map((entry) => (typeof entry === 'string' ? entry : String(entry ?? '')));
-    if (resolved === undefined || resolved === null || resolved === '')
-        return [];
-    return [String(resolved)];
-}
-/** Resolve to a number list, dropping non-finite entries. */
-function resolveNumberList(value, context) {
-    const resolved = resolveValue(value, context);
-    if (Array.isArray(resolved)) {
-        return resolved.flatMap((entry) => {
-            if (typeof entry === 'number' && Number.isFinite(entry))
-                return [entry];
-            if (typeof entry === 'string' && entry.trim() !== '' && Number.isFinite(Number(entry)))
-                return [Number(entry)];
-            return [];
-        });
-    }
-    if (typeof resolved === 'number' && Number.isFinite(resolved))
-        return [resolved];
-    return [];
-}
-/** Resolve a `context` record of an `action.event`, keeping only JSON-safe values. */
-function resolveActionContext(context, resolve) {
-    if (context === undefined)
-        return {};
-    const out = {};
-    for (const [key, value] of Object.entries(context)) {
-        const resolved = resolveValue(value, resolve);
-        if (resolved === undefined)
-            continue;
-        out[key] = resolved;
-    }
-    return out;
-}
-/** Expand a child-list template against the data model. */
-function expandTemplate(componentId, pointer, resolve, max) {
-    const value = resolveBinding(pointer, resolve);
-    if (!Array.isArray(value))
-        return [];
-    return value.slice(0, max).map((data, index) => ({ componentId, data: data, index }));
-}
-
-exports["resolveBinding"] = resolveBinding;
-exports["resolveValue"] = resolveValue;
-exports["resolveString"] = resolveString;
-exports["resolveNumber"] = resolveNumber;
-exports["resolveBoolean"] = resolveBoolean;
-exports["resolveStringList"] = resolveStringList;
-exports["resolveNumberList"] = resolveNumberList;
-exports["resolveActionContext"] = resolveActionContext;
-exports["expandTemplate"] = expandTemplate;
 };
 __registry["./client/context.js"] = function(module, exports, require) {
 /**
@@ -2774,12 +3897,105 @@ function renderText(text, variant, idPrefix, ariaLabel) {
 
 exports["renderText"] = renderText;
 };
+__registry["./client/datetime.js"] = function(module, exports, require) {
+/**
+ * DateTimeInput value conversion.
+ *
+ * The browser control speaks local wall-clock strings (`YYYY-MM-DD`,
+ * `HH:MM`, `YYYY-MM-DDTHH:MM`) while the data model stores ISO 8601. Slicing the
+ * stored string is wrong the moment an offset is involved, and inventing a date
+ * for a bare time (`14:30`) breaks the round trip, so both directions are
+ * explicit here and unit-tested.
+ */
+/** The control kind a component asks for. */
+function dateTimeKind(enableDate, enableTime) {
+    if (enableDate && enableTime)
+        return 'datetime-local';
+    return enableDate ? 'date' : 'time';
+}
+function wallClock(date) {
+    const pad = (value) => String(value).padStart(2, '0');
+    return {
+        year: date.getFullYear(),
+        month: pad(date.getMonth() + 1),
+        day: pad(date.getDate()),
+        hour: pad(date.getHours()),
+        minute: pad(date.getMinutes()),
+    };
+}
+/**
+ * Stored value → control value.
+ *
+ * A `date` control is a *calendar* control: it reports the stored calendar date
+ * and never shifts it through a time zone, so `2026-11-13` stays the 13th in
+ * UTC-8 (converting the string through `Date` would show the 12th). An ISO
+ * timestamp keeps the date it names, which also keeps values written by earlier
+ * versions of this plugin round-tripping. A bare `HH:MM` stays literal. Only
+ * `datetime-local` converts to local wall-clock time.
+ */
+function toControlValue(stored, kind) {
+    if (stored === '')
+        return '';
+    if (kind === 'time' && /^\d{2}:\d{2}(:\d{2})?$/u.test(stored))
+        return stored.slice(0, 5);
+    if (kind === 'date') {
+        const calendar = /^(\d{4})-(\d{2})-(\d{2})/u.exec(stored);
+        if (calendar !== null)
+            return `${calendar[1]}-${calendar[2]}-${calendar[3]}`;
+        const date = new Date(stored);
+        if (Number.isNaN(date.getTime()))
+            return '';
+        const clock = wallClock(date);
+        return `${clock.year}-${clock.month}-${clock.day}`;
+    }
+    const date = new Date(stored);
+    if (Number.isNaN(date.getTime()))
+        return kind === 'time' ? stored.slice(0, 5) : '';
+    const clock = wallClock(date);
+    if (kind === 'time')
+        return `${clock.hour}:${clock.minute}`;
+    return `${clock.year}-${clock.month}-${clock.day}T${clock.hour}:${clock.minute}`;
+}
+/**
+ * Control value → stored value.
+ * `date` uses UTC midnight to retain the original calendar date on the wire.
+ * `datetime-local` uses the local zone, and `time` keeps the bare `HH:MM`.
+ */
+function fromControlValue(value, kind) {
+    if (value === '')
+        return '';
+    if (kind === 'time')
+        return /^\d{2}:\d{2}$/u.test(value) ? value : value.slice(0, 5);
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()))
+        return '';
+    return date.toISOString();
+}
+
+exports["dateTimeKind"] = dateTimeKind;
+exports["toControlValue"] = toControlValue;
+exports["fromControlValue"] = fromControlValue;
+};
 __registry["./client/fields.js"] = function(module, exports, require) {
 /** Interactive A2UI components: Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput. */
 const React = require("react");
 const { h } = require("./client/h.js");
 const { isDataBinding } = require("./shared/schema.js");
 const { booleanValue, evaluateChecks, numberValue, stringList, text } = require("./client/context.js");
+const { dateTimeKind, fromControlValue, toControlValue } = require("./client/datetime.js");
+/**
+ * DOM id for a control. Includes the tool call, the surface, the component and —
+ * inside a repeated template — the row index, so two rows or two calls never
+ * share a `label[for]` or a radio group.
+ */
+function domId(scope, component, suffix) {
+    const parts = ['a2ui', scope.view.callId, scope.view.surfaceId, component.id];
+    if (scope.index !== undefined)
+        parts.push(`r${scope.index}`);
+    if (suffix !== undefined)
+        parts.push(String(suffix));
+    return parts.join('-');
+}
 /** The absolute data-model pointer a control writes to, if it is bound. */
 function bindingPointer(value) {
     if (!isDataBinding(value))
@@ -2795,6 +4011,18 @@ function write(scope, value, next) {
     if (pointer === undefined)
         return;
     scope.view.setValue(pointer, next);
+}
+/**
+ * Whether a control must refuse edits right now.
+ *
+ * Only an in-flight send (`sending`) or a completed one (`sent`) locks the form.
+ * An **error** state must leave the inputs editable: the send can be retried
+ * after the user fixes the value, so `!== 'idle'` would strand the whole card.
+ * This mirrors the button, which already becomes clickable again on failure.
+ */
+function formLocked(scope) {
+    const state = scope.view.interaction.state;
+    return state === 'sending' || state === 'sent';
 }
 function labelOf(scope, component) {
     return component.label === undefined ? '' : text(scope, component.label);
@@ -2818,11 +4046,11 @@ function renderButton(scope, component) {
             const name = typeof event.name === 'string' ? event.name : 'action';
             const userMessage = event.userMessage === undefined ? undefined : text(scope, event.userMessage);
             const context = (event.context ?? {});
-            view.submit(component, name, context, userMessage === '' ? undefined : userMessage);
+            view.submit(scope, component, name, context, userMessage === '' ? undefined : userMessage);
             return;
         }
         if (action.functionCall !== undefined)
-            view.runLocal(component, action.functionCall);
+            view.runLocal(scope, component, action.functionCall);
     };
     // An agent-bound button starts a real turn when clicked, so it says so on
     // hover instead of surprising the reader with a new message.
@@ -2861,7 +4089,7 @@ function renderTextField(scope, component) {
     const current = pointer === undefined ? local : text(scope, component.value);
     const variant = typeof component.variant === 'string' ? component.variant : 'shortText';
     const checks = evaluateChecks(scope, component);
-    const id = `a2ui-${view.surfaceId}-${component.id}`;
+    const id = domId(scope, component);
     const onChange = (next) => {
         if (pointer === undefined)
             setLocal(next);
@@ -2889,18 +4117,17 @@ function renderTextField(scope, component) {
 }
 /** `CheckBox` */
 function renderCheckBox(scope, component) {
-    const view = scope.view;
     const checked = booleanValue(scope, component.value);
     const pointer = bindingPointer(component.value);
     const [local, setLocal] = React.useState(checked);
     const value = pointer === undefined ? local : checked;
     const checks = evaluateChecks(scope, component);
-    const id = `a2ui-${view.surfaceId}-${component.id}`;
+    const id = domId(scope, component);
     return h('div', { className: 'a2ui-field' }, h('label', { className: 'a2ui-check', htmlFor: id }, h('input', {
         id,
         type: 'checkbox',
         checked: value,
-        disabled: view.interaction.state !== 'idle',
+        disabled: formLocked(scope),
         onChange: (event) => {
             const next = event.target.checked;
             if (pointer === undefined)
@@ -2922,7 +4149,7 @@ function renderChoicePicker(scope, component) {
     const current = pointer === undefined ? local : selected;
     const checks = evaluateChecks(scope, component);
     const [query, setQuery] = React.useState('');
-    const disabled = view.interaction.state !== 'idle';
+    const disabled = formLocked(scope);
     const commit = (next) => {
         if (pointer === undefined)
             setLocal(next);
@@ -2972,11 +4199,11 @@ function renderChoicePicker(scope, component) {
     return h('div', { className: 'a2ui-field' }, head, h('div', { className: 'a2ui-choice', style: { flexDirection: 'column', gap: '4px' }, role: multiple ? 'group' : 'radiogroup' }, ...visible.map((option, index) => {
         const value = String(option.value ?? '');
         const active = current.includes(value);
-        const id = `a2ui-${view.surfaceId}-${component.id}-${index}`;
+        const id = domId(scope, component, index);
         return h('label', { key: `o${index}`, className: 'a2ui-check', htmlFor: id }, h('input', {
             id,
             type: multiple ? 'checkbox' : 'radio',
-            name: multiple ? undefined : `a2ui-${view.surfaceId}-${component.id}`,
+            name: multiple ? undefined : domId(scope, component, 'group'),
             checked: active,
             disabled,
             onChange: () => toggle(value),
@@ -2994,9 +4221,10 @@ function renderSlider(scope, component) {
     const pointer = bindingPointer(component.value);
     const [local, setLocal] = React.useState(bound);
     const current = pointer === undefined ? local : bound;
-    const id = `a2ui-${view.surfaceId}-${component.id}`;
+    const id = domId(scope, component);
     const step = steps !== undefined && steps > 0 ? (max - min) / steps : undefined;
-    const disabled = view.interaction.state !== 'idle';
+    const disabled = formLocked(scope);
+    const checks = evaluateChecks(scope, component);
     const onChange = (next) => {
         if (pointer === undefined)
             setLocal(next);
@@ -3014,46 +4242,41 @@ function renderSlider(scope, component) {
         'aria-valuemin': min,
         'aria-valuemax': max,
         'aria-valuenow': current,
+        'aria-invalid': checks.ok ? undefined : true,
         onChange: (event) => onChange(Number(event.target.value)),
-    }));
+    }), checks.ok ? null : h('span', { className: 'a2ui-error', role: 'status' }, checks.message));
 }
 /** `DateTimeInput` */
 function renderDateTimeInput(scope, component) {
-    const view = scope.view;
     const enableDate = component.enableDate !== false;
     const enableTime = component.enableTime === true;
-    const type = enableDate && enableTime ? 'datetime-local' : enableDate ? 'date' : 'time';
+    const type = dateTimeKind(enableDate, enableTime);
     const raw = text(scope, component.value);
     const pointer = bindingPointer(component.value);
     const [local, setLocal] = React.useState(raw);
     const current = pointer === undefined ? local : raw;
-    const id = `a2ui-${view.surfaceId}-${component.id}`;
-    const toInputValue = (iso) => {
-        if (iso === '')
-            return '';
-        if (type === 'date')
-            return iso.slice(0, 10);
-        if (type === 'time')
-            return iso.length > 11 ? iso.slice(11, 16) : iso;
-        return iso.slice(0, 16);
-    };
+    const id = domId(scope, component);
+    const checks = evaluateChecks(scope, component);
+    const min = component.min === undefined ? undefined : toControlValue(text(scope, component.min), type);
+    const max = component.max === undefined ? undefined : toControlValue(text(scope, component.max), type);
     const onChange = (next) => {
-        const iso = next === '' ? '' : new Date(next).toISOString();
+        const stored = fromControlValue(next, type);
         if (pointer === undefined)
-            setLocal(next);
+            setLocal(stored);
         else
-            write(scope, component.value, iso);
+            write(scope, component.value, stored);
     };
     return h('div', { className: 'a2ui-field' }, component.label === undefined ? null : h('label', { className: 'a2ui-label', htmlFor: id }, text(scope, component.label)), h('input', {
         id,
         className: 'a2ui-input',
         type,
-        value: toInputValue(current),
-        min: component.min === undefined ? undefined : text(scope, component.min),
-        max: component.max === undefined ? undefined : text(scope, component.max),
-        disabled: view.interaction.state !== 'idle',
+        value: toControlValue(current, type),
+        min,
+        max,
+        disabled: formLocked(scope),
+        'aria-invalid': checks.ok ? undefined : true,
         onChange: (event) => onChange(event.target.value),
-    }));
+    }), checks.ok ? null : h('span', { className: 'a2ui-error', role: 'status' }, checks.message));
 }
 /** Component wrappers: each hook lives in its own fiber, so a component whose
  * type changes via `updateComponents` mounts/unmounts cleanly instead of
@@ -3476,7 +4699,8 @@ __registry["./client/charts.js"] = function(module, exports, require) {
 const React = require("react");
 const { h } = require("./client/h.js");
 const { compileExpression } = require("./shared/expression.js");
-const { numberList, numberValue, text } = require("./client/context.js");
+const { anyValue, numberList, numberValue, text } = require("./client/context.js");
+const { isDataBinding, isFunctionCall } = require("./shared/schema.js");
 const VIEW_WIDTH = 640;
 const PAD = { top: 18, right: 16, bottom: 30, left: 46 };
 const TOOLTIP_FONT = 10.5;
@@ -3542,7 +4766,7 @@ function readSeries(scope, component) {
     });
 }
 function legend(props) {
-    const { series, hidden, onToggle } = props;
+    const { series, hidden, onToggle, more } = props;
     if (series.length <= 1)
         return null;
     return h('div', { className: 'a2ui-legend' }, ...series.map((entry, index) => {
@@ -3556,7 +4780,7 @@ function legend(props) {
             onClick: onToggle === undefined ? undefined : () => onToggle(index),
             style: onToggle === undefined ? { cursor: 'default' } : undefined,
         }, h('span', { className: 'a2ui-legend-swatch', style: { background: entry.color } }), entry.label);
-    }));
+    }), more !== undefined && more > 0 ? h('span', { className: 'a2ui-legend-more' }, `+${more}`) : null);
 }
 function caption(scope, component) {
     if (component.caption === undefined)
@@ -3586,6 +4810,48 @@ function tooltipLines(x, y, width, height, lines, align = 'start') {
 function textWidth(lines) {
     return Math.max(...lines.map((line) => line.length)) * CHAR_WIDTH + 16;
 }
+/**
+ * Domain a bar chart needs so the baseline is visible.
+ *
+ * A positive-only series starts at 0, a negative-only one ends at 0, and a
+ * mixed one contains 0 naturally. An explicit `yMin`/`yMax` wins; if both force
+ * the same value the domain is left automatic so the scale cannot collapse.
+ */
+function barDomain(values, forcedMin, forcedMax) {
+    const finite = values.filter((value) => Number.isFinite(value));
+    const dataMin = finite.length > 0 ? Math.min(...finite) : 0;
+    const dataMax = finite.length > 0 ? Math.max(...finite) : 0;
+    let min = forcedMin ?? (dataMin >= 0 ? 0 : undefined);
+    let max = forcedMax ?? (dataMax <= 0 ? 0 : undefined);
+    if (min !== undefined && max !== undefined && min === max) {
+        min = undefined;
+        max = undefined;
+    }
+    return { min, max };
+}
+/**
+ * Split sampled points into drawable runs.
+ *
+ * A curve that leaves the plotted domain (`1/x`, `tan`, an asymptote) is broken
+ * instead of being connected across the gap, which would draw a false straight
+ * line through a discontinuity.
+ */
+function splitPlotSegments(points, min, max) {
+    const segments = [];
+    let current = [];
+    for (const point of points) {
+        if (!Number.isFinite(point.y) || point.y < min || point.y > max) {
+            if (current.length > 0)
+                segments.push(current);
+            current = [];
+            continue;
+        }
+        current.push(point);
+    }
+    if (current.length > 0)
+        segments.push(current);
+    return segments;
+}
 /** `BarChart` */
 function renderBarChart(scope, component) {
     const view = scope.view;
@@ -3613,12 +4879,36 @@ function renderBarChart(scope, component) {
     const height = chartHeight(component, horizontal ? Math.max(160, categories.length * 26 + PAD.top + PAD.bottom) : 240);
     const plotWidth = VIEW_WIDTH - PAD.left - PAD.right;
     const plotHeight = height - PAD.top - PAD.bottom;
-    const stackedTotals = categories.map((_, index) => series.reduce((sum, entry) => sum + (entry.values[index] ?? 0), 0));
-    const scale = stacked && !horizontal
-        ? niceScale(stackedTotals, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
-        : niceScale(all, numberValue(scope, component.yMin), numberValue(scope, component.yMax));
-    const valueToY = (value) => PAD.top + plotHeight - ((value - scale.min) / (scale.max - scale.min)) * plotHeight;
-    const valueToX = (value) => PAD.left + ((value - scale.min) / (scale.max - scale.min)) * plotWidth;
+    // Bar charts must show their baseline: a positive-only series starts at 0, a
+    // negative-only one ends at 0, and a mixed one contains 0. An explicit yMin /
+    // yMax wins, and the plot is clamped to that domain.
+    const domain = barDomain(all, numberValue(scope, component.yMin), numberValue(scope, component.yMax));
+    let scale;
+    if (stacked && !horizontal) {
+        const stackMin = [];
+        const stackMax = [];
+        categories.forEach((_, index) => {
+            let up = 0;
+            let down = 0;
+            for (const entry of series) {
+                const value = entry.values[index] ?? 0;
+                if (value >= 0)
+                    up += value;
+                else
+                    down += value;
+            }
+            stackMax.push(up);
+            stackMin.push(down);
+        });
+        scale = niceScale([...stackMax, ...stackMin], domain.min, domain.max);
+    }
+    else {
+        scale = niceScale(all, domain.min, domain.max);
+    }
+    const span = scale.max - scale.min || 1;
+    const clamp = (value) => Math.max(scale.min, Math.min(scale.max, value));
+    const valueToY = (value) => PAD.top + plotHeight - ((clamp(value) - scale.min) / span) * plotHeight;
+    const valueToX = (value) => PAD.left + ((clamp(value) - scale.min) / span) * plotWidth;
     const band = horizontal ? plotHeight / Math.max(1, categories.length) : plotWidth / Math.max(1, categories.length);
     const groupWidth = band * 0.68;
     const barWidth = stacked || horizontal ? groupWidth : groupWidth / Math.max(1, series.length);
@@ -3629,17 +4919,21 @@ function renderBarChart(scope, component) {
     categories.forEach((category, categoryIndex) => {
         const center = PAD.left + band * categoryIndex + band / 2;
         if (stacked && !horizontal) {
-            let cursor = 0;
+            let up = 0;
+            let down = 0;
             series.forEach((entry, seriesIndex) => {
                 const value = entry.values[categoryIndex] ?? 0;
-                const y = valueToY(cursor + value);
+                const base = value >= 0 ? up : down;
+                const top = base + value;
+                const yBase = valueToY(base);
+                const yTop = valueToY(top);
                 const isHover = hover?.category === categoryIndex;
                 bars.push(h('rect', {
                     key: `b${categoryIndex}-${seriesIndex}`,
                     x: center - barWidth / 2,
-                    y: Math.min(y, valueToY(cursor)),
+                    y: Math.min(yBase, yTop),
                     width: barWidth,
-                    height: Math.max(0.5, Math.abs(valueToY(cursor) - y)),
+                    height: Math.max(0.5, Math.abs(yBase - yTop)),
                     rx: 2,
                     fill: entry.color,
                     opacity: hover === null || isHover ? 1 : 0.42,
@@ -3647,19 +4941,23 @@ function renderBarChart(scope, component) {
                     onMouseLeave: () => setHover(null),
                     style: { transition: 'opacity .12s ease' },
                 }));
-                cursor += value;
+                if (value >= 0)
+                    up = top;
+                else
+                    down = top;
             });
         }
         else if (horizontal) {
+            const baseline = valueToX(0);
             series.forEach((entry, seriesIndex) => {
                 const value = entry.values[categoryIndex] ?? 0;
-                const x = valueToX(Math.min(scale.min, 0));
+                const end = valueToX(value);
                 const isHover = hover?.category === categoryIndex;
                 bars.push(h('rect', {
                     key: `b${categoryIndex}-${seriesIndex}`,
-                    x,
+                    x: Math.min(baseline, end),
                     y: PAD.top + band * categoryIndex + (band - groupWidth) / 2 + seriesIndex * (groupWidth / Math.max(1, series.length)),
-                    width: Math.max(0.5, Math.abs(valueToX(value) - x)),
+                    width: Math.max(0.5, Math.abs(end - baseline)),
                     height: (groupWidth / Math.max(1, series.length)) * 0.86,
                     rx: 2,
                     fill: entry.color,
@@ -3879,9 +5177,9 @@ function renderLineChart(scope, component) {
 /** `PieChart` */
 function renderPieChart(scope, component) {
     const view = scope.view;
-    const raw = Array.isArray(component.slices) ? component.slices.slice(0, 40) : [];
+    const raw = Array.isArray(component.slices) ? component.slices : [];
     const [hover, setHover] = React.useState(null);
-    const slices = raw.map((entry, index) => {
+    const allSlices = raw.map((entry, index) => {
         const record = (entry ?? {});
         return {
             label: record.label === undefined ? `#${index + 1}` : text(scope, record.label),
@@ -3889,9 +5187,22 @@ function renderPieChart(scope, component) {
             color: seriesColor(index, record.color),
         };
     });
-    const total = slices.reduce((sum, slice) => sum + slice.value, 0);
+    const total = allSlices.reduce((sum, slice) => sum + slice.value, 0);
     if (total <= 0)
         return emptyChart(scope, component, view.t('chartEmpty'));
+    const maxVisibleSlices = 40;
+    const slices = allSlices.slice(0, maxVisibleSlices);
+    const remaining = allSlices.length - slices.length;
+    if (remaining > 0) {
+        slices.push({
+            label: `${view.t('otherSlices')} (${remaining})`,
+            value: allSlices.slice(maxVisibleSlices).reduce((sum, slice) => sum + slice.value, 0),
+            color: seriesColor(maxVisibleSlices, undefined),
+        });
+    }
+    const summary = remaining > 0
+        ? h('p', { className: 'a2ui-chart-note' }, `${view.t('groupedSlices')}: ${remaining}`)
+        : null;
     const height = chartHeight(component, 220);
     const radius = Math.min(height, VIEW_WIDTH / 2) / 2 - 14;
     const cx = VIEW_WIDTH / 4;
@@ -3921,7 +5232,7 @@ function renderPieChart(scope, component) {
     const centerText = active === null
         ? [`${view.t('total')} ${trim(total)}`]
         : [active.label, `${trim(active.value)}${suffix === '' ? '' : ` ${suffix}`}`, `${Math.round((active.value / total) * 100)}%`];
-    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('svg', {
+    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), summary, h('svg', {
         className: 'a2ui-chart-svg',
         viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
         role: 'img',
@@ -3965,7 +5276,11 @@ function renderPieChart(scope, component) {
             opacity: hover === null || isActive ? 1 : 0.5,
             textDecoration: isActive ? 'underline' : undefined,
         }, `${slice.label.length > 18 ? `${slice.label.slice(0, 17)}…` : slice.label} · ${Math.round((slice.value / total) * 100)}%`));
-    })));
+    }),
+    // Legend cap: say how many entries are not listed instead of dropping them.
+    slices.length > 10
+        ? h('text', { x: VIEW_WIDTH / 2 + 19, y: 24.5 + 10 * 19, fontSize: 11, fill: 'currentColor', opacity: 0.7 }, `+${slices.length - 10}`)
+        : null));
 }
 /** `Plot` */
 function renderPlot(scope, component) {
@@ -3977,7 +5292,19 @@ function renderPlot(scope, component) {
     const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240));
     const variablesRaw = component.variables;
     const variables = {};
-    if (variablesRaw !== undefined && variablesRaw !== null && typeof variablesRaw === 'object') {
+    // `variables` may be an object of per-variable bindings, or one binding that
+    // resolves to the whole coefficient object (`{"@path": "/coefficients"}`).
+    if (isDataBinding(variablesRaw) || isFunctionCall(variablesRaw)) {
+        const resolved = anyValue(scope, variablesRaw);
+        if (resolved !== null && typeof resolved === 'object' && !Array.isArray(resolved)) {
+            for (const [key, value] of Object.entries(resolved)) {
+                const numeric = typeof value === 'number' ? value : Number(value);
+                if (Number.isFinite(numeric))
+                    variables[key] = numeric;
+            }
+        }
+    }
+    else if (variablesRaw !== undefined && variablesRaw !== null && typeof variablesRaw === 'object') {
         for (const [key, value] of Object.entries(variablesRaw)) {
             const resolved = numberValue(scope, value);
             if (resolved !== undefined)
@@ -4044,17 +5371,24 @@ function renderPlot(scope, component) {
         marks.push(h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(0), y2: yAt(0), stroke: 'currentColor', opacity: 0.35, strokeWidth: 1 }));
     }
     lines.forEach((line, index) => {
-        if (line.samples.length > 0) {
+        // A curve that leaves the plotted domain (1/x, tan, a vertical asymptote) is
+        // broken rather than connected across the gap.
+        const segments = splitPlotSegments(line.samples, scale.min, scale.max);
+        segments.forEach((segment, segmentIndex) => {
+            if (segment.length === 1) {
+                marks.push(h('circle', { key: `fx${index}-${segmentIndex}`, cx: xAt(segment[0].x), cy: yAt(segment[0].y), r: 2, fill: line.color }));
+                return;
+            }
             marks.push(h('path', {
-                key: `f${index}`,
-                d: line.samples.map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'}${xAt(point.x).toFixed(2)},${yAt(point.y).toFixed(2)}`).join(' '),
+                key: `f${index}-${segmentIndex}`,
+                d: segment.map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'}${xAt(point.x).toFixed(2)},${yAt(point.y).toFixed(2)}`).join(' '),
                 fill: 'none',
                 stroke: line.color,
                 strokeWidth: 2,
                 strokeLinejoin: 'round',
                 strokeLinecap: 'round',
             }));
-        }
+        });
         line.points.forEach((point, pointIndex) => {
             marks.push(h('circle', { key: `s${index}-${pointIndex}`, cx: xAt(point.x), cy: yAt(point.y), r: 3, fill: line.color }));
         });
@@ -4083,6 +5417,8 @@ function PlotView(props) {
     return renderPlot(props.scope, props.component);
 }
 
+exports["barDomain"] = barDomain;
+exports["splitPlotSegments"] = splitPlotSegments;
 exports["renderBarChart"] = renderBarChart;
 exports["renderLineChart"] = renderLineChart;
 exports["renderPieChart"] = renderPieChart;
@@ -4322,7 +5658,12 @@ function renderById(scope, id, depth, key, itemScope) {
     if (component === undefined) {
         return h('span', { key }, fallback(scope, `${scope.view.t('childMissing')}: ${id}`));
     }
-    const nextScope = itemScope === undefined ? { view: scope.view, index: scope.index } : { view: scope.view, item: itemScope.item, index: itemScope.index };
+    // A nested child inside a template row inherits the row's item, so a `Text`
+    // three levels below the template still resolves `{"@path": "title"}` against
+    // that row. Only the component that *renders the template* gets a new scope.
+    const nextScope = itemScope === undefined
+        ? { view: scope.view, item: scope.item, index: scope.index }
+        : { view: scope.view, item: itemScope.item, index: itemScope.index };
     return h(ComponentNode, { key, component, scope: nextScope, depth });
 }
 function ComponentNode(props) {
@@ -4448,7 +5789,37 @@ function renderTabs(scope, component, depth) {
     const tabs = Array.isArray(component.tabs) ? component.tabs : [];
     const [active, setActive] = React.useState(0);
     const safeIndex = Math.min(active, Math.max(0, tabs.length - 1));
-    const surfacePrefix = `a2ui-${view.surfaceId}-${component.id}`;
+    const surfacePrefix = `a2ui-${view.callId}-${view.surfaceId}-${component.id}${scope.index === undefined ? '' : `-r${scope.index}`}`;
+    const tabRefs = React.useRef([]);
+    const focusTab = (index) => {
+        const count = tabs.length;
+        if (count === 0)
+            return;
+        const next = ((index % count) + count) % count;
+        setActive(next);
+        tabRefs.current[next]?.focus();
+    };
+    const onKeyDown = (event) => {
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            focusTab(safeIndex + 1);
+            return;
+        }
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            focusTab(safeIndex - 1);
+            return;
+        }
+        if (event.key === 'Home') {
+            event.preventDefault();
+            focusTab(0);
+            return;
+        }
+        if (event.key === 'End') {
+            event.preventDefault();
+            focusTab(tabs.length - 1);
+        }
+    };
     const buttons = tabs.map((tab, index) => {
         const record = tab;
         const title = record.title === undefined ? `Tab ${index + 1}` : text(scope, record.title);
@@ -4460,30 +5831,87 @@ function renderTabs(scope, component, depth) {
             'aria-selected': index === safeIndex,
             'aria-controls': `${surfacePrefix}-panel-${index}`,
             id: `${surfacePrefix}-tab-${index}`,
+            // Roving tabindex: only the selected tab is in the tab order, and the
+            // arrow keys move selection (the WAI-ARIA tabs pattern).
+            tabIndex: index === safeIndex ? 0 : -1,
+            ref: (element) => {
+                tabRefs.current[index] = element;
+            },
             onClick: () => setActive(index),
         }, title);
     });
     const current = tabs[safeIndex];
     const child = typeof current?.child === 'string' ? current.child : '';
-    return h('div', { className: 'a2ui-tabs' }, h('div', { className: 'a2ui-tabbar', role: 'tablist' }, ...buttons), h('div', { role: 'tabpanel', id: `${surfacePrefix}-panel-${safeIndex}`, 'aria-labelledby': `${surfacePrefix}-tab-${safeIndex}` }, renderById(scope, child, depth + 1, 'tabpanel')));
+    return h('div', { className: 'a2ui-tabs' }, h('div', { className: 'a2ui-tabbar', role: 'tablist', onKeyDown }, ...buttons), h('div', { role: 'tabpanel', id: `${surfacePrefix}-panel-${safeIndex}`, 'aria-labelledby': `${surfacePrefix}-tab-${safeIndex}` }, renderById(scope, child, depth + 1, 'tabpanel')));
 }
 function renderModal(scope, component, depth) {
     const view = scope.view;
     const [open, setOpen] = React.useState(false);
     const triggerId = typeof component.trigger === 'string' ? component.trigger : '';
     const contentId = typeof component.content === 'string' ? component.content : '';
+    const triggerElementId = `a2ui-${view.callId}-${view.surfaceId}-${component.id}-trigger`;
+    const dialogRef = React.useRef(null);
+    const triggerRef = React.useRef(null);
+    /** Set when the dialog closes, so the next committed render can restore focus. */
+    const restoreFocus = React.useRef(false);
     const close = () => setOpen(false);
+    // Focus management: initial focus inside the dialog, Tab cycles within it, Esc
+    // closes, and closing returns focus to the trigger (WAI-ARIA dialog pattern).
     React.useEffect(() => {
         if (!open)
             return undefined;
+        const dialog = dialogRef.current;
+        const focusable = () => {
+            if (dialog === null)
+                return [];
+            return [...dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true');
+        };
+        focusable()[0]?.focus();
         const onKey = (event) => {
-            if (event.key === 'Escape')
+            if (event.key === 'Escape') {
+                event.preventDefault();
                 setOpen(false);
+                return;
+            }
+            if (event.key !== 'Tab')
+                return;
+            const items = focusable();
+            if (items.length === 0)
+                return;
+            const index = items.indexOf(document.activeElement);
+            if (event.shiftKey && index <= 0) {
+                event.preventDefault();
+                items[items.length - 1]?.focus();
+            }
+            else if (!event.shiftKey && (index === -1 || index === items.length - 1)) {
+                event.preventDefault();
+                items[0]?.focus();
+            }
         };
         document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            restoreFocus.current = true;
+        };
     }, [open]);
-    const trigger = h('span', { className: 'a2ui-modal-trigger', onClick: () => setOpen(true) }, renderById(scope, triggerId, depth + 1, 'trigger'));
+    // Runs after the closed tree is committed, so the trigger node exists again.
+    // Scoped to `open` on purpose: an effect that ran on every render would focus
+    // the trigger repeatedly and spin the component.
+    React.useEffect(() => {
+        if (open || !restoreFocus.current)
+            return;
+        restoreFocus.current = false;
+        const wrapper = triggerRef.current ?? document.getElementById(triggerElementId);
+        wrapper?.querySelector('button')?.focus();
+    }, [open, triggerElementId]);
+    const trigger = h('span', {
+        className: 'a2ui-modal-trigger',
+        id: triggerElementId,
+        ref: (element) => {
+            triggerRef.current = element;
+        },
+        onClick: () => setOpen(true),
+    }, renderById(scope, triggerId, depth + 1, 'trigger'));
     if (!open)
         return trigger;
     return h('span', null, trigger, h('div', {
@@ -4493,7 +5921,15 @@ function renderModal(scope, component, depth) {
             if (event.target === event.currentTarget)
                 close();
         },
-    }, h('div', { className: 'a2ui-modal', role: 'dialog', 'aria-modal': true, 'aria-label': view.t('title') }, h('div', { className: 'a2ui-modal-close' }, h('button', { type: 'button', className: 'a2ui-btn', onClick: close }, view.t('close'))), renderById(scope, contentId, depth + 1, 'content'))));
+    }, h('div', {
+        className: 'a2ui-modal',
+        role: 'dialog',
+        'aria-modal': true,
+        'aria-label': view.t('title'),
+        ref: (element) => {
+            dialogRef.current = element;
+        },
+    }, h('div', { className: 'a2ui-modal-close' }, h('button', { type: 'button', className: 'a2ui-btn', onClick: close }, view.t('close'))), renderById(scope, contentId, depth + 1, 'content'))));
 }
 function formatCell(value, column, locale) {
     if (value === undefined || value === null)
@@ -4785,6 +6221,55 @@ function useClaimCopy(sessionId, callId, enabled) {
 exports["useCopyClaimed"] = useCopyClaimed;
 exports["useClaimCopy"] = useClaimCopy;
 };
+__registry["./client/action.js"] = function(module, exports, require) {
+const { resolveActionContext } = require("./shared/binding.js");
+/** Largest action payload accepted before the click is refused. */
+const MAX_ACTION_CHARS = 32_768;
+/** Render the user message that carries the action to the agent. */
+function formatActionPrompt(action) {
+    const userMessage = typeof action.userMessage === 'string' && action.userMessage !== '' ? action.userMessage : undefined;
+    const json = JSON.stringify({ version: '1.0', action }, null, 0);
+    const head = userMessage === undefined ? '[A2UI action]' : `[A2UI action] ${userMessage}`;
+    return `${head}\n\n\`\`\`json\n${json}\n\`\`\``;
+}
+/**
+ * Build the action message for one click.
+ * @returns the message and its prompt text, or the error state to show.
+ */
+function buildAction(input) {
+    const resolveContext = {
+        dataModel: input.dataModel,
+        item: input.item,
+        index: input.index,
+        locale: input.locale,
+        now: input.now,
+    };
+    let context = {};
+    try {
+        context = resolveActionContext(input.contextSpec, resolveContext);
+    }
+    catch {
+        context = {};
+    }
+    const action = {
+        name: input.name,
+        surfaceId: input.surfaceId,
+        sourceComponentId: input.component.id,
+        timestamp: new Date(input.now).toISOString(),
+        context,
+        ...(input.userMessage === undefined ? {} : { userMessage: input.userMessage }),
+    };
+    const text = formatActionPrompt(action);
+    if (text.length > MAX_ACTION_CHARS) {
+        return { kind: 'refused', state: { state: 'error', message: 'action context is too large' } };
+    }
+    return { kind: 'ok', action, text };
+}
+
+exports["MAX_ACTION_CHARS"] = MAX_ACTION_CHARS;
+exports["formatActionPrompt"] = formatActionPrompt;
+exports["buildAction"] = buildAction;
+};
 __registry["./client/tool-view.js"] = function(module, exports, require) {
 /**
  * The `tool.call.toolview` component for the `a2ui` tool.
@@ -4799,11 +6284,13 @@ const React = require("react");
 const { h } = require("./client/h.js");
 const { validateToolArguments, applyMessageBatch } = require("./shared/validate.js");
 const { COMPONENT_BY_NAME } = require("./shared/catalog.js");
-const { pointerSet } = require("./shared/json.js");
+const { interactionFor, modelFor, setInteractionState, stateKey, storeVersion, subscribeStore, writeModel } = require("./client/model-store.js");
 const { FUNCTIONS } = require("./shared/functions.js");
+const { estimateExpansion } = require("./shared/budget.js");
 const { A2UISurface } = require("./client/surface.js");
 const { useClaimCopy, useCopyClaimed } = require("./client/claims-react.js");
-const { resolveActionContext, resolveValue } = require("./shared/binding.js");
+const { resolveValue } = require("./shared/binding.js");
+const { buildAction } = require("./client/action.js");
 function textOfContent(content) {
     if (!Array.isArray(content))
         return '';
@@ -4877,10 +6364,18 @@ function analyse(payload) {
         }
         if (state === undefined)
             continue;
-        if (touch.created)
+        if (touch.created) {
+            // The Host applies the same budget; re-checking here keeps an old or
+            // foreign payload from expanding into a huge tree.
+            const estimate = estimateExpansion(state);
+            if (estimate.reason !== undefined) {
+                return { ok: false, errors: [{ path: `/surfaces/${touch.surfaceId}`, message: estimate.reason }], warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] };
+            }
             surfaces.push({ state, created: true, componentCount: state.components.size });
-        else if (touch.changedComponentIds.length > 0 || touch.dataModelChanged)
+        }
+        else if (touch.changedComponentIds.length > 0 || touch.dataModelChanged) {
             updatedOnly.push(touch.surfaceId);
+        }
     }
     return { ok: true, errors: [], warnings: validation.warnings, surfaces, updatedOnly, deleted };
 }
@@ -4897,12 +6392,7 @@ function formatViolations(errors) {
         .join('\n');
 }
 /** Build the user message that carries an A2UI action to the agent. */
-function formatActionPrompt(action) {
-    const userMessage = typeof action.userMessage === 'string' && action.userMessage !== '' ? action.userMessage : undefined;
-    const json = JSON.stringify({ version: '1.0', action }, null, 0);
-    const head = userMessage === undefined ? '[A2UI action]' : `[A2UI action] ${userMessage}`;
-    return `${head}\n\n\`\`\`json\n${json}\n\`\`\``;
-}
+{ const __reexport = require("./client/action.js"); exports["formatActionPrompt"] = __reexport["formatActionPrompt"]; }
 function openExternal(url) {
     if (!/^https?:\/\//iu.test(url))
         return;
@@ -4928,70 +6418,69 @@ function A2UIToolView(props) {
     const claimedElsewhere = useCopyClaimed(sessionId, props.callId);
     useClaimCopy(sessionId, props.callId, mode === 'tail');
     const compact = props.compact ?? (mode === 'row' && claimedElsewhere && props.phase === 'result');
-    const [models, setModels] = React.useState({});
-    const [interactions, setInteractions] = React.useState({});
-    const seeded = React.useRef(new Set());
-    React.useEffect(() => {
-        const next = {};
-        for (const surface of analysis.surfaces)
-            next[surface.state.surfaceId] = surface.state.dataModel;
-        setModels((previous) => {
-            const merged = {};
-            for (const [key, value] of Object.entries(next))
-                merged[key] = seeded.current.has(key) ? (previous[key] ?? value) : value;
-            for (const key of Object.keys(next))
-                seeded.current.add(key);
-            return merged;
-        });
-    }, [analysis]);
+    // Edits and action state live in a store keyed by session + call + surface, so
+    // the row and the turn tail show the same values when the card changes hands.
+    React.useSyncExternalStore(subscribeStore, storeVersion, storeVersion);
+    /** One in-flight send per (surface, component): a double click enqueues once. */
+    const inFlight = React.useRef(new Set());
+    const keyFor = React.useCallback((surfaceId) => stateKey(sessionId, props.callId, surfaceId), [sessionId, props.callId]);
     const locale = runtime.locale();
-    const errorText = props.phase === 'result' && props.block?.isError === true ? textOfContent(props.block.content) : '';
+    const isErrorResult = props.phase === 'result' && props.block?.isError === true;
+    const errorText = isErrorResult ? textOfContent(props.block?.content) : '';
     const setValue = React.useCallback((surfaceId, pointer, value) => {
-        setModels((previous) => ({ ...previous, [surfaceId]: pointerSet(previous[surfaceId] ?? {}, pointer, value) }));
-    }, []);
+        writeModel(keyFor(surfaceId), pointer, value);
+    }, [keyFor]);
     const setInteraction = React.useCallback((surfaceId, state) => {
-        setInteractions((previous) => ({ ...previous, [surfaceId]: state }));
-    }, []);
-    const submit = React.useCallback((surfaceId, component, name, contextSpec, userMessage) => {
+        setInteractionState(keyFor(surfaceId), state);
+    }, [keyFor]);
+    const submit = React.useCallback((surfaceId, scope, component, name, contextSpec, userMessage) => {
         if (sessionId === undefined) {
             setInteraction(surfaceId, { state: 'error', message: t('sendFailed') });
             return;
         }
-        const resolveContext = {
-            dataModel: models[surfaceId] ?? {},
+        const requestKey = `${surfaceId}\u0000${component.id}`;
+        if (inFlight.current.has(requestKey))
+            return;
+        inFlight.current.add(requestKey);
+        // The scope carries the template row, so a row button resolves its own item.
+        const outcome = buildAction({
+            surfaceId,
+            component,
+            name,
+            contextSpec,
+            dataModel: modelFor(keyFor(surfaceId), {}),
+            item: scope.item,
+            index: scope.index,
             locale,
             now: Date.now(),
-        };
-        let context = {};
-        try {
-            context = resolveActionContext(contextSpec, resolveContext);
-        }
-        catch {
-            context = {};
-        }
-        const action = {
-            name,
-            surfaceId,
-            sourceComponentId: component.id,
-            timestamp: new Date().toISOString(),
-            context,
-            ...(userMessage === undefined ? {} : { userMessage }),
-        };
-        if (JSON.stringify(action).length > 32_768) {
-            setInteraction(surfaceId, { state: 'error', message: `${t('sendFailed')}: action context is too large` });
+            userMessage,
+        });
+        if (outcome.kind === 'refused') {
+            inFlight.current.delete(requestKey);
+            setInteraction(surfaceId, outcome.state);
             return;
         }
         setInteraction(surfaceId, { state: 'sending' });
         void runtime
-            .sendPrompt(sessionId, formatActionPrompt(action))
-            .then(() => setInteraction(surfaceId, { state: 'sent' }))
+            .sendPrompt(sessionId, outcome.text)
+            .then(() => {
+            setInteraction(surfaceId, { state: 'sent' });
+        })
             .catch((cause) => {
+            // A failed send becomes editable again so the user can retry.
+            inFlight.current.delete(requestKey);
             const message = cause instanceof Error ? cause.message : String(cause);
             setInteraction(surfaceId, { state: 'error', message });
         });
-    }, [models, locale, runtime, sessionId, setInteraction, t]);
-    const runLocal = React.useCallback((surfaceId, component, call) => {
-        const resolveContext = { dataModel: models[surfaceId] ?? {}, locale, now: Date.now() };
+    }, [keyFor, locale, runtime, sessionId, setInteraction, t]);
+    const runLocal = React.useCallback((surfaceId, scope, component, call) => {
+        const resolveContext = {
+            dataModel: modelFor(keyFor(surfaceId), {}),
+            item: scope.item,
+            index: scope.index,
+            locale,
+            now: Date.now(),
+        };
         const record = call;
         const name = (record['@call'] ?? record.call);
         if (name === undefined)
@@ -5007,18 +6496,19 @@ function A2UIToolView(props) {
         // already owns; there is nothing further to do.
         void component;
         void FUNCTIONS;
-    }, [models, locale]);
+    }, [keyFor, locale]);
     const makeView = (surface) => ({
         surfaceId: surface.surfaceId,
+        callId: props.callId,
         state: surface,
-        model: models[surface.surfaceId] ?? surface.dataModel,
+        model: modelFor(keyFor(surface.surfaceId), surface.dataModel),
         locale,
         now,
-        interaction: interactions[surface.surfaceId] ?? { state: 'idle' },
+        interaction: interactionFor(keyFor(surface.surfaceId)),
         t,
         setValue: (pointer, value) => setValue(surface.surfaceId, pointer, value),
-        submit: (component, name, context, userMessage) => submit(surface.surfaceId, component, name, context, userMessage),
-        runLocal: (component, call) => runLocal(surface.surfaceId, component, call),
+        submit: (scope, component, name, context, userMessage) => submit(surface.surfaceId, scope, component, name, context, userMessage),
+        runLocal: (scope, component, call) => runLocal(surface.surfaceId, scope, component, call),
     });
     // Stage: the model is still streaming arguments — show a lightweight skeleton
     // instead of flashing a broken surface.
@@ -5026,8 +6516,10 @@ function A2UIToolView(props) {
         return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-notice', role: 'status' }, t('rendering')))));
     }
     const header = h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')));
-    if (errorText !== '') {
-        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText, error: true }))));
+    // A failed call never renders operable content: without this, an error result
+    // with empty content would fall through and rebuild the surfaces from `meta`.
+    if (isErrorResult) {
+        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText === '' ? t('failedGeneric') : errorText, error: true }))));
     }
     if (!analysis.ok) {
         return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: `${t('invalidHint')}\n${formatViolations(analysis.errors)}`, error: true }))));
@@ -5071,7 +6563,6 @@ function A2UIToolView(props) {
 /** Exported for tests: which component names does the renderer know? */
 const KNOWN_COMPONENTS = [...COMPONENT_BY_NAME.keys()];
 
-exports["formatActionPrompt"] = formatActionPrompt;
 exports["A2UIToolView"] = A2UIToolView;
 exports["KNOWN_COMPONENTS"] = KNOWN_COMPONENTS;
 };
@@ -5087,6 +6578,7 @@ __registry["./client/surfaces.js"] = function(module, exports, require) {
  * Kept as pure functions so the selection logic is unit-testable without a
  * browser: a wrong guess about the store shape must fail a test, not a page.
  */
+const { isPlainObject } = require("./shared/json.js");
 /** Node phase, mirroring how the Chat tool node reports its current stage. */
 function toolPhaseOf(root) {
     if (root === undefined)
@@ -5119,6 +6611,80 @@ function lookup(nodes, key) {
     return nodes[key];
 }
 /**
+ * Whether a tool root belongs to this plugin.
+ *
+ * Matching by wire name covers the default `a2ui` call. The presentation-meta
+ * fallback covers a renamed `toolName`: the row view is registered under the
+ * default name and so will not exist, but a settled result still carries
+ * `meta.kind === 'a2ui'`, and the turn tail can render that card.
+ *
+ * @param root tool root lifecycle value.
+ * @param toolName configured wire name.
+ */
+function isA2uiRoot(root, toolName = 'a2ui') {
+    if (root === undefined)
+        return false;
+    if (blockToolName(root) === toolName)
+        return true;
+    const meta = root.meta;
+    return isPlainObject(meta) && meta.kind === 'a2ui';
+}
+/**
+ * Collect the `a2ui` roots from one turn's `tool-call` node data.
+ *
+ * This is the change *signal*: `ChatSnapshot.nodes.turnDataSource(turn,
+ * 'tool-call')` is documented as identity-stable and "changes only with its
+ * members". It cannot supply visibility (its payload is only `{root}`), so the
+ * turn tail reads the nodes themselves and uses this array purely to know when
+ * to re-read.
+ *
+ * @param entries `turnDataSource` payloads (`{ root }`), in anchor order.
+ * @param toolName wire tool name, default `a2ui`.
+ */
+function rootsFromToolData(entries, toolName = 'a2ui') {
+    if (!Array.isArray(entries))
+        return [];
+    const out = [];
+    for (const [index, entry] of entries.entries()) {
+        if (!isPlainObject(entry))
+            continue;
+        const root = entry.root;
+        if (!isA2uiRoot(root, toolName))
+            continue;
+        out.push({ key: root?.callId ?? `tool-${index}`, root: root, phase: toolPhaseOf(root) });
+    }
+    return out;
+}
+/**
+ * Collect this turn's `a2ui` cards from its ordered node keys.
+ *
+ * `turnDataSource` includes hidden nodes, so visibility is applied here from the
+ * node itself — the same rule the transcript uses — and the root is read fresh so
+ * a start → result update is reflected.
+ *
+ * @param turnNumber the turn being rendered.
+ * @param keys ordered node keys for that turn (`locations.getTurn`).
+ * @param nodes key → node reader.
+ * @param toolName configured wire name.
+ */
+function rootsFromTurnNodes(turnNumber, keys, nodes, toolName = 'a2ui') {
+    if (turnNumber === undefined || !Array.isArray(keys))
+        return [];
+    const out = [];
+    for (const key of keys) {
+        const node = lookup(nodes, key);
+        if (node?.kind !== 'tool-call')
+            continue;
+        if (node.visibility === 'hidden')
+            continue;
+        const root = node.data?.root;
+        if (!isA2uiRoot(root, toolName))
+            continue;
+        out.push({ key, root: root, phase: toolPhaseOf(root) });
+    }
+    return out;
+}
+/**
  * Collect the `a2ui` calls of one turn, in transcript order.
  * @param order node keys in render order.
  * @param nodes key → node store.
@@ -5136,7 +6702,7 @@ function collectA2uiRoots(order, nodes, turnNumber, toolName = 'a2ui') {
         if (nodeTurn(node) !== turnNumber)
             continue;
         const root = node.data?.root;
-        if (blockToolName(root) !== toolName)
+        if (!isA2uiRoot(root, toolName))
             continue;
         entries.push({ key, root: root, phase: toolPhaseOf(root) });
     }
@@ -5146,39 +6712,72 @@ function collectA2uiRoots(order, nodes, turnNumber, toolName = 'a2ui') {
 exports["toolPhaseOf"] = toolPhaseOf;
 exports["blockToolName"] = blockToolName;
 exports["nodeTurn"] = nodeTurn;
+exports["isA2uiRoot"] = isA2uiRoot;
+exports["rootsFromToolData"] = rootsFromToolData;
+exports["rootsFromTurnNodes"] = rootsFromTurnNodes;
 exports["collectA2uiRoots"] = collectA2uiRoots;
 };
 __registry["./client/turn-tail.js"] = function(module, exports, require) {
 /**
  * `conversation.chat.turnTail` entry: the A2UI card in the main conversation.
  *
- * Why this slot: a `tool.call.toolview` lives inside the turn's "process"
- * window, which DSH folds for every completed turn that is no longer the newest
+ * Why this slot: a `tool.call.toolview` lives inside the turn's "process" window,
+ * which DSH folds for every completed turn that is no longer the newest
  * (`ChatNodeSeat`: `defaultOpen = bottom && deferCollapse`, hidden by
  * `processMember && !processOpen`). The turn tail renders after the turn's
  * answer, outside that window, which is exactly how the shipped action cards
  * keep their card visible.
  *
- * The card itself is the same component the tool row uses, so both surfaces stay
- * identical; only the host slot differs.
+ * Data source: `ChatSnapshot.nodes.turnDataSource(turn, 'tool-call')`, the
+ * documented per-turn observable whose array "changes only with its members".
+ * That is what makes a running call update in place when its result arrives,
+ * instead of freezing on the first published payload.
  */
 const React = require("react");
 const { h } = require("./client/h.js");
 const { A2UIToolView } = require("./client/tool-view.js");
-const { collectA2uiRoots } = require("./client/surfaces.js");
+const { collectA2uiRoots, rootsFromTurnNodes } = require("./client/surfaces.js");
+const EMPTY = [];
 /**
  * Render every `a2ui` surface produced by one completed turn.
  *
- * The selector reads only `order` and `nodes`, which are stable references the
- * store replaces on change; the derived list is memoized so an unrelated node
- * update does not re-render the cards.
+ * The per-turn observable is preferred; the `order` + `nodes` walk stays as a
+ * fallback for a Host whose snapshot predates `turnDataSource`.
  */
 function A2uiTurnTail(props) {
     const { turn, sessionId, runtime } = props;
     const useChat = props.useChat;
+    const turnNumber = turn?.turn;
+    const store = useChat?.((state) => state.nodes);
+    const source = React.useMemo(() => {
+        if (store === undefined || turnNumber === undefined)
+            return undefined;
+        try {
+            return store.turnDataSource?.(turnNumber, 'tool-call');
+        }
+        catch {
+            return undefined;
+        }
+    }, [store, turnNumber]);
+    const subscribe = React.useCallback((listener) => (source === undefined ? () => { } : source.subscribe(listener)), [source]);
+    const getSnapshot = React.useCallback(() => (source === undefined ? EMPTY : source.getSnapshot()), [source]);
+    // The third argument keeps server-side rendering (and the render harness) working.
+    const turnToolData = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    // `turnDataSource` includes hidden nodes, so the cards come from the turn's
+    // ordered node keys instead, read fresh on every notification.
+    const turnKeys = useChat?.((state) => {
+        const locations = state.locations;
+        return typeof locations?.getTurn === 'function' && turnNumber !== undefined ? locations.getTurn(turnNumber) : undefined;
+    });
+    // Fallback reader for a Host without `locations`/`turnDataSource`.
     const order = (useChat?.((state) => state.order) ?? []);
-    const nodes = useChat?.((state) => state.nodes);
-    const entries = React.useMemo(() => collectA2uiRoots(order, nodes, turn?.turn, 'a2ui'), [order, nodes, turn?.turn]);
+    const nodes = store;
+    const entries = React.useMemo(() => {
+        void turnToolData;
+        if (turnKeys !== undefined)
+            return rootsFromTurnNodes(turnNumber, turnKeys, nodes, 'a2ui');
+        return collectA2uiRoots(order, nodes, turnNumber, 'a2ui');
+    }, [turnKeys, turnToolData, order, nodes, turnNumber]);
     if (entries.length === 0)
         return null;
     return h('div', { className: 'a2ui-tail' }, ...entries.map((entry) => h(A2UIToolView, {

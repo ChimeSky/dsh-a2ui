@@ -12,13 +12,16 @@ import { h } from './h.js'
 import type { A2UIComponent, SurfaceState, SurfaceTouch } from '../shared/validate.js'
 import { validateToolArguments, applyMessageBatch } from '../shared/validate.js'
 import { COMPONENT_BY_NAME } from '../shared/catalog.js'
-import { pointerSet, type JsonValue } from '../shared/json.js'
+import type { JsonValue } from '../shared/json.js'
+import { interactionFor, modelFor, setInteractionState, stateKey, storeVersion, subscribeStore, writeModel } from './model-store.js'
 import type { Violation } from '../shared/schema.js'
 import { FUNCTIONS } from '../shared/functions.js'
+import { estimateExpansion } from '../shared/budget.js'
 import { A2UISurface } from './surface.js'
-import type { InteractionState, SurfaceView } from './context.js'
+import type { InteractionState, Scope, SurfaceView } from './context.js'
 import { useClaimCopy, useCopyClaimed } from './claims-react.js'
-import { resolveActionContext, resolveValue, type ResolveContext } from '../shared/binding.js'
+import { resolveValue, type ResolveContext } from '../shared/binding.js'
+import { buildAction } from './action.js'
 
 /** What the plugin needs from the browser shell (locale + prompt delivery). */
 export interface ClientRuntime {
@@ -151,8 +154,17 @@ function analyse(payload: Payload): Analysis {
       continue
     }
     if (state === undefined) continue
-    if (touch.created) surfaces.push({ state, created: true, componentCount: state.components.size })
-    else if (touch.changedComponentIds.length > 0 || touch.dataModelChanged) updatedOnly.push(touch.surfaceId)
+    if (touch.created) {
+      // The Host applies the same budget; re-checking here keeps an old or
+      // foreign payload from expanding into a huge tree.
+      const estimate = estimateExpansion(state)
+      if (estimate.reason !== undefined) {
+        return { ok: false, errors: [{ path: `/surfaces/${touch.surfaceId}`, message: estimate.reason }], warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] }
+      }
+      surfaces.push({ state, created: true, componentCount: state.components.size })
+    } else if (touch.changedComponentIds.length > 0 || touch.dataModelChanged) {
+      updatedOnly.push(touch.surfaceId)
+    }
   }
   return { ok: true, errors: [], warnings: validation.warnings, surfaces, updatedOnly, deleted }
 }
@@ -186,12 +198,7 @@ function formatViolations(errors: Violation[]): string {
 }
 
 /** Build the user message that carries an A2UI action to the agent. */
-export function formatActionPrompt(action: Record<string, unknown>): string {
-  const userMessage = typeof action.userMessage === 'string' && action.userMessage !== '' ? action.userMessage : undefined
-  const json = JSON.stringify({ version: '1.0', action }, null, 0)
-  const head = userMessage === undefined ? '[A2UI action]' : `[A2UI action] ${userMessage}`
-  return `${head}\n\n\`\`\`json\n${json}\n\`\`\``
-}
+export { formatActionPrompt } from './action.js'
 
 function openExternal(url: string): void {
   if (!/^https?:\/\//iu.test(url)) return
@@ -220,76 +227,90 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
   useClaimCopy(sessionId, props.callId, mode === 'tail')
   const compact = props.compact ?? (mode === 'row' && claimedElsewhere && props.phase === 'result')
 
-  const [models, setModels] = React.useState<Record<string, JsonValue>>({})
-  const [interactions, setInteractions] = React.useState<Record<string, InteractionState>>({})
-  const seeded = React.useRef<Set<string>>(new Set())
-
-  React.useEffect(() => {
-    const next: Record<string, JsonValue> = {}
-    for (const surface of analysis.surfaces) next[surface.state.surfaceId] = surface.state.dataModel
-    setModels((previous) => {
-      const merged: Record<string, JsonValue> = {}
-      for (const [key, value] of Object.entries(next)) merged[key] = seeded.current.has(key) ? (previous[key] ?? value) : value
-      for (const key of Object.keys(next)) seeded.current.add(key)
-      return merged
-    })
-  }, [analysis])
+  // Edits and action state live in a store keyed by session + call + surface, so
+  // the row and the turn tail show the same values when the card changes hands.
+  React.useSyncExternalStore(subscribeStore, storeVersion, storeVersion)
+  /** One in-flight send per (surface, component): a double click enqueues once. */
+  const inFlight = React.useRef<Set<string>>(new Set())
+  const keyFor = React.useCallback((surfaceId: string) => stateKey(sessionId, props.callId, surfaceId), [sessionId, props.callId])
 
   const locale = runtime.locale()
-  const errorText = props.phase === 'result' && props.block?.isError === true ? textOfContent(props.block.content) : ''
+  const isErrorResult = props.phase === 'result' && props.block?.isError === true
+  const errorText = isErrorResult ? textOfContent(props.block?.content) : ''
 
-  const setValue = React.useCallback((surfaceId: string, pointer: string, value: JsonValue) => {
-    setModels((previous) => ({ ...previous, [surfaceId]: pointerSet(previous[surfaceId] ?? {}, pointer, value) }))
-  }, [])
+  const setValue = React.useCallback(
+    (surfaceId: string, pointer: string, value: JsonValue) => {
+      writeModel(keyFor(surfaceId), pointer, value)
+    },
+    [keyFor],
+  )
 
-  const setInteraction = React.useCallback((surfaceId: string, state: InteractionState) => {
-    setInteractions((previous) => ({ ...previous, [surfaceId]: state }))
-  }, [])
+  const setInteraction = React.useCallback(
+    (surfaceId: string, state: InteractionState) => {
+      setInteractionState(keyFor(surfaceId), state)
+    },
+    [keyFor],
+  )
 
   const submit = React.useCallback(
-    (surfaceId: string, component: A2UIComponent, name: string, contextSpec: Record<string, unknown>, userMessage?: string) => {
+    (
+      surfaceId: string,
+      scope: Scope,
+      component: A2UIComponent,
+      name: string,
+      contextSpec: Record<string, unknown>,
+      userMessage?: string,
+    ) => {
       if (sessionId === undefined) {
         setInteraction(surfaceId, { state: 'error', message: t('sendFailed') })
         return
       }
-      const resolveContext: ResolveContext = {
-        dataModel: models[surfaceId] ?? {},
+      const requestKey = `${surfaceId}\u0000${component.id}`
+      if (inFlight.current.has(requestKey)) return
+      inFlight.current.add(requestKey)
+      // The scope carries the template row, so a row button resolves its own item.
+      const outcome = buildAction({
+        surfaceId,
+        component,
+        name,
+        contextSpec,
+        dataModel: modelFor(keyFor(surfaceId), {}),
+        item: scope.item,
+        index: scope.index,
         locale,
         now: Date.now(),
-      }
-      let context: Record<string, unknown> = {}
-      try {
-        context = resolveActionContext(contextSpec, resolveContext)
-      } catch {
-        context = {}
-      }
-      const action: Record<string, unknown> = {
-        name,
-        surfaceId,
-        sourceComponentId: component.id,
-        timestamp: new Date().toISOString(),
-        context,
-        ...(userMessage === undefined ? {} : { userMessage }),
-      }
-      if (JSON.stringify(action).length > 32_768) {
-        setInteraction(surfaceId, { state: 'error', message: `${t('sendFailed')}: action context is too large` })
+        userMessage,
+      })
+      if (outcome.kind === 'refused') {
+        inFlight.current.delete(requestKey)
+        setInteraction(surfaceId, outcome.state)
         return
       }
       setInteraction(surfaceId, { state: 'sending' })
       void runtime
-        .sendPrompt(sessionId, formatActionPrompt(action))
-        .then(() => setInteraction(surfaceId, { state: 'sent' }))
+        .sendPrompt(sessionId, outcome.text)
+        .then(() => {
+          setInteraction(surfaceId, { state: 'sent' })
+        })
         .catch((cause: unknown) => {
+          // A failed send becomes editable again so the user can retry.
+          inFlight.current.delete(requestKey)
           const message = cause instanceof Error ? cause.message : String(cause)
           setInteraction(surfaceId, { state: 'error', message })
         })
     },
-    [models, locale, runtime, sessionId, setInteraction, t],
+    [keyFor, locale, runtime, sessionId, setInteraction, t],
   )
 
   const runLocal = React.useCallback(
-    (surfaceId: string, component: A2UIComponent, call: unknown) => {
-      const resolveContext: ResolveContext = { dataModel: models[surfaceId] ?? {}, locale, now: Date.now() }
+    (surfaceId: string, scope: Scope, component: A2UIComponent, call: unknown) => {
+      const resolveContext: ResolveContext = {
+        dataModel: modelFor(keyFor(surfaceId), {}),
+        item: scope.item,
+        index: scope.index,
+        locale,
+        now: Date.now(),
+      }
       const record = call as Record<string, unknown>
       const name = (record['@call'] ?? record.call) as string | undefined
       if (name === undefined) return
@@ -304,20 +325,21 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
       void component
       void FUNCTIONS
     },
-    [models, locale],
+    [keyFor, locale],
   )
 
   const makeView = (surface: SurfaceState): SurfaceView => ({
     surfaceId: surface.surfaceId,
+    callId: props.callId,
     state: surface,
-    model: models[surface.surfaceId] ?? surface.dataModel,
+    model: modelFor(keyFor(surface.surfaceId), surface.dataModel),
     locale,
     now,
-    interaction: interactions[surface.surfaceId] ?? { state: 'idle' },
+    interaction: interactionFor(keyFor(surface.surfaceId)),
     t,
     setValue: (pointer, value) => setValue(surface.surfaceId, pointer, value),
-    submit: (component, name, context, userMessage) => submit(surface.surfaceId, component, name, context, userMessage),
-    runLocal: (component, call) => runLocal(surface.surfaceId, component, call),
+    submit: (scope, component, name, context, userMessage) => submit(surface.surfaceId, scope, component, name, context, userMessage),
+    runLocal: (scope, component, call) => runLocal(surface.surfaceId, scope, component, call),
   })
 
   // Stage: the model is still streaming arguments — show a lightweight skeleton
@@ -333,11 +355,13 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
     h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')),
   )
 
-  if (errorText !== '') {
+  // A failed call never renders operable content: without this, an error result
+  // with empty content would fall through and rebuild the surfaces from `meta`.
+  if (isErrorResult) {
     return h(
       'div',
       { className: 'a2ui-root' },
-      h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText, error: true }))),
+      h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText === '' ? t('failedGeneric') : errorText, error: true }))),
     )
   }
 

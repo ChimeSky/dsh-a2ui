@@ -20,6 +20,8 @@ export interface InteractionState {
 /** Everything a component renderer needs. */
 export interface SurfaceView {
   readonly surfaceId: string
+  /** Tool call this surface belongs to; keeps DOM ids unique across calls. */
+  readonly callId: string
   readonly state: SurfaceState
   readonly model: JsonValue
   readonly locale: string
@@ -27,8 +29,13 @@ export interface SurfaceView {
   readonly interaction: InteractionState
   readonly t: (key: string) => string
   readonly setValue: (pointer: string, value: JsonValue) => void
-  readonly submit: (component: A2UIComponent, name: string, context: Record<string, unknown>, userMessage?: string) => void
-  readonly runLocal: (component: A2UIComponent, call: unknown) => void
+  /**
+   * Send an `action.event` to the agent. The scope matters: a template row's
+   * action context resolves relative paths against that row's item.
+   */
+  readonly submit: (scope: Scope, component: A2UIComponent, name: string, context: Record<string, unknown>, userMessage?: string) => void
+  /** Run an `action.functionCall` locally (never sends a message). */
+  readonly runLocal: (scope: Scope, component: A2UIComponent, call: unknown) => void
 }
 
 /** A render scope: the surface plus an optional template item. */

@@ -7,6 +7,7 @@
  * browser renderer.
  */
 import type { JsonValue } from './json.js'
+import { matchRegex, regexInputUnsafeReason, RegexSyntaxError } from './regex.js'
 
 /** A structured validation result, as produced by the `checks` functions. */
 export interface ValidationResult {
@@ -28,7 +29,6 @@ export interface FunctionEnvironment {
 
 export type FunctionImplementation = (args: Record<string, unknown>, env: FunctionEnvironment) => unknown
 
-const MAX_PATTERN = 512
 
 function asString(value: unknown): string {
   if (typeof value === 'string') return value
@@ -63,15 +63,16 @@ const required: FunctionImplementation = (args) => {
   return empty ? { valid: false } : { valid: true }
 }
 
-/** `regex(value, pattern)` */
+/** `regex(value, pattern)` with dialect and backtracking checks. */
 const regex: FunctionImplementation = (args) => {
   const text = asString(args.value)
   const pattern = asString(args.pattern)
-  if (pattern.length === 0 || pattern.length > MAX_PATTERN) return { valid: false }
+  const unsafe = regexInputUnsafeReason(text)
+  if (unsafe !== undefined) return { valid: false, message: unsafe }
   try {
-    return { valid: new RegExp(pattern, 'u').test(text) }
-  } catch {
-    return { valid: false }
+    return { valid: matchRegex(pattern, text) }
+  } catch (error) {
+    return error instanceof RegexSyntaxError ? { valid: false, message: error.message } : { valid: false }
   }
 }
 

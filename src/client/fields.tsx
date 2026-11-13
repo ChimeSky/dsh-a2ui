@@ -5,6 +5,19 @@ import type { A2UIComponent } from '../shared/validate.js'
 import { isDataBinding } from '../shared/schema.js'
 import type { JsonValue } from '../shared/json.js'
 import { booleanValue, evaluateChecks, numberValue, stringList, text, type Scope } from './context.js'
+import { dateTimeKind, fromControlValue, toControlValue } from './datetime.js'
+
+/**
+ * DOM id for a control. Includes the tool call, the surface, the component and —
+ * inside a repeated template — the row index, so two rows or two calls never
+ * share a `label[for]` or a radio group.
+ */
+function domId(scope: Scope, component: A2UIComponent, suffix?: string | number): string {
+  const parts = ['a2ui', scope.view.callId, scope.view.surfaceId, component.id]
+  if (scope.index !== undefined) parts.push(`r${scope.index}`)
+  if (suffix !== undefined) parts.push(String(suffix))
+  return parts.join('-')
+}
 
 /** The absolute data-model pointer a control writes to, if it is bound. */
 export function bindingPointer(value: unknown): string | undefined {
@@ -19,6 +32,19 @@ function write(scope: Scope, value: unknown, next: JsonValue): void {
   const pointer = bindingPointer(value)
   if (pointer === undefined) return
   scope.view.setValue(pointer, next)
+}
+
+/**
+ * Whether a control must refuse edits right now.
+ *
+ * Only an in-flight send (`sending`) or a completed one (`sent`) locks the form.
+ * An **error** state must leave the inputs editable: the send can be retried
+ * after the user fixes the value, so `!== 'idle'` would strand the whole card.
+ * This mirrors the button, which already becomes clickable again on failure.
+ */
+function formLocked(scope: Scope): boolean {
+  const state = scope.view.interaction.state
+  return state === 'sending' || state === 'sent'
 }
 
 function labelOf(scope: Scope, component: A2UIComponent): string {
@@ -44,10 +70,10 @@ export function renderButton(scope: Scope, component: A2UIComponent): ReturnType
       const name = typeof event.name === 'string' ? event.name : 'action'
       const userMessage = event.userMessage === undefined ? undefined : text(scope, event.userMessage)
       const context = (event.context ?? {}) as Record<string, unknown>
-      view.submit(component, name, context, userMessage === '' ? undefined : userMessage)
+      view.submit(scope, component, name, context, userMessage === '' ? undefined : userMessage)
       return
     }
-    if (action.functionCall !== undefined) view.runLocal(component, action.functionCall)
+    if (action.functionCall !== undefined) view.runLocal(scope, component, action.functionCall)
   }
 
   // An agent-bound button starts a real turn when clicked, so it says so on
@@ -100,7 +126,7 @@ export function renderTextField(scope: Scope, component: A2UIComponent): ReturnT
   const current = pointer === undefined ? local : text(scope, component.value)
   const variant = typeof component.variant === 'string' ? component.variant : 'shortText'
   const checks = evaluateChecks(scope, component)
-  const id = `a2ui-${view.surfaceId}-${component.id}`
+  const id = domId(scope, component)
   const onChange = (next: string): void => {
     if (pointer === undefined) setLocal(next)
     else write(scope, component.value, next as JsonValue)
@@ -134,13 +160,12 @@ export function renderTextField(scope: Scope, component: A2UIComponent): ReturnT
 
 /** `CheckBox` */
 export function renderCheckBox(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
-  const view = scope.view
   const checked = booleanValue(scope, component.value)
   const pointer = bindingPointer(component.value)
   const [local, setLocal] = React.useState(checked)
   const value = pointer === undefined ? local : checked
   const checks = evaluateChecks(scope, component)
-  const id = `a2ui-${view.surfaceId}-${component.id}`
+  const id = domId(scope, component)
   return h(
     'div',
     { className: 'a2ui-field' },
@@ -151,7 +176,7 @@ export function renderCheckBox(scope: Scope, component: A2UIComponent): ReturnTy
         id,
         type: 'checkbox',
         checked: value,
-        disabled: view.interaction.state !== 'idle',
+        disabled: formLocked(scope),
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
           const next = event.target.checked
           if (pointer === undefined) setLocal(next)
@@ -176,7 +201,7 @@ export function renderChoicePicker(scope: Scope, component: A2UIComponent): Retu
   const current = pointer === undefined ? local : selected
   const checks = evaluateChecks(scope, component)
   const [query, setQuery] = React.useState('')
-  const disabled = view.interaction.state !== 'idle'
+  const disabled = formLocked(scope)
   const commit = (next: string[]): void => {
     if (pointer === undefined) setLocal(next)
     else write(scope, component.value, next as JsonValue)
@@ -247,14 +272,14 @@ export function renderChoicePicker(scope: Scope, component: A2UIComponent): Retu
       ...visible.map((option, index) => {
         const value = String(option.value ?? '')
         const active = current.includes(value)
-        const id = `a2ui-${view.surfaceId}-${component.id}-${index}`
+        const id = domId(scope, component, index)
         return h(
           'label',
           { key: `o${index}`, className: 'a2ui-check', htmlFor: id },
           h('input', {
             id,
             type: multiple ? 'checkbox' : 'radio',
-            name: multiple ? undefined : `a2ui-${view.surfaceId}-${component.id}`,
+            name: multiple ? undefined : domId(scope, component, 'group'),
             checked: active,
             disabled,
             onChange: () => toggle(value),
@@ -279,9 +304,10 @@ export function renderSlider(scope: Scope, component: A2UIComponent): ReturnType
   const pointer = bindingPointer(component.value)
   const [local, setLocal] = React.useState(bound)
   const current = pointer === undefined ? local : bound
-  const id = `a2ui-${view.surfaceId}-${component.id}`
+  const id = domId(scope, component)
   const step = steps !== undefined && steps > 0 ? (max - min) / steps : undefined
-  const disabled = view.interaction.state !== 'idle'
+  const disabled = formLocked(scope)
+  const checks = evaluateChecks(scope, component)
   const onChange = (next: number): void => {
     if (pointer === undefined) setLocal(next)
     else write(scope, component.value, next)
@@ -306,32 +332,30 @@ export function renderSlider(scope: Scope, component: A2UIComponent): ReturnType
       'aria-valuemin': min,
       'aria-valuemax': max,
       'aria-valuenow': current,
+      'aria-invalid': checks.ok ? undefined : true,
       onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange(Number(event.target.value)),
     }),
+    checks.ok ? null : h('span', { className: 'a2ui-error', role: 'status' }, checks.message),
   )
 }
 
 /** `DateTimeInput` */
 export function renderDateTimeInput(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
-  const view = scope.view
   const enableDate = component.enableDate !== false
   const enableTime = component.enableTime === true
-  const type = enableDate && enableTime ? 'datetime-local' : enableDate ? 'date' : 'time'
+  const type = dateTimeKind(enableDate, enableTime)
   const raw = text(scope, component.value)
   const pointer = bindingPointer(component.value)
   const [local, setLocal] = React.useState(raw)
   const current = pointer === undefined ? local : raw
-  const id = `a2ui-${view.surfaceId}-${component.id}`
-  const toInputValue = (iso: string): string => {
-    if (iso === '') return ''
-    if (type === 'date') return iso.slice(0, 10)
-    if (type === 'time') return iso.length > 11 ? iso.slice(11, 16) : iso
-    return iso.slice(0, 16)
-  }
+  const id = domId(scope, component)
+  const checks = evaluateChecks(scope, component)
+  const min = component.min === undefined ? undefined : toControlValue(text(scope, component.min), type)
+  const max = component.max === undefined ? undefined : toControlValue(text(scope, component.max), type)
   const onChange = (next: string): void => {
-    const iso = next === '' ? '' : new Date(next).toISOString()
-    if (pointer === undefined) setLocal(next)
-    else write(scope, component.value, iso)
+    const stored = fromControlValue(next, type)
+    if (pointer === undefined) setLocal(stored)
+    else write(scope, component.value, stored)
   }
   return h(
     'div',
@@ -341,12 +365,14 @@ export function renderDateTimeInput(scope: Scope, component: A2UIComponent): Ret
       id,
       className: 'a2ui-input',
       type,
-      value: toInputValue(current),
-      min: component.min === undefined ? undefined : text(scope, component.min),
-      max: component.max === undefined ? undefined : text(scope, component.max),
-      disabled: view.interaction.state !== 'idle',
+      value: toControlValue(current, type),
+      min,
+      max,
+      disabled: formLocked(scope),
+      'aria-invalid': checks.ok ? undefined : true,
       onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange(event.target.value),
     }),
+    checks.ok ? null : h('span', { className: 'a2ui-error', role: 'status' }, checks.message),
   )
 }
 

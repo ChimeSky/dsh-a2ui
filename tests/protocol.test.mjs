@@ -386,3 +386,189 @@ test('accepts a template child list and expands it from the data model', () => {
 test('protocol version constant is the v1.0 string', () => {
   assert.equal(PROTOCOL_VERSION, '1.0')
 })
+
+/* ------------------------------------------------------------------ */
+/* §1 same-batch surface state machine                                  */
+/* ------------------------------------------------------------------ */
+
+const v = (messages) => validateToolArguments({ messages })
+
+test('a single batch composes create + update + data updates', () => {
+  const result = v([
+    { version: '1.0', createSurface: { surfaceId: 'x', dataModel: { a: 1 }, components: [{ id: 'root', component: 'Column', children: ['t'] }, { id: 't', component: 'Text', text: 'hi' }] } },
+    { version: '1.0', updateComponents: { surfaceId: 'x', components: [{ id: 't', component: 'Text', text: 'hello' }] } },
+    { version: '1.0', updateDataModel: { surfaceId: 'x', path: '/b', value: 2 } },
+    { version: '1.0', updateDataModel: { surfaceId: 'x', path: '/a', value: 3 } },
+  ])
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+  const state = result.states.get('x')
+  assert.deepEqual([...state.components.keys()].sort(), ['root', 't'])
+  assert.equal(state.components.get('t').text, 'hello')
+  assert.deepEqual(state.dataModel, { a: 3, b: 2 })
+  assert.equal(state.catalogId, 'dsh-a2ui/catalog/v1')
+  assert.equal(result.surfaces[0].components, 2)
+})
+
+test('two updateComponents in one batch change different components', () => {
+  const result = v([
+    { version: '1.0', createSurface: { surfaceId: 'x', components: [{ id: 'root', component: 'Column', children: ['a', 'b'] }, { id: 'a', component: 'Text', text: 'a0' }, { id: 'b', component: 'Text', text: 'b0' }] } },
+    { version: '1.0', updateComponents: { surfaceId: 'x', components: [{ id: 'a', component: 'Text', text: 'a1' }] } },
+    { version: '1.0', updateComponents: { surfaceId: 'x', components: [{ id: 'b', component: 'Text', text: 'b1' }] } },
+  ])
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+  const state = result.states.get('x')
+  assert.equal(state.components.get('a').text, 'a1')
+  assert.equal(state.components.get('b').text, 'b1')
+  assert.equal(state.components.get('root').children.length, 2)
+})
+
+test('delete then create in one batch renders the new instance', () => {
+  const result = v([
+    { version: '1.0', createSurface: { surfaceId: 'y', components: [{ id: 'root', component: 'Text', text: 'first' }] } },
+    { version: '1.0', deleteSurface: { surfaceId: 'y' } },
+    { version: '1.0', createSurface: { surfaceId: 'y', components: [{ id: 'root', component: 'Text', text: 'second' }] } },
+  ])
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+  assert.equal(result.states.get('y').components.get('root').text, 'second')
+  assert.equal(result.states.get('y').components.size, 1, 'the deleted instance leaves no components behind')
+  assert.equal(result.surfaces.length, 1)
+  assert.equal(result.surfaces[0].deleted, false)
+  assert.equal(result.surfaces[0].components, 1)
+})
+
+test('a second create for a live surface is rejected with the message path', () => {
+  const result = v([
+    { version: '1.0', createSurface: { surfaceId: 'z', components: [{ id: 'root', component: 'Text', text: 'a' }] } },
+    { version: '1.0', createSurface: { surfaceId: 'z', components: [{ id: 'root', component: 'Text', text: 'b' }] } },
+  ])
+  assert.equal(result.ok, false)
+  assert.equal(result.errors[0].path, '/messages/1/createSurface/surfaceId')
+  assert.match(result.errors[0].message, /already exists in this batch/u)
+})
+
+test('createSurface validates dataModel/sendDataModel/metadata even without components', () => {
+  const badSend = v([{ version: '1.0', createSurface: { surfaceId: 'w', sendDataModel: 'yes' } }])
+  assert.equal(badSend.ok, false)
+  assert.equal(badSend.errors[0].path, '/messages/0/createSurface/sendDataModel')
+
+  const badModel = v([{ version: '1.0', createSurface: { surfaceId: 'w', dataModel: 7 } }])
+  assert.equal(badModel.ok, false)
+  assert.equal(badModel.errors[0].path, '/messages/0/createSurface/dataModel')
+
+  const badMeta = v([{ version: '1.0', createSurface: { surfaceId: 'w', metadata: { extensions: 5 } } }])
+  assert.equal(badMeta.ok, false)
+  assert.equal(badMeta.errors[0].path, '/messages/0/createSurface/metadata/extensions')
+
+  const ok = v([{ version: '1.0', createSurface: { surfaceId: 'w', sendDataModel: true, dataModel: { a: 1 }, metadata: { extensions: { x: 1 } } } }])
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors))
+  assert.equal(ok.states.get('w').sendDataModel, true)
+})
+
+test('a basic-catalog surface rejects an extension component in a later update', () => {
+  const result = v([
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'b',
+        catalogId: BASIC_CATALOG_ID,
+        components: [{ id: 'root', component: 'Column', children: ['t'] }, { id: 't', component: 'Text', text: 'x' }],
+      },
+    },
+    { version: '1.0', updateComponents: { surfaceId: 'b', components: [{ id: 'kpi', component: 'Stat', label: 'L', value: 1 }] } },
+  ])
+  assert.equal(result.ok, false)
+  assert.match(result.errors.map((error) => error.message).join('\n'), /extension catalog/u)
+})
+
+test('an explicit catalogId override admits an extension component on a basic surface', () => {
+  const result = v([
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'b',
+        catalogId: BASIC_CATALOG_ID,
+        components: [
+          { id: 'root', component: 'Column', children: ['kpi'] },
+          { id: 'kpi', component: 'Stat', catalogId: 'dsh-a2ui/catalog/v1', label: 'L', value: 1 },
+        ],
+      },
+    },
+  ])
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+})
+
+test('cross-call update and delete keep their accepted shape', () => {
+  const update = v([{ version: '1.0', updateComponents: { surfaceId: 'earlier', components: [{ id: 'root', component: 'Text', text: 'x' }] } }])
+  assert.equal(update.ok, true)
+  assert.ok(update.warnings.some((warning) => /not created in this tool call/u.test(warning)))
+  assert.deepEqual(update.states.get('earlier').components.get('root').text, 'x')
+
+  const remove = v([{ version: '1.0', deleteSurface: { surfaceId: 'earlier' } }])
+  assert.equal(remove.ok, true)
+  assert.equal(remove.surfaces[0].deleted, true)
+})
+
+/* ------------------------------------------------------------------ */
+/* 官方样例：43 个 basic catalog 示例全部通过校验                        */
+/* ------------------------------------------------------------------ */
+
+test('every pinned official catalog example validates', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const dir = path.join(process.cwd(), 'tests', 'fixtures', 'examples')
+  const files = fs.readdirSync(dir).filter((name) => name.endsWith('.json')).sort()
+  assert.ok(files.length >= 43, `expected the pinned example set, found ${files.length}`)
+  const failures = []
+  for (const file of files) {
+    const document = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'))
+    const result = v(document.messages)
+    if (!result.ok) failures.push(`${file}: ${result.errors.slice(0, 2).map((error) => `${error.path} ${error.message}`).join('; ')}`)
+  }
+  assert.deepEqual(failures, [], `official examples rejected:\n${failures.join('\n')}`)
+})
+
+test('the @-prefixed property aliases normalize to the plain names', () => {
+  const aliased = v([
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'a',
+        components: [
+          {
+            id: 'root',
+            component: 'TextField',
+            label: 'Email',
+            '@checks': [{ condition: { '@call': 'required', args: { value: { '@path': '/email' } } }, message: 'Email is required' }],
+          },
+        ],
+      },
+    },
+  ])
+  assert.equal(aliased.ok, true, JSON.stringify(aliased.errors))
+  const component = aliased.states.get('a').components.get('root')
+  assert.ok(Array.isArray(component.checks), 'the alias became plain `checks`')
+  assert.equal('@checks' in component, false)
+
+  // Both spellings with the same value are accepted; different values conflict.
+  const same = v([
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'b',
+        components: [{ id: 'root', component: 'Text', text: 'x', '@catalogId': 'dsh-a2ui/catalog/v1', catalogId: 'dsh-a2ui/catalog/v1' }],
+      },
+    },
+  ])
+  assert.equal(same.ok, true, JSON.stringify(same.errors))
+  const conflict = v([
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'c',
+        components: [{ id: 'root', component: 'Text', text: 'x', '@catalogId': 'dsh-a2ui/catalog/v1', catalogId: 'a2ui.org/basic' }],
+      },
+    },
+  ])
+  assert.equal(conflict.ok, false)
+  assert.match(conflict.errors[0].path, /@catalogId$/u)
+})

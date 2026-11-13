@@ -1,23 +1,42 @@
 /**
  * `conversation.chat.turnTail` entry: the A2UI card in the main conversation.
  *
- * Why this slot: a `tool.call.toolview` lives inside the turn's "process"
- * window, which DSH folds for every completed turn that is no longer the newest
+ * Why this slot: a `tool.call.toolview` lives inside the turn's "process" window,
+ * which DSH folds for every completed turn that is no longer the newest
  * (`ChatNodeSeat`: `defaultOpen = bottom && deferCollapse`, hidden by
  * `processMember && !processOpen`). The turn tail renders after the turn's
  * answer, outside that window, which is exactly how the shipped action cards
  * keep their card visible.
  *
- * The card itself is the same component the tool row uses, so both surfaces stay
- * identical; only the host slot differs.
+ * Data source: `ChatSnapshot.nodes.turnDataSource(turn, 'tool-call')`, the
+ * documented per-turn observable whose array "changes only with its members".
+ * That is what makes a running call update in place when its result arrives,
+ * instead of freezing on the first published payload.
  */
 import * as React from 'react'
 import { h } from './h.js'
 import type { ClientRuntime } from './tool-view.js'
 import { A2UIToolView } from './tool-view.js'
-import { collectA2uiRoots } from './surfaces.js'
+import { collectA2uiRoots, rootsFromTurnNodes, type A2uiRootEntry } from './surfaces.js'
 
 type Selector = (state: unknown) => unknown
+
+interface SnapshotSource<T> {
+  getSnapshot: () => T
+  subscribe: (listener: () => void) => () => void
+}
+
+interface ChatStoreLike {
+  turnDataSource?: (turn: number, kind: string) => SnapshotSource<readonly unknown[]>
+  get?: (key: string) => unknown
+}
+
+interface ChatSnapshotLike {
+  order?: readonly string[]
+  nodes?: ChatStoreLike
+  /** Ordered node keys per turn; the source of visibility-correct cards. */
+  locations?: { getTurn?: (turn: number) => readonly string[] }
+}
 
 export interface TurnTailProps {
   turn?: { turn?: number; status?: string }
@@ -29,29 +48,53 @@ export interface TurnTailProps {
   useConversation?: (selector: Selector) => unknown
 }
 
-interface ChatState {
-  order?: string[]
-  nodes?: unknown
-}
+const EMPTY: readonly unknown[] = []
 
 /**
  * Render every `a2ui` surface produced by one completed turn.
  *
- * The selector reads only `order` and `nodes`, which are stable references the
- * store replaces on change; the derived list is memoized so an unrelated node
- * update does not re-render the cards.
+ * The per-turn observable is preferred; the `order` + `nodes` walk stays as a
+ * fallback for a Host whose snapshot predates `turnDataSource`.
  */
 export function A2uiTurnTail(props: TurnTailProps): ReturnType<typeof h> | null {
   const { turn, sessionId, runtime } = props
   const useChat = props.useChat
+  const turnNumber = turn?.turn
 
-  const order = (useChat?.((state) => (state as ChatState).order) ?? []) as string[]
-  const nodes = useChat?.((state) => (state as ChatState).nodes)
+  const store = useChat?.((state) => (state as ChatSnapshotLike).nodes) as ChatStoreLike | undefined
+  const source = React.useMemo(() => {
+    if (store === undefined || turnNumber === undefined) return undefined
+    try {
+      return store.turnDataSource?.(turnNumber, 'tool-call')
+    } catch {
+      return undefined
+    }
+  }, [store, turnNumber])
 
-  const entries = React.useMemo(
-    () => collectA2uiRoots(order, nodes, turn?.turn, 'a2ui'),
-    [order, nodes, turn?.turn],
+  const subscribe = React.useCallback(
+    (listener: () => void) => (source === undefined ? () => {} : source.subscribe(listener)),
+    [source],
   )
+  const getSnapshot = React.useCallback(() => (source === undefined ? EMPTY : source.getSnapshot()), [source])
+  // The third argument keeps server-side rendering (and the render harness) working.
+  const turnToolData = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  // `turnDataSource` includes hidden nodes, so the cards come from the turn's
+  // ordered node keys instead, read fresh on every notification.
+  const turnKeys = useChat?.((state) => {
+    const locations = (state as ChatSnapshotLike).locations
+    return typeof locations?.getTurn === 'function' && turnNumber !== undefined ? locations.getTurn(turnNumber) : undefined
+  }) as readonly string[] | undefined
+
+  // Fallback reader for a Host without `locations`/`turnDataSource`.
+  const order = (useChat?.((state) => (state as ChatSnapshotLike).order) ?? []) as string[]
+  const nodes = store
+
+  const entries: A2uiRootEntry[] = React.useMemo(() => {
+    void turnToolData
+    if (turnKeys !== undefined) return rootsFromTurnNodes(turnNumber, turnKeys, nodes, 'a2ui')
+    return collectA2uiRoots(order, nodes, turnNumber, 'a2ui')
+  }, [turnKeys, turnToolData, order, nodes, turnNumber])
 
   if (entries.length === 0) return null
 
@@ -73,5 +116,3 @@ export function A2uiTurnTail(props: TurnTailProps): ReturnType<typeof h> | null 
     ),
   )
 }
-
-export type { ChatNodeLike } from './surfaces.js'

@@ -49,6 +49,9 @@ export const zh: Dict = {
   atTurnTail: '界面在本轮末尾',
   sortHint: '点击排序（仅本地）',
   sendsMessage: '点击后会向 AI 发送一条消息',
+  failedGeneric: '这次调用失败了，没有可显示的界面。',
+  otherSlices: '其他',
+  groupedSlices: '归入「其他」的类别数',
 }
 
 export const en: Dict = {
@@ -97,6 +100,9 @@ export const en: Dict = {
   atTurnTail: 'shown at the end of this turn',
   sortHint: 'Click to sort (local only)',
   sendsMessage: 'Clicking sends a message to the agent',
+  failedGeneric: 'This call failed, so there is no interface to show.',
+  otherSlices: 'Other',
+  groupedSlices: 'Categories grouped as Other',
 }
 
 export const DICTS = { zh, en }

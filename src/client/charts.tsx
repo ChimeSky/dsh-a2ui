@@ -14,7 +14,8 @@ import * as React from 'react'
 import { h } from './h.js'
 import type { A2UIComponent } from '../shared/validate.js'
 import { compileExpression, type CompiledExpression } from '../shared/expression.js'
-import { numberList, numberValue, text, type Scope } from './context.js'
+import { anyValue, numberList, numberValue, text, type Scope } from './context.js'
+import { isDataBinding, isFunctionCall } from '../shared/schema.js'
 
 const VIEW_WIDTH = 640
 const PAD = { top: 18, right: 16, bottom: 30, left: 46 }
@@ -93,10 +94,12 @@ interface LegendProps {
   series: Array<{ label: string; color: string }>
   hidden?: ReadonlySet<number>
   onToggle?: (index: number) => void
+  /** Entries beyond the legend cap, reported instead of silently dropped. */
+  more?: number
 }
 
 function legend(props: LegendProps): ReturnType<typeof h> | null {
-  const { series, hidden, onToggle } = props
+  const { series, hidden, onToggle, more } = props
   if (series.length <= 1) return null
   return h(
     'div',
@@ -118,6 +121,7 @@ function legend(props: LegendProps): ReturnType<typeof h> | null {
         entry.label,
       )
     }),
+    more !== undefined && more > 0 ? h('span', { className: 'a2ui-legend-more' }, `+${more}`) : null,
   )
 }
 
@@ -172,6 +176,52 @@ function textWidth(lines: string[]): number {
   return Math.max(...lines.map((line) => line.length)) * CHAR_WIDTH + 16
 }
 
+/**
+ * Domain a bar chart needs so the baseline is visible.
+ *
+ * A positive-only series starts at 0, a negative-only one ends at 0, and a
+ * mixed one contains 0 naturally. An explicit `yMin`/`yMax` wins; if both force
+ * the same value the domain is left automatic so the scale cannot collapse.
+ */
+export function barDomain(values: number[], forcedMin?: number, forcedMax?: number): { min?: number; max?: number } {
+  const finite = values.filter((value) => Number.isFinite(value))
+  const dataMin = finite.length > 0 ? Math.min(...finite) : 0
+  const dataMax = finite.length > 0 ? Math.max(...finite) : 0
+  let min = forcedMin ?? (dataMin >= 0 ? 0 : undefined)
+  let max = forcedMax ?? (dataMax <= 0 ? 0 : undefined)
+  if (min !== undefined && max !== undefined && min === max) {
+    min = undefined
+    max = undefined
+  }
+  return { min, max }
+}
+
+/**
+ * Split sampled points into drawable runs.
+ *
+ * A curve that leaves the plotted domain (`1/x`, `tan`, an asymptote) is broken
+ * instead of being connected across the gap, which would draw a false straight
+ * line through a discontinuity.
+ */
+export function splitPlotSegments(
+  points: Array<{ x: number; y: number }>,
+  min: number,
+  max: number,
+): Array<Array<{ x: number; y: number }>> {
+  const segments: Array<Array<{ x: number; y: number }>> = []
+  let current: Array<{ x: number; y: number }> = []
+  for (const point of points) {
+    if (!Number.isFinite(point.y) || point.y < min || point.y > max) {
+      if (current.length > 0) segments.push(current)
+      current = []
+      continue
+    }
+    current.push(point)
+  }
+  if (current.length > 0) segments.push(current)
+  return segments
+}
+
 /** `BarChart` */
 export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
   const view = scope.view
@@ -198,14 +248,34 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
   const height = chartHeight(component, horizontal ? Math.max(160, categories.length * 26 + PAD.top + PAD.bottom) : 240)
   const plotWidth = VIEW_WIDTH - PAD.left - PAD.right
   const plotHeight = height - PAD.top - PAD.bottom
-  const stackedTotals = categories.map((_, index) => series.reduce((sum, entry) => sum + (entry.values[index] ?? 0), 0))
-  const scale =
-    stacked && !horizontal
-      ? niceScale(stackedTotals, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
-      : niceScale(all, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
 
-  const valueToY = (value: number): number => PAD.top + plotHeight - ((value - scale.min) / (scale.max - scale.min)) * plotHeight
-  const valueToX = (value: number): number => PAD.left + ((value - scale.min) / (scale.max - scale.min)) * plotWidth
+  // Bar charts must show their baseline: a positive-only series starts at 0, a
+  // negative-only one ends at 0, and a mixed one contains 0. An explicit yMin /
+  // yMax wins, and the plot is clamped to that domain.
+  const domain = barDomain(all, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
+  let scale: Scale
+  if (stacked && !horizontal) {
+    const stackMin: number[] = []
+    const stackMax: number[] = []
+    categories.forEach((_, index) => {
+      let up = 0
+      let down = 0
+      for (const entry of series) {
+        const value = entry.values[index] ?? 0
+        if (value >= 0) up += value
+        else down += value
+      }
+      stackMax.push(up)
+      stackMin.push(down)
+    })
+    scale = niceScale([...stackMax, ...stackMin], domain.min, domain.max)
+  } else {
+    scale = niceScale(all, domain.min, domain.max)
+  }
+  const span = scale.max - scale.min || 1
+  const clamp = (value: number): number => Math.max(scale.min, Math.min(scale.max, value))
+  const valueToY = (value: number): number => PAD.top + plotHeight - ((clamp(value) - scale.min) / span) * plotHeight
+  const valueToX = (value: number): number => PAD.left + ((clamp(value) - scale.min) / span) * plotWidth
   const band = horizontal ? plotHeight / Math.max(1, categories.length) : plotWidth / Math.max(1, categories.length)
   const groupWidth = band * 0.68
   const barWidth = stacked || horizontal ? groupWidth : groupWidth / Math.max(1, series.length)
@@ -234,18 +304,22 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
   categories.forEach((category, categoryIndex) => {
     const center = PAD.left + band * categoryIndex + band / 2
     if (stacked && !horizontal) {
-      let cursor = 0
+      let up = 0
+      let down = 0
       series.forEach((entry, seriesIndex) => {
         const value = entry.values[categoryIndex] ?? 0
-        const y = valueToY(cursor + value)
+        const base = value >= 0 ? up : down
+        const top = base + value
+        const yBase = valueToY(base)
+        const yTop = valueToY(top)
         const isHover = hover?.category === categoryIndex
         bars.push(
           h('rect', {
             key: `b${categoryIndex}-${seriesIndex}`,
             x: center - barWidth / 2,
-            y: Math.min(y, valueToY(cursor)),
+            y: Math.min(yBase, yTop),
             width: barWidth,
-            height: Math.max(0.5, Math.abs(valueToY(cursor) - y)),
+            height: Math.max(0.5, Math.abs(yBase - yTop)),
             rx: 2,
             fill: entry.color,
             opacity: hover === null || isHover ? 1 : 0.42,
@@ -254,19 +328,21 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             style: { transition: 'opacity .12s ease' },
           }),
         )
-        cursor += value
+        if (value >= 0) up = top
+        else down = top
       })
     } else if (horizontal) {
+      const baseline = valueToX(0)
       series.forEach((entry, seriesIndex) => {
         const value = entry.values[categoryIndex] ?? 0
-        const x = valueToX(Math.min(scale.min, 0))
+        const end = valueToX(value)
         const isHover = hover?.category === categoryIndex
         bars.push(
           h('rect', {
             key: `b${categoryIndex}-${seriesIndex}`,
-            x,
+            x: Math.min(baseline, end),
             y: PAD.top + band * categoryIndex + (band - groupWidth) / 2 + seriesIndex * (groupWidth / Math.max(1, series.length)),
-            width: Math.max(0.5, Math.abs(valueToX(value) - x)),
+            width: Math.max(0.5, Math.abs(end - baseline)),
             height: (groupWidth / Math.max(1, series.length)) * 0.86,
             rx: 2,
             fill: entry.color,
@@ -553,9 +629,9 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
 /** `PieChart` */
 export function renderPieChart(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
   const view = scope.view
-  const raw = Array.isArray(component.slices) ? component.slices.slice(0, 40) : []
+  const raw = Array.isArray(component.slices) ? component.slices : []
   const [hover, setHover] = React.useState<number | null>(null)
-  const slices = raw.map((entry, index) => {
+  const allSlices = raw.map((entry, index) => {
     const record = (entry ?? {}) as Record<string, unknown>
     return {
       label: record.label === undefined ? `#${index + 1}` : text(scope, record.label),
@@ -563,8 +639,21 @@ export function renderPieChart(scope: Scope, component: A2UIComponent): ReturnTy
       color: seriesColor(index, record.color),
     }
   })
-  const total = slices.reduce((sum, slice) => sum + slice.value, 0)
+  const total = allSlices.reduce((sum, slice) => sum + slice.value, 0)
   if (total <= 0) return emptyChart(scope, component, view.t('chartEmpty'))
+  const maxVisibleSlices = 40
+  const slices = allSlices.slice(0, maxVisibleSlices)
+  const remaining = allSlices.length - slices.length
+  if (remaining > 0) {
+    slices.push({
+      label: `${view.t('otherSlices')} (${remaining})`,
+      value: allSlices.slice(maxVisibleSlices).reduce((sum, slice) => sum + slice.value, 0),
+      color: seriesColor(maxVisibleSlices, undefined),
+    })
+  }
+  const summary = remaining > 0
+    ? h('p', { className: 'a2ui-chart-note' }, `${view.t('groupedSlices')}: ${remaining}`)
+    : null
   const height = chartHeight(component, 220)
   const radius = Math.min(height, VIEW_WIDTH / 2) / 2 - 14
   const cx = VIEW_WIDTH / 4
@@ -602,6 +691,7 @@ export function renderPieChart(scope: Scope, component: A2UIComponent): ReturnTy
     'div',
     { className: 'a2ui-chart-wrap' },
     caption(scope, component),
+    summary,
     h(
       'svg',
       {
@@ -675,6 +765,14 @@ export function renderPieChart(scope: Scope, component: A2UIComponent): ReturnTy
           ),
         )
       }),
+      // Legend cap: say how many entries are not listed instead of dropping them.
+      slices.length > 10
+        ? h(
+            'text',
+            { x: VIEW_WIDTH / 2 + 19, y: 24.5 + 10 * 19, fontSize: 11, fill: 'currentColor', opacity: 0.7 },
+            `+${slices.length - 10}`,
+          )
+        : null,
     ),
   )
 }
@@ -688,7 +786,17 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
   const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240))
   const variablesRaw = component.variables
   const variables: Record<string, number> = {}
-  if (variablesRaw !== undefined && variablesRaw !== null && typeof variablesRaw === 'object') {
+  // `variables` may be an object of per-variable bindings, or one binding that
+  // resolves to the whole coefficient object (`{"@path": "/coefficients"}`).
+  if (isDataBinding(variablesRaw) || isFunctionCall(variablesRaw)) {
+    const resolved = anyValue(scope, variablesRaw)
+    if (resolved !== null && typeof resolved === 'object' && !Array.isArray(resolved)) {
+      for (const [key, value] of Object.entries(resolved as Record<string, unknown>)) {
+        const numeric = typeof value === 'number' ? value : Number(value)
+        if (Number.isFinite(numeric)) variables[key] = numeric
+      }
+    }
+  } else if (variablesRaw !== undefined && variablesRaw !== null && typeof variablesRaw === 'object') {
     for (const [key, value] of Object.entries(variablesRaw as Record<string, unknown>)) {
       const resolved = numberValue(scope, value)
       if (resolved !== undefined) variables[key] = resolved
@@ -773,11 +881,19 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
     marks.push(h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(0), y2: yAt(0), stroke: 'currentColor', opacity: 0.35, strokeWidth: 1 }))
   }
   lines.forEach((line, index) => {
-    if (line.samples.length > 0) {
+    // A curve that leaves the plotted domain (1/x, tan, a vertical asymptote) is
+    // broken rather than connected across the gap.
+    const segments = splitPlotSegments(line.samples, scale.min, scale.max)
+
+    segments.forEach((segment, segmentIndex) => {
+      if (segment.length === 1) {
+        marks.push(h('circle', { key: `fx${index}-${segmentIndex}`, cx: xAt(segment[0].x), cy: yAt(segment[0].y), r: 2, fill: line.color }))
+        return
+      }
       marks.push(
         h('path', {
-          key: `f${index}`,
-          d: line.samples.map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'}${xAt(point.x).toFixed(2)},${yAt(point.y).toFixed(2)}`).join(' '),
+          key: `f${index}-${segmentIndex}`,
+          d: segment.map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'}${xAt(point.x).toFixed(2)},${yAt(point.y).toFixed(2)}`).join(' '),
           fill: 'none',
           stroke: line.color,
           strokeWidth: 2,
@@ -785,7 +901,7 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
           strokeLinecap: 'round',
         }),
       )
-    }
+    })
     line.points.forEach((point, pointIndex) => {
       marks.push(h('circle', { key: `s${index}-${pointIndex}`, cx: xAt(point.x), cy: yAt(point.y), r: 3, fill: line.color }))
     })

@@ -8,7 +8,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-const { collectA2uiRoots, toolPhaseOf, blockToolName, nodeTurn } = await import('../build/esm/client/surfaces.js')
+const { client } = await import('../build/shared.mjs')
+const { collectA2uiRoots, toolPhaseOf, blockToolName, nodeTurn, rootsFromToolData } = client.surfaces
 
 function node(kind, turn, root, extra = {}) {
   return { kind, anchorSeq: extra.anchorSeq ?? 1, visibility: extra.visibility ?? 'visible', location: { kind: 'step', turn: { turn } }, data: { root } }
@@ -73,4 +74,33 @@ test('phase and turn helpers match the Chat tool node contract', () => {
   assert.equal(nodeTurn({ location: { kind: 'turn', turn: { turn: 8 } } }), 8)
   assert.equal(nodeTurn({ location: { kind: 'other' } }), undefined)
   assert.equal(nodeTurn(undefined), undefined)
+})
+
+/* ------------------------------------------------------------------ */
+/* Preferred turn-tail source: nodes.turnDataSource(turn, 'tool-call')  */
+/* ------------------------------------------------------------------ */
+
+
+test('turnDataSource payloads map to a2ui roots in anchor order', () => {
+  const entries = rootsFromToolData([
+    { root: { phase: 'start', callId: 'c1', name: 'a2ui' } },
+    { root: { kind: 'tool-result', callId: 'c2', name: 'a2ui', call: { name: 'a2ui' } } },
+    { root: { kind: 'tool-result', callId: 'c3', name: 'bash', call: { name: 'bash' } } },
+  ])
+  assert.deepEqual(entries.map((entry) => entry.key), ['c1', 'c2'])
+  assert.deepEqual(entries.map((entry) => entry.phase), ['start', 'result'])
+})
+
+test('a settled result updates the phase without a new turn entry', () => {
+  const running = rootsFromToolData([{ root: { phase: 'start', callId: 'c1', name: 'a2ui' } }])
+  const settled = rootsFromToolData([{ root: { kind: 'tool-result', callId: 'c1', name: 'a2ui', call: { name: 'a2ui' }, meta: { kind: 'a2ui' } } }])
+  assert.equal(running[0].phase, 'start')
+  assert.equal(settled[0].phase, 'result')
+  assert.equal(settled[0].root.meta.kind, 'a2ui')
+})
+
+test('missing or malformed turn data yields no roots', () => {
+  assert.deepEqual(rootsFromToolData(undefined), [])
+  assert.deepEqual(rootsFromToolData([]), [])
+  assert.deepEqual(rootsFromToolData([null, 5, {}, { root: {} }]), [{ key: 'tool-3', root: {}, phase: 'start' }].slice(0, 0))
 })

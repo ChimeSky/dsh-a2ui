@@ -8,6 +8,7 @@
  */
 import { isJsonValue, isPlainObject } from './json.js'
 import { LIMITS, limitMessage } from './limits.js'
+import { MAX_REGEX_INPUT, regexUnsafeReason } from './regex.js'
 
 export interface Violation {
   /** JSON Pointer relative to the validated message, e.g. `/components/0/text`. */
@@ -114,8 +115,28 @@ function checkCall(value: Record<string, unknown>, path: string, out: Violation[
     fail(out, path, `unknown function "${name}" (known: ${[...knownFunctions].sort().join(', ')})`)
   }
   if (Object.prototype.hasOwnProperty.call(value, 'args')) {
-    if (!isPlainObject(value.args)) fail(out, `${path}.args`, 'must be an object')
-    else if (!isJsonValue(value.args)) fail(out, `${path}.args`, 'must be a lossless JSON value')
+    if (!isPlainObject(value.args)) fail(out, `${path}/args`, 'must be an object')
+    else if (!isJsonValue(value.args)) fail(out, `${path}/args`, 'must be a lossless JSON value')
+    else if (name === 'regex') checkRegexArguments(value.args as Record<string, unknown>, `${path}/args`, out)
+  }
+}
+
+/**
+ * A literal `regex` pattern is admitted here so the model gets a path-qualified
+ * error instead of a silently failing check. A pattern bound from the data model
+ * is admitted again when it is evaluated.
+ */
+function checkRegexArguments(args: Record<string, unknown>, path: string, out: Violation[]): void {
+  const pattern = args.pattern
+  if (typeof pattern === 'string') {
+    const unsafe = regexUnsafeReason(pattern)
+    if (unsafe !== undefined) fail(out, `${path}/pattern`, unsafe)
+  } else if (!isBindingValue(pattern) && !isCallValue(pattern) && pattern !== undefined) {
+    fail(out, `${path}/pattern`, 'must be a string, a data binding, or a function call')
+  }
+  const value = args.value
+  if (typeof value === 'string' && value.length > MAX_REGEX_INPUT) {
+    fail(out, `${path}/value`, `input is longer than ${MAX_REGEX_INPUT} characters`)
   }
 }
 
