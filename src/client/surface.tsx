@@ -153,6 +153,10 @@ function renderById(
   if (depth > LIMITS.maxDepth) return fallback(scope, 'depth limit')
   const component = scope.view.state.components.get(id)
   if (component === undefined) {
+    // While the payload is still streaming, a child that has not arrived yet is
+    // expected: reserve its space with a placeholder instead of reporting a
+    // defect the user cannot do anything about.
+    if (scope.view.streaming === true) return h('span', { key, className: 'a2ui-skel-line a2ui-skel-inline', 'aria-hidden': true })
     return h('span', { key }, fallback(scope, `${scope.view.t('childMissing')}: ${id}`))
   }
   // A nested child inside a template row inherits the row's item, so a `Text`
@@ -684,6 +688,11 @@ function renderProgress(scope: Scope, component: A2UIComponent): ReturnType<type
 export function A2UISurface(props: { view: SurfaceView }): ReturnType<typeof h> {
   const { view } = props
   const root = view.state.components.get('root')
-  if (root === undefined) return fallback({ view }, `${view.t('childMissing')}: root`)
+  if (root === undefined) {
+    // The fold only returns surfaces that have a root; a streaming view without
+    // one still reserves space instead of reporting a defect.
+    if (view.streaming === true) return h('div', { className: 'a2ui-skel', 'aria-hidden': true }, h('span', { className: 'a2ui-skel-line a2ui-skel-w70' }))
+    return fallback({ view }, `${view.t('childMissing')}: root`)
+  }
   return h('div', { className: 'a2ui-surface' }, h(ComponentNode, { component: root, scope: { view }, depth: 1 }))
 }

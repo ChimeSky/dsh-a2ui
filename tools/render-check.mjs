@@ -183,11 +183,11 @@ function recordedCall() {
 /* Run                                                                  */
 /* ------------------------------------------------------------------ */
 
-const { View, Tail } = loadView({ locale: 'en-US' })
+const { View, Tail, module: bundle } = loadView({ locale: 'en-US' })
 const failures = []
 let passed = 0
 
-function check(name, html, expectations) {
+function check(name, html, expectations, forbidden = []) {
   const text = visibleText(html)
   const missing = expectations.filter((needle) => !text.includes(needle) && !html.includes(needle))
   if (missing.length > 0) {
@@ -196,15 +196,22 @@ function check(name, html, expectations) {
     console.log(`       got: ${text.slice(0, 240)}`)
     return
   }
+  const leaked = forbidden.filter((needle) => text.includes(needle) || html.includes(needle))
+  if (leaked.length > 0) {
+    failures.push({ name, missing: leaked.map((entry) => `must not show ${JSON.stringify(entry)}`), text: text.slice(0, 400) })
+    console.log(`\n[FAIL] ${name}: showed ${leaked.map((entry) => JSON.stringify(entry)).join(', ')}`)
+    console.log(`       got: ${text.slice(0, 240)}`)
+    return
+  }
   passed += 1
   console.log(`\n[ok] ${name}: ${html.length} bytes`)
   console.log(`     ${text.slice(0, 180)}`)
 }
 
-function renderCase(name, Component, props, expectations) {
+function renderCase(name, Component, props, expectations, forbidden = []) {
   try {
     const html = renderToHtml(Component, props)
-    check(name, html, expectations)
+    check(name, html, expectations, forbidden)
   } catch (error) {
     failures.push({ name, error })
     console.log(`\n[FAIL] ${name}: threw ${error && error.message}`)
@@ -265,6 +272,57 @@ renderCase('official 00_incremental renders every row', View, { ...baseProps, ph
 ])
 
 renderCase('preparing shows a skeleton', View, { ...baseProps, phase: 'preparing', block: { phase: 'preparing', callId: 'call_p', name: 'a2ui', subCalls: [] } }, ['Building interface'])
+
+/* Progressive rendering: the card is drawn from the fragments that already
+ * closed, against the shipped bundle, through the same store the observer
+ * Definition fills at runtime. */
+const hooks = bundle
+
+function primed(name, callId, text, expectations, forbidden) {
+  hooks.__resetStreams()
+  hooks.__appendStreamedArguments(callId, text)
+  hooks.__flushStreamNotifications()
+  renderCase(name, View, { ...baseProps, callId, phase: 'preparing', block: { phase: 'preparing', callId, name: 'a2ui', subCalls: [] } }, expectations, forbidden)
+  hooks.__resetStreams()
+}
+
+const streamingPayload = JSON.stringify({
+  title: 'Revenue by region',
+  messages: [
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'stream',
+        catalogId: 'dsh-a2ui/catalog/v1',
+        components: [
+          { id: 'root', component: 'Column', children: ['heading', 'note', 'later'] },
+          { id: 'heading', component: 'Text', text: 'Arrived heading' },
+          { id: 'note', component: 'Text', text: 'Arrived note' },
+          { id: 'declared', component: 'Text', text: 'Not referenced yet' },
+        ],
+      },
+    },
+  ],
+})
+
+primed('preparing draws the components that already arrived', 'call_stream', streamingPayload, ['Revenue by region', 'Arrived heading', 'Arrived note', 'generating'], [
+  // `later` is referenced by the root but has not been written: it must become a
+  // placeholder, never a "missing child" error.
+  'Missing child',
+])
+
+// The same payload cut inside the first component's own `text`: only what closed
+// is drawn, the reference to the unfinished component becomes a placeholder, and
+// nothing reports a defect.
+primed(
+  'preparing drops the half-written component',
+  'call_partial',
+  streamingPayload.slice(0, streamingPayload.indexOf('Arrived heading') + 8),
+  ['Revenue by region', 'generating'],
+  ['Arrived heading', 'Arrived note', 'Missing child'],
+)
+
+primed('preparing with no usable content keeps the skeleton', 'call_bare', '{"messages":[{"version":"1.0","crea', ['Building interface'], [])
 
 renderCase(
   'host rejection is readable',

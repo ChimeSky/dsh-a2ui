@@ -26,9 +26,9 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 ---
 
-## Status (v0.2.1)
+## Status (v0.3.0)
 
-> This is the correctness and safety release: A2UI 1.0 alignment (all 43 official catalog examples pass), a build that never deletes a file, and a bounded regex evaluator. See [CHANGELOG.md](CHANGELOG.md) for the itemised list.
+> This is the progressive-streaming release: the card grows component by component while the model is still writing the arguments, instead of waiting for the finished payload. See [CHANGELOG.md](CHANGELOG.md) for the itemised list.
 
 | Capability | Status |
 |---|---|
@@ -42,7 +42,7 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 | Multiple surfaces, incremental updates within one call | Done |
 | Session restore, replay without side effects | Done (derived from the log) |
 | Light/dark theme, responsive, keyboard, ARIA | Done (`--dsw-alias-*` tokens) |
-| Character-level streaming render | Partial: renders as soon as the call reaches `start`; further tool calls update incrementally |
+| Progressive streaming render | Done: during `preparing` the card grows from the messages and components that already closed, with placeholders for the rest (see [Progressive streaming](#progressive-streaming)) |
 | Replacing an existing card in place across calls | Not implemented (see [Known limitations](#known-limitations)) |
 | `callRendererFunction` / `agentFunctionResponse` | Not supported: explicitly rejected with a reason |
 | PTC (`run_code`) sub-call presentation | Partial: renders as a sub-call row, not styled specifically |
@@ -53,9 +53,9 @@ Rendering is derived entirely from the **session log**: no plugin-private persis
 
 The plugin ships as a **bundle** (`dsh.bundle` + `dsh.client`): the repository root is the installable package, providing both the Host and browser halves. Build artifacts are committed, so installing does not compile anything.
 
-**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.2.1`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
+**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.0`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
 
-**B — frozen tarball.** `vendor/dsh-a2ui-0.2.1.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.2.1.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
+**B — frozen tarball.** `vendor/dsh-a2ui-0.3.0.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.0.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
 
 **C — DSH plugin manager.** Run `plugin_manager action=install_bundle target=<absolute path or tarball>`. The bundle is written to the active profile (Desktop uses `desktop`) and appears in Settings → Plugins. New bundles activate through HMR; replacing an already-installed package requires a restart to load a fresh JavaScript module generation.
 
@@ -98,6 +98,31 @@ Cost: the guidance is ~2.8 KB (~700 tokens) of always-on prompt; the component r
 | `sectionOrder` | `120` | order of the prompt section |
 | `muteSection` | `false` | drop the prompt section entirely (tools stay) |
 | `toolName` | `a2ui` | **not recommended**: the client view is registered under this name |
+
+### Progressive streaming
+
+The model writes A2UI arguments as fragments, so during the `preparing` stage there is no complete JSON to parse. Earlier versions showed a skeleton and only painted the card once the arguments were finished. Since v0.3.0 the card grows while it is being generated:
+
+1. **Observe the raw fragments out of band.** The plugin registers a Conversation Definition with **no view target** (`kind: a2ui-stream`) that copies the `tool-call-delta` text of `assistant/live-chunk` events per call id. Without a `target` it materialises no node, so the transcript and history replay are untouched.
+2. **Recover only what closed.** The recovery scanner (`src/shared/partial-json.ts`) walks the prefix and returns only values whose own slice `JSON.parse` accepts: finished messages, finished components. A half-written component is dropped, so the preview never shows half a component or invents data.
+3. **Fold with the same semantics.** Closed messages go through the *same* `applyMessageBatch` the settled snapshot uses, so create → update → dataModel composition is identical and surfaces never jump when the call settles.
+4. **Per-component structure checks, plus the budget.** Each component is shape-checked on its own (duplicate ids, illegal ids, the pseudo-component `Surface` are dropped) and the whole surface still has to pass the render budget; nothing is drawn until `root` arrives, so no empty card flashes.
+5. **Absence is a placeholder.** A child that is referenced but has not arrived renders as a skeleton, never as a "missing child" error: unfinished is not a defect.
+6. **The preview is not interactive.** The card is `pointer-events: none` with `aria-busy`, and submits/writes are disabled until the call reaches `start`/`result` and the full payload passes Host validation.
+7. **Switch to the authoritative snapshot.** Once the arguments are complete the validated snapshot replaces the preview and the fragment copy is released immediately.
+
+Bounds and stop conditions:
+
+| Limit | Value / behaviour |
+|---|---|
+| Retained fragment text per call | 256 KiB (truncated beyond that; the preview stops) |
+| Retention after the last fragment | 120 s (pruned lazily on the next append) |
+| Characters scanned per frame | 512 KiB |
+| Recovered JSON nesting depth | 128 |
+| Malformed prefix | Preview stops and falls back to the skeleton; the Host still reports the precise error |
+| Partial tree over the render budget | Preview stops (an over-budget intermediate is never drawn) |
+
+> The preview changes no authority: whether a payload may render, and what is wrong with it, is still decided by `validateToolArguments` on the Host. Streaming only replaces *waiting* with *appearing*. Because `assistant/live-chunk` is a transient event, reopening a session always renders the validated cards.
 
 ### Examples
 
@@ -227,7 +252,7 @@ The rule: anything the interface can do locally must not send a message. Sorting
    - To show a **changed** interface, send a **complete** `createSurface` (components plus `dataModel`); see [Example — interactive card](#example--interactive-card).
    - To remove an old card, `deleteSurface` and re-create it **within the same call**.
    - True cross-call live surfaces need a DSH session-projection change and are a separate piece of work; the snapshot contract above is what this release supports (locked by 8 regression tests).
-3. **No character-level streaming.** The surface renders when the call reaches `start`; `preparing` shows a skeleton. Chained tool calls in one turn produce incremental UI.
+3. **The streamed preview is not the authority.** While the arguments are still arriving the card draws a *recovery view* — only closed components, no whole-graph validation, not interactive. When the call reaches `start`/`result` the validated snapshot replaces it, so an intermediate state may show placeholder skeletons or a chart with the data points that have arrived so far. If the prefix stops parsing, the preview gives up and the Host still reports the precise validation error.
 4. **`callRendererFunction` / `agentFunctionResponse` unsupported.** They need an agent→renderer channel between tool calls, which the tool model does not provide; sending them yields an explicit error.
 5. **PTC / code mode**: `run_code` sub-calls render as nested rows without dedicated styling.
 6. **Media needs the network** except `data:` images.

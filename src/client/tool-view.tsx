@@ -17,6 +17,8 @@ import { interactionFor, modelFor, setInteractionState, stateKey, storeVersion, 
 import type { Violation } from '../shared/schema.js'
 import { FUNCTIONS } from '../shared/functions.js'
 import { estimateExpansion } from '../shared/budget.js'
+import { foldStreaming } from '../shared/stream.js'
+import { dropStreamedArguments, subscribeStream, streamTextFor } from './stream-store.js'
 import { A2UISurface } from './surface.js'
 import type { InteractionState, Scope, SurfaceView } from './context.js'
 import { useClaimCopy, useCopyClaimed } from './claims-react.js'
@@ -197,6 +199,32 @@ function formatViolations(errors: Violation[]): string {
     .join('\n')
 }
 
+/**
+ * Read the argument characters a preparing call has already streamed.
+ *
+ * Subscribed only while the call is being prepared, so a settled card costs
+ * nothing. The snapshot is a plain string, which keeps
+ * `useSyncExternalStore` from re-rendering on equal text.
+ */
+function useStreamedArguments(callId: string | undefined): string | undefined {
+  const read = React.useCallback(() => (callId === undefined ? undefined : streamTextFor(callId)), [callId])
+  // The same read serves server rendering: the tool view is only ever mounted in
+  // a browser, but a static harness must see exactly what the browser would.
+  return React.useSyncExternalStore(subscribeStream, read, read)
+}
+
+/** Placeholder body shown until the first component (and its root) arrives. */
+function Skeleton(): ReturnType<typeof h> {
+  return h(
+    'div',
+    { className: 'a2ui-skel', 'aria-hidden': true },
+    h('span', { className: 'a2ui-skel-line a2ui-skel-w70' }),
+    h('span', { className: 'a2ui-skel-line a2ui-skel-w92' }),
+    h('span', { className: 'a2ui-skel-line a2ui-skel-w60' }),
+    h('span', { className: 'a2ui-skel-block' }),
+  )
+}
+
 /** Build the user message that carries an A2UI action to the agent. */
 export { formatActionPrompt } from './action.js'
 
@@ -220,6 +248,22 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
   const payload = React.useMemo(() => readPayload(props), [props.block, props.phase])
   const analysis = React.useMemo(() => analyse(payload), [payload])
   const now = React.useMemo(() => Date.now(), [props.callId])
+
+  // While the call is being prepared the arguments arrive as raw fragments, so
+  // the card is drawn from what has already closed (see `shared/stream.ts`).
+  const preparing = props.phase === 'preparing'
+  const streamedText = useStreamedArguments(preparing ? props.callId : undefined)
+  const streamed = React.useMemo(
+    () => (streamedText === undefined || streamedText === '' ? undefined : foldStreaming(streamedText)),
+    [streamedText],
+  )
+
+  // Once the call settles its own `argsRaw` is authoritative, so the fragment
+  // copy is released immediately instead of waiting for the age bound.
+  React.useEffect(() => {
+    if (preparing) return
+    dropStreamedArguments(props.callId)
+  }, [preparing, props.callId])
 
   // The tail copy claims the call; the row copy steps aside only while that
   // claim is held, and automatically restores the card when the tail unmounts.
@@ -342,10 +386,56 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
     runLocal: (scope, component, call) => runLocal(surface.surfaceId, scope, component, call),
   })
 
-  // Stage: the model is still streaming arguments — show a lightweight skeleton
-  // instead of flashing a broken surface.
-  if (props.phase === 'preparing' && payload.messages.length === 0 && payload.readError === undefined) {
-    return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-notice', role: 'status' }, t('rendering')))))
+  // Stage: the arguments are still arriving. The card grows one component at a
+  // time out of what has already closed, and never turns into an error notice:
+  // a half-written payload is unfinished, not wrong. Nothing here is
+  // interactive — actions start once the call settles and its payload has been
+  // validated.
+  if (preparing) {
+    const streamView = (state: SurfaceState): SurfaceView => ({
+      surfaceId: state.surfaceId,
+      callId: props.callId,
+      state,
+      // The streamed data model is authoritative for this frame; user edits and
+      // actions belong to the settled card.
+      model: state.dataModel,
+      locale,
+      now,
+      interaction: { state: 'idle' },
+      t,
+      streaming: true,
+      setValue: () => {},
+      submit: () => {},
+      runLocal: () => {},
+    })
+    const ready = streamed === undefined || streamed.stopped ? [] : streamed.surfaces
+    const bodies: Array<ReturnType<typeof h>> =
+      ready.length === 0
+        ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
+        : ready.map((state) =>
+            h(
+              'div',
+              { key: state.surfaceId, className: 'a2ui-stack' },
+              ready.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null,
+              h(A2UISurface, { view: streamView(state) }),
+            ),
+          )
+    return h(
+      'div',
+      { className: 'a2ui-root' },
+      h(
+        'div',
+        { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true },
+        h(
+          'div',
+          { className: 'a2ui-card-head' },
+          sparkle('a2ui-card-spark'),
+          h('span', { className: 'a2ui-card-title' }, streamed?.title ?? t('rendering')),
+          h('span', { className: 'a2ui-card-state' }, t('streaming')),
+        ),
+        h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-stack' }, ...bodies)),
+      ),
+    )
   }
 
   const header = h(

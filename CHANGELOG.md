@@ -3,6 +3,50 @@
 All notable changes to this plugin. Version numbers follow [SemVer](https://semver.org/); the
 `engines.dsh` range states which DeepSeek Harness releases a version was verified against.
 
+## 0.3.0 — 2026-11-15
+
+Progressive streaming release. The card is now drawn **while** the model is still writing the tool
+arguments, instead of appearing all at once when the arguments finish.
+
+### Added
+
+- **Progressive streaming render.** A call in the `preparing` stage is drawn from the argument
+  fragments that have already *closed*: finished messages and finished components are folded with
+  the same `applyMessageBatch` the settled snapshot uses, so a surface grows instead of being
+  rebuilt. Components that are referenced but have not arrived render as skeleton placeholders
+  rather than "missing child" errors, and nothing is drawn before `root` exists (no empty card
+  flash).
+- **Out-of-band fragment observation.** The plugin registers a Conversation Definition with **no
+  view target** (`kind: a2ui-stream`) that copies `tool-call-delta` text from
+  `assistant/live-chunk` events per call id. A target-less Definition materialises no Node, so the
+  transcript, the process window and history replay are untouched; the copy is released as soon as
+  the call settles.
+- **`src/shared/partial-json.ts`** — a recovery scanner that only ever returns values whose own
+  slice `JSON.parse` accepts, with a nesting bound (128), a scan cap (512 KiB) and an explicit
+  `invalid` answer for a prefix it cannot follow.
+- **`src/shared/stream.ts`** — the streaming fold: per-component structural checks, the same render
+  budget as the settled path, and a `stopped` flag for a prefix that must not be drawn.
+
+### Behaviour
+
+- The preview is **not interactive**: the card is `pointer-events: none` with `aria-busy`, and
+  submit/write paths are disabled until the call settles and its payload passes Host validation.
+- Nothing about authority changed: `validateToolArguments` still decides what may render and
+  reports the precise error. A preview that hits malformed syntax or the render budget stops and
+  falls back to the skeleton.
+- Bounds: 256 KiB of fragment text per call (truncated beyond that), 120 s retention after the last
+  fragment, 512 KiB scanned per frame, recovered nesting depth 128.
+
+### Tests
+
+- 13 new cases in `tests/streaming.test.mjs`: recovery of a truncated payload, monotonic growth
+  over every prefix of a real payload, escape decoding, malformed/depth refusal, create+update
+  merging, structural skipping, budget stop, store bounding/pruning, and the Definition's
+  match/start/update contract.
+- 3 new real-React render cases (driven through the shipped `client.js`): a preparing card draws
+  the components that arrived, drops the half-written one, and keeps the skeleton when nothing is
+  usable yet.
+
 ## 0.2.1 — 2026-11-13
 
 ### Fixed

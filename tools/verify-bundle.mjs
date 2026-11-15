@@ -56,6 +56,12 @@ async function main() {
   ok(!/require\(["'](?!\.\/|react["'])/u.test(client), 'client bundle requires no module other than react and its own registry')
   ok(!/\beval\s*\(/u.test(client), 'client bundle never calls eval')
   ok(!/dangerouslySetInnerHTML\s*:/u.test(client), 'client bundle never injects HTML')
+  // Streaming support: the observer is a state-only Conversation Definition, so
+  // it must never claim a view target (that would add a transcript node), and the
+  // recovery scanner must ship with the bound it documents.
+  ok(client.includes('a2ui-stream'), 'client bundle registers the streaming observer')
+  ok(client.includes('tool-call-delta'), 'client bundle reads streamed tool-call fragments')
+  ok(client.includes('MAX_RECOVERY_DEPTH'), 'client bundle ships the partial-payload recovery bound')
 
   for (const locale of ['en', 'zh']) {
     const file = JSON.parse(await readFile(path.join(PKG, 'locale', `${locale}.json`), 'utf8'))

@@ -20,12 +20,12 @@
 | 项目 | 结果 |
 |---|---|
 | TypeScript 类型检查（`strict`） | ✅ 0 错误 |
-| 构建 | 31 个模块；`client.js` 294 KiB；`lib/**` 14 模块 + `index.js` |
-| 单元/集成/验收用例 | ✅ **130 / 130 通过**（`node:test`，`duration ≈ 200 ms`） |
-| 真实 React 渲染 | ✅ **11 / 11**（`npm run render`） |
+| 构建 | 35 个模块；`client.js` 329 KiB；`lib/**` 16 模块 + `index.js` |
+| 单元/集成/验收用例 | ✅ **146 / 146 通过**（`node:test`，`duration ≈ 2.6 s`） |
+| 真实 React 渲染 | ✅ **14 / 14**（`npm run render`） |
 | DOM 事件用例 | ✅ **10 / 10**（jsdom，`tests/dom.test.mjs`） |
 | 官方 catalog 样例 | ✅ **43 / 43**（`tests/fixtures/examples`，commit `58379ad`) |
-| Bundle 不变量检查 | ✅ **29 / 29 通过** |
+| Bundle 不变量检查 | ✅ **32 / 32 通过** |
 
 用例分布：
 
@@ -40,6 +40,7 @@
 | `tests/dom.test.mjs` | 10 | jsdom 真实事件：过程行编辑经轮末接管仍在、双击只入队一次、发送失败（`QUEUE_FULL`）后表单可编辑并可重试、成功后锁定、隐藏节点不渲染、改名工具靠 meta 渲染（正反例）、官方 `00_incremental` 每行按钮携带本行餐厅名、Tabs 方向键/Home/End 与 roving tabindex、Modal 初始焦点/Tab 环/Esc/焦点回归 |
 | `tests/client-units.test.mjs` | 11 | action 信封与时间戳、模板行作用域取值、编辑后取值、userMessage、超限拒绝、日期时间往返（纯时间/ISO/date min-max/垃圾输入）、柱状图零点基线域、Plot 断点切分 |
 | `tests/acceptance.test.mjs` | 9 | 见下节验收场景 1–9 |
+| `tests/streaming.test.mjs` | 13 | 渐进式流式渲染：截断载荷的恢复（只保留已闭合的组件）、对真实载荷**每个前缀**的单调增长断言、转义只解码一次、非法语法与深度越界一律停止、create+update 合并、结构性非法组件被跳过、超预算停止、分片存储的上限/惰性清理/释放、观察器 Definition 的 match/start/update 与「无视图目标」 |
 
 **第 8 条需求（交互性）的验证方式**：图表悬停、图例开关、表头排序都是纯客户端状态，无法在无头环境断言像素；已通过 9 个 SSR 渲染用例（含官方 `00_incremental` 等价 fixture、逐条内容断言）确认「带交互逻辑的组件树仍能完整渲染且不抛异常」，交互行为本身需要人眼确认（见第五节）。
 
@@ -155,7 +156,8 @@
 | 关闭/重开 DSH 后界面恢复 | 需要重启应用；已证明可回放副本存在且渲染器只依赖该副本。**安装/停用/版本漂移**已由 `npm run verify:fresh-home` 在临时 `DSH_HOME` 中覆盖 |
 | GUI 内完整链路（点卡片 → 入队消息 → 新一轮 → 重开会话 → 历史分页） | 需要运行中的 Host + 浏览器；DOM 用例覆盖到「点击产生何种消息」，但真实入队与重开画面本次未执行 |
 | 两个真实会话并排的视觉隔离 | 仅逻辑层验证 |
-| `FramePlayer` 动画时序、`Slider` 拖动实时重绘的流畅度 | 需要真实浏览器交互 |
+| `FramePlayer` 动画时序、Slider 拖动实时重绘的流畅度 | 需要真实浏览器交互 |
+| 渐进式流式渲染的**实时**观感（卡片逐块长出、占位骨架收束） | 已验证链路：恢复器/折叠器的 13 个单元用例、3 个走**已发布 bundle** 的真实 React 渲染用例（先向 store 注入分片，再渲染 `preparing` 卡片）、以及 DSH 源码侧对「无 `target` 的 state-only Context 会收到事件」的核对。**未**在真实一轮对话里目击：agent 浏览器无法取得 GUI 的访问令牌（`dsh web` 启动时打印的带 token 链接），因此没有第二个客户端可以发起一轮真实生成。请页面刷新后让模型生成一个多组件界面自验 |
 
 ## 六、开发过程中发现并修复的问题
 

@@ -133,6 +133,18 @@ export const CSS = `
 .a2ui-pointer-text{color:var(--dsw-alias-label-primary);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .a2ui-pointer-meta{margin-left:auto;flex:none;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .a2ui-tail{display:flex;flex-direction:column;gap:10px;min-width:0;margin:6px 0 2px}
+.a2ui-card-streaming{border-style:dashed}
+.a2ui-card-state{margin-left:auto;flex:none;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-brand-primary);opacity:.85}
+.a2ui-card-streaming .a2ui-card-body{pointer-events:none}
+.a2ui-skel{display:flex;flex-direction:column;gap:8px;min-width:0}
+.a2ui-skel-line,.a2ui-skel-block{display:block;border-radius:6px;background:linear-gradient(90deg,var(--dsw-alias-bg-layer-3) 0%,var(--dsw-alias-interactive-bg-hover-solid) 45%,var(--dsw-alias-bg-layer-3) 90%);background-size:220% 100%;animation:a2ui-shimmer 1.25s ease-in-out infinite}
+.a2ui-skel-line{height:9px}
+.a2ui-skel-block{height:52px;border-radius:8px;animation-delay:.12s}
+.a2ui-skel-w70{width:70%}
+.a2ui-skel-w92{width:92%}
+.a2ui-skel-w60{width:60%}
+.a2ui-skel-inline{width:96px;height:10px;vertical-align:middle}
+@keyframes a2ui-shimmer{0%{background-position:120% 0}100%{background-position:-40% 0}}
 .a2ui-hidden{display:none !important}
 @media (prefers-reduced-motion: reduce){.a2ui-root *{transition:none !important;animation:none !important}}
 `

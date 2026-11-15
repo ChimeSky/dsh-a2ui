@@ -36,6 +36,12 @@ export interface SurfaceView {
   readonly submit: (scope: Scope, component: A2UIComponent, name: string, context: Record<string, unknown>, userMessage?: string) => void
   /** Run an `action.functionCall` locally (never sends a message). */
   readonly runLocal: (scope: Scope, component: A2UIComponent, call: unknown) => void
+  /**
+   * Set while the payload is still being written: children that have not
+   * arrived render as placeholders instead of "missing child" errors, because
+   * absence is expected here and is not a defect.
+   */
+  readonly streaming?: boolean
 }
 
 /** A render scope: the surface plus an optional template item. */

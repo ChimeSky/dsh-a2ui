@@ -6,6 +6,8 @@ export type Dict = Record<string, string>
 export const zh: Dict = {
   title: '生成式界面',
   rendering: '正在生成界面…',
+  streaming: '生成中',
+  streamingHint: '界面会随着生成内容逐块出现；完成前不可操作。',
   updated: '已更新界面',
   updatedOnly: '仅更新了界面数据',
   updatedOnlyHint: '这个卡片只包含增量更新，没有重新声明组件，因此没有可渲染的界面。',
@@ -57,6 +59,8 @@ export const zh: Dict = {
 export const en: Dict = {
   title: 'Generative UI',
   rendering: 'Building interface…',
+  streaming: 'generating',
+  streamingHint: 'The interface appears block by block while it is generated; it becomes interactive when finished.',
   updated: 'Interface updated',
   updatedOnly: 'Interface data updated',
   updatedOnlyHint: 'This card only carries incremental updates and does not redeclare components, so there is nothing new to draw.',

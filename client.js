@@ -35,6 +35,8 @@ const NS = 'dsh-a2ui';
 const zh = {
     title: '生成式界面',
     rendering: '正在生成界面…',
+    streaming: '生成中',
+    streamingHint: '界面会随着生成内容逐块出现；完成前不可操作。',
     updated: '已更新界面',
     updatedOnly: '仅更新了界面数据',
     updatedOnlyHint: '这个卡片只包含增量更新，没有重新声明组件，因此没有可渲染的界面。',
@@ -85,6 +87,8 @@ const zh = {
 const en = {
     title: 'Generative UI',
     rendering: 'Building interface…',
+    streaming: 'generating',
+    streamingHint: 'The interface appears block by block while it is generated; it becomes interactive when finished.',
     updated: 'Interface updated',
     updatedOnly: 'Interface data updated',
     updatedOnlyHint: 'This card only carries incremental updates and does not redeclare components, so there is nothing new to draw.',
@@ -275,6 +279,18 @@ const CSS = `
 .a2ui-pointer-text{color:var(--dsw-alias-label-primary);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .a2ui-pointer-meta{margin-left:auto;flex:none;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .a2ui-tail{display:flex;flex-direction:column;gap:10px;min-width:0;margin:6px 0 2px}
+.a2ui-card-streaming{border-style:dashed}
+.a2ui-card-state{margin-left:auto;flex:none;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-brand-primary);opacity:.85}
+.a2ui-card-streaming .a2ui-card-body{pointer-events:none}
+.a2ui-skel{display:flex;flex-direction:column;gap:8px;min-width:0}
+.a2ui-skel-line,.a2ui-skel-block{display:block;border-radius:6px;background:linear-gradient(90deg,var(--dsw-alias-bg-layer-3) 0%,var(--dsw-alias-interactive-bg-hover-solid) 45%,var(--dsw-alias-bg-layer-3) 90%);background-size:220% 100%;animation:a2ui-shimmer 1.25s ease-in-out infinite}
+.a2ui-skel-line{height:9px}
+.a2ui-skel-block{height:52px;border-radius:8px;animation-delay:.12s}
+.a2ui-skel-w70{width:70%}
+.a2ui-skel-w92{width:92%}
+.a2ui-skel-w60{width:60%}
+.a2ui-skel-inline{width:96px;height:10px;vertical-align:middle}
+@keyframes a2ui-shimmer{0%{background-position:120% 0}100%{background-position:-40% 0}}
 .a2ui-hidden{display:none !important}
 @media (prefers-reduced-motion: reduce){.a2ui-root *{transition:none !important;animation:none !important}}
 `;
@@ -3677,6 +3693,643 @@ exports["resetSession"] = resetSession;
 exports["resetAll"] = resetAll;
 exports["entryCount"] = entryCount;
 };
+__registry["./shared/partial-json.js"] = function(module, exports, require) {
+/**
+ * Recovery of a JSON document that is still being streamed.
+ *
+ * While the model writes a tool call, the argument text arrives in fragments and
+ * a `JSON.parse` of the prefix throws. A2UI payloads are large and ordered —
+ * a `createSurface` whose `components` array grows one component at a time — so
+ * the interesting question is not "is it valid yet" but "which parts are
+ * already *complete*".
+ *
+ * The scanner answers exactly that and nothing more:
+ *
+ * - A value that closed is returned as parsed data (it is re-parsed from its own
+ *   slice, so the caller only ever receives data `JSON.parse` agreed with).
+ * - A container that is still open is returned with only its complete members;
+ *   the half-written member is reported separately as the array's `pending` tail
+ *   so a caller can never mistake it for finished data.
+ * - Anything the scanner cannot follow (invalid syntax or deeper than
+ *   {@link MAX_RECOVERY_DEPTH}) is reported as `invalid`, which the caller must
+ *   treat as "stop streaming", never as "render nothing".
+ *
+ * Nothing here is used by the Host validator: this layer only feeds the browser
+ * preview, and the finished call still goes through `validateToolArguments`.
+ */
+const { isPlainObject } = require("./shared/json.js");
+/** Deepest container nesting the recovery scanner will follow. */
+const MAX_RECOVERY_DEPTH = 128;
+/** Longest argument text the scanner will look at. */
+const MAX_RECOVERY_CHARS = 512 * 1024;
+/**
+ * Placeholder for an array element whose text has not closed yet.
+ *
+ * Only arrays need a marker: an object's *complete* pairs are already usable, so
+ * a value still being written is simply dropped from the salvaged object, while
+ * an array must remember that its last element exists (it is the message being
+ * written and the only place new components can appear).
+ */
+class IncompleteElement {
+    value;
+    constructor(value) {
+        this.value = value;
+    }
+}
+const WHITESPACE = ' \n\r\t';
+const NUMBER_CHAR = /[-+0-9.eE]/u;
+const LITERALS = ['true', 'false', 'null'];
+function skipWhitespace(text, index) {
+    let cursor = index;
+    while (cursor < text.length && WHITESPACE.includes(text.charAt(cursor)))
+        cursor += 1;
+    return cursor;
+}
+/** Scan a string literal starting at its opening quote. */
+function scanString(text, index) {
+    let cursor = index + 1;
+    while (cursor < text.length) {
+        const char = text.charAt(cursor);
+        if (char === '\\') {
+            cursor += 2;
+            continue;
+        }
+        if (char === '"') {
+            const raw = text.slice(index, cursor + 1);
+            try {
+                return { value: JSON.parse(raw), end: cursor + 1, complete: true, invalid: false };
+            }
+            catch {
+                return { value: undefined, end: cursor + 1, complete: false, invalid: true };
+            }
+        }
+        // A raw newline inside a string is invalid JSON, so it can only be the
+        // model's own mistake: stop trusting the prefix.
+        if (char === '\n' || char === '\r')
+            return { value: undefined, end: cursor, complete: false, invalid: true };
+        cursor += 1;
+    }
+    return { value: undefined, end: text.length, complete: false, invalid: false };
+}
+/** Scan a number or a `true`/`false`/`null` literal. */
+function scanScalar(text, index) {
+    const char = text.charAt(index);
+    if (char === '')
+        return { value: undefined, end: index, complete: false, invalid: false };
+    if (char === '-' || (char >= '0' && char <= '9')) {
+        let cursor = index;
+        while (cursor < text.length && NUMBER_CHAR.test(text.charAt(cursor)))
+            cursor += 1;
+        // A number that runs to the end of the text may still grow ("12" → "123").
+        if (cursor >= text.length)
+            return { value: undefined, end: text.length, complete: false, invalid: false };
+        const raw = text.slice(index, cursor);
+        const value = Number(raw);
+        if (!Number.isFinite(value))
+            return { value: undefined, end: cursor, complete: false, invalid: true };
+        return { value, end: cursor, complete: true, invalid: false };
+    }
+    for (const literal of LITERALS) {
+        if (!literal.startsWith(char))
+            continue;
+        if (text.length - index < literal.length) {
+            if (literal.startsWith(text.slice(index)))
+                return { value: undefined, end: text.length, complete: false, invalid: false };
+            continue;
+        }
+        if (text.startsWith(literal, index)) {
+            const value = literal === 'null' ? null : literal === 'true';
+            return { value, end: index + literal.length, complete: true, invalid: false };
+        }
+    }
+    return { value: undefined, end: index, complete: false, invalid: true };
+}
+function scanValue(text, index, depth) {
+    if (depth > MAX_RECOVERY_DEPTH)
+        return { value: undefined, end: index, complete: false, invalid: true };
+    if (index >= text.length)
+        return { value: undefined, end: index, complete: false, invalid: false };
+    const char = text.charAt(index);
+    if (char === '{')
+        return scanObject(text, index, depth);
+    if (char === '[')
+        return scanArray(text, index, depth);
+    if (char === '"')
+        return scanString(text, index);
+    return scanScalar(text, index);
+}
+function scanObject(text, index, depth) {
+    const pairs = {};
+    let cursor = skipWhitespace(text, index + 1);
+    if (cursor >= text.length)
+        return { value: pairs, end: text.length, complete: false, invalid: false };
+    if (text.charAt(cursor) === '}')
+        return { value: pairs, end: cursor + 1, complete: true, invalid: false };
+    for (;;) {
+        if (text.charAt(cursor) !== '"')
+            return { value: undefined, end: cursor, complete: false, invalid: true };
+        const key = scanString(text, cursor);
+        if (!key.complete)
+            return { value: key.invalid ? undefined : pairs, end: text.length, complete: false, invalid: key.invalid };
+        cursor = skipWhitespace(text, key.end);
+        if (cursor >= text.length)
+            return { value: pairs, end: text.length, complete: false, invalid: false };
+        if (text.charAt(cursor) !== ':')
+            return { value: undefined, end: cursor, complete: false, invalid: true };
+        cursor = skipWhitespace(text, cursor + 1);
+        const entry = scanValue(text, cursor, depth + 1);
+        if (entry.invalid)
+            return { value: undefined, end: cursor, complete: false, invalid: true };
+        if (!entry.complete) {
+            if (entry.value !== undefined)
+                pairs[String(key.value)] = entry.value;
+            return { value: pairs, end: text.length, complete: false, invalid: false };
+        }
+        pairs[String(key.value)] = entry.value;
+        cursor = skipWhitespace(text, entry.end);
+        if (cursor >= text.length)
+            return { value: pairs, end: text.length, complete: false, invalid: false };
+        if (text.charAt(cursor) === ',') {
+            cursor = skipWhitespace(text, cursor + 1);
+            if (cursor >= text.length)
+                return { value: pairs, end: text.length, complete: false, invalid: false };
+            continue;
+        }
+        if (text.charAt(cursor) === '}')
+            return { value: pairs, end: cursor + 1, complete: true, invalid: false };
+        return { value: undefined, end: cursor, complete: false, invalid: true };
+    }
+}
+function scanArray(text, index, depth) {
+    const items = [];
+    let cursor = skipWhitespace(text, index + 1);
+    if (cursor >= text.length)
+        return { value: items, end: text.length, complete: false, invalid: false };
+    if (text.charAt(cursor) === ']')
+        return { value: items, end: cursor + 1, complete: true, invalid: false };
+    for (;;) {
+        const entry = scanValue(text, cursor, depth + 1);
+        if (entry.invalid)
+            return { value: undefined, end: cursor, complete: false, invalid: true };
+        if (!entry.complete) {
+            // The element exists but is unfinished: keep its salvaged content behind a
+            // marker so only the caller that wants the tail can see it.
+            items.push(new IncompleteElement(entry.value));
+            return { value: items, end: text.length, complete: false, invalid: false };
+        }
+        items.push(entry.value);
+        cursor = skipWhitespace(text, entry.end);
+        if (cursor >= text.length)
+            return { value: items, end: text.length, complete: false, invalid: false };
+        if (text.charAt(cursor) === ',') {
+            cursor = skipWhitespace(text, cursor + 1);
+            if (cursor >= text.length)
+                return { value: items, end: text.length, complete: false, invalid: false };
+            continue;
+        }
+        if (text.charAt(cursor) === ']')
+            return { value: items, end: cursor + 1, complete: true, invalid: false };
+        return { value: undefined, end: cursor, complete: false, invalid: true };
+    }
+}
+/**
+ * Drop every incomplete array element from a salvaged value.
+ * @param value salvaged scan output.
+ * @returns the same structure without markers.
+ */
+function stripIncomplete(value) {
+    if (value instanceof IncompleteElement)
+        return undefined;
+    if (Array.isArray(value)) {
+        const out = [];
+        for (const item of value) {
+            const next = stripIncomplete(item);
+            if (next !== undefined)
+                out.push(next);
+        }
+        return out;
+    }
+    if (isPlainObject(value)) {
+        const out = {};
+        for (const [key, item] of Object.entries(value)) {
+            const next = stripIncomplete(item);
+            if (next !== undefined)
+                out[key] = next;
+        }
+        return out;
+    }
+    return value;
+}
+/**
+ * Recover the complete content of a partially streamed argument document.
+ *
+ * @param text the argument characters received so far.
+ * @returns complete messages plus the open state of the stream.
+ */
+function recoverArguments(text) {
+    const empty = { messages: [], open: false, invalid: false, closed: false, chars: 0 };
+    if (typeof text !== 'string' || text === '')
+        return empty;
+    const capped = text.length > MAX_RECOVERY_CHARS ? text.slice(0, MAX_RECOVERY_CHARS) : text;
+    const scan = scanValue(capped, skipWhitespace(capped, 0), 0);
+    const chars = text.length;
+    if (scan.invalid)
+        return { ...empty, invalid: true, chars };
+    if (!isPlainObject(scan.value)) {
+        // A closed non-object document is a broken payload; an unfinished one is
+        // simply not the object yet (the model may still be writing the first `{`).
+        return { ...empty, invalid: scan.complete, closed: scan.complete, chars };
+    }
+    const title = typeof scan.value.title === 'string' ? scan.value.title : undefined;
+    const messages = [];
+    let open = !scan.complete;
+    const raw = scan.value.messages;
+    if (Array.isArray(raw)) {
+        for (const message of raw) {
+            if (message instanceof IncompleteElement) {
+                // The message being written: keep whatever it already closed inside it
+                // (its components), so the partial surface can be drawn.
+                const salvaged = stripIncomplete(message.value);
+                if (isPlainObject(salvaged))
+                    messages.push(salvaged);
+                open = true;
+                continue;
+            }
+            if (isPlainObject(message))
+                messages.push(message);
+        }
+    }
+    if (scan.complete)
+        open = false;
+    return {
+        ...(title === undefined ? {} : { title }),
+        messages,
+        open,
+        invalid: false,
+        closed: scan.complete && !open,
+        chars,
+    };
+}
+
+exports["MAX_RECOVERY_DEPTH"] = MAX_RECOVERY_DEPTH;
+exports["MAX_RECOVERY_CHARS"] = MAX_RECOVERY_CHARS;
+exports["stripIncomplete"] = stripIncomplete;
+exports["recoverArguments"] = recoverArguments;
+};
+__registry["./shared/stream.js"] = function(module, exports, require) {
+/**
+ * Progressive fold: render an `a2ui` call while the model is still writing it.
+ *
+ * The finished-call path is strict — `validateToolArguments` decides, and a
+ * single violation turns the whole card into a readable error. That is right for
+ * settled data and useless for data still arriving, so this module is the
+ * deliberately weaker sibling used *only* while a call is being prepared:
+ *
+ * - It folds whatever {@link recoverArguments} could close (whole messages, whole
+ *   components) with the same merge semantics the settled path uses, so a surface
+ *   grows instead of being rebuilt.
+ * - Every component is shape-checked on its own (id, type name) and the resulting
+ *   surface still has to pass the expansion budget, so a partial tree cannot be
+ *   larger than a settled one.
+ * - A surface without its `root` component yet is not rendered at all: there is
+ *   nothing to place, and an empty card would flicker.
+ *
+ * Nothing here authorises anything: the streaming card is non-interactive, and
+ * the settled call replaces it with the validated snapshot.
+ */
+const { estimateExpansion } = require("./shared/budget.js");
+const { isPlainObject } = require("./shared/json.js");
+const { LIMITS } = require("./shared/limits.js");
+const { recoverArguments } = require("./shared/partial-json.js");
+const { EXTENSION_CATALOG_ID, PROTOCOL_VERSION } = require("./shared/catalog.js");
+const { applyMessageBatch } = require("./shared/validate.js");
+/** Component and surface ids the protocol admits. */
+const ID_PATTERN = /^[A-Za-z0-9._:-]+$/u;
+const EMPTY = { surfaces: [], components: 0, streaming: false, stopped: false };
+function validId(value) {
+    return typeof value === 'string' && value !== '' && value.length <= LIMITS.maxIdLength && ID_PATTERN.test(value);
+}
+/**
+ * Keep the components that are structurally complete.
+ *
+ * Property values are *not* validated here: every renderer reads its properties
+ * totally (an absent or wrongly typed value falls back), and validating a graph
+ * whose children may still arrive would reject exactly the intermediate states
+ * this module exists to draw. The settled call is still fully validated.
+ */
+function sanitiseComponents(value) {
+    if (!Array.isArray(value))
+        return [];
+    const out = [];
+    const seen = new Set();
+    for (const entry of value.slice(0, LIMITS.maxComponentsPerMessage)) {
+        if (!isPlainObject(entry))
+            continue;
+        if (!validId(entry.id))
+            continue;
+        if (seen.has(entry.id))
+            continue;
+        if (typeof entry.component !== 'string' || entry.component === '' || entry.component === 'Surface')
+            continue;
+        seen.add(entry.id);
+        out.push(entry);
+    }
+    return out;
+}
+/** Shape-check one recovered message; anything unfamiliar is skipped. */
+function sanitiseMessage(value) {
+    if (!isPlainObject(value))
+        return undefined;
+    const create = value.createSurface;
+    if (isPlainObject(create)) {
+        if (!validId(create.surfaceId))
+            return undefined;
+        const catalogId = typeof create.catalogId === 'string' && create.catalogId !== '' ? create.catalogId : EXTENSION_CATALOG_ID;
+        return {
+            version: PROTOCOL_VERSION,
+            createSurface: {
+                surfaceId: create.surfaceId,
+                catalogId,
+                ...(typeof create.sendDataModel === 'boolean' ? { sendDataModel: create.sendDataModel } : {}),
+                ...(isPlainObject(create.dataModel) ? { dataModel: create.dataModel } : {}),
+                components: sanitiseComponents(create.components),
+            },
+        };
+    }
+    const update = value.updateComponents;
+    if (isPlainObject(update)) {
+        if (!validId(update.surfaceId))
+            return undefined;
+        return {
+            version: PROTOCOL_VERSION,
+            updateComponents: { surfaceId: update.surfaceId, components: sanitiseComponents(update.components) },
+        };
+    }
+    const data = value.updateDataModel;
+    if (isPlainObject(data)) {
+        if (!validId(data.surfaceId))
+            return undefined;
+        if (!Object.prototype.hasOwnProperty.call(data, 'value'))
+            return undefined;
+        const path = data.path;
+        if (path !== undefined && typeof path !== 'string')
+            return undefined;
+        return {
+            version: PROTOCOL_VERSION,
+            updateDataModel: {
+                surfaceId: data.surfaceId,
+                ...(typeof path === 'string' ? { path } : {}),
+                value: data.value,
+            },
+        };
+    }
+    const drop = value.deleteSurface;
+    if (isPlainObject(drop)) {
+        if (!validId(drop.surfaceId))
+            return undefined;
+        return { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } };
+    }
+    return undefined;
+}
+/**
+ * Fold the argument characters received so far into renderable surfaces.
+ *
+ * @param text argument text of the call being prepared.
+ * @returns surfaces that can be drawn now, plus whether to keep listening.
+ */
+function foldStreaming(text) {
+    const recovered = recoverArguments(text);
+    if (recovered.invalid)
+        return { ...EMPTY, stopped: true };
+    const messages = [];
+    for (const message of recovered.messages) {
+        const sanitised = sanitiseMessage(message);
+        if (sanitised !== undefined)
+            messages.push(sanitised);
+    }
+    if (messages.length === 0)
+        return { ...EMPTY, streaming: recovered.open };
+    const folded = applyMessageBatch(new Map(), messages);
+    const surfaces = [];
+    let components = 0;
+    for (const touch of folded.touches) {
+        if (touch.deleted)
+            continue;
+        const state = folded.surfaces.get(touch.surfaceId);
+        if (state === undefined)
+            continue;
+        // Without a declared root there is nothing to place yet: an empty card would
+        // appear and disappear as each component lands.
+        if (!state.components.has('root'))
+            continue;
+        const estimate = estimateExpansion(state);
+        if (estimate.reason !== undefined) {
+            // A partial tree over the settled budget is never completed into a legal
+            // one, and drawing it would freeze the tab.
+            return { ...EMPTY, stopped: true };
+        }
+        surfaces.push(state);
+        components += state.components.size;
+    }
+    return {
+        ...(recovered.title === undefined ? {} : { title: recovered.title }),
+        surfaces,
+        components,
+        streaming: recovered.open,
+        stopped: false,
+    };
+}
+
+exports["foldStreaming"] = foldStreaming;
+};
+__registry["./client/stream-store.js"] = function(module, exports, require) {
+/**
+ * Live tool-argument observation.
+ *
+ * The browser's `tool.call.toolview` receives a `PreparingToolCall`, whose
+ * documented argument reader (`PartialArguments`) exposes *top-level* fields
+ * only: a nested `messages` array cannot be read until it closes, so a preparing
+ * view has no characters to render. The raw fragments do exist, however, in the
+ * `assistant/live-chunk` stream — and a Conversation Context is the supported way
+ * for a plugin to see an event: registering a Definition with **no view target**
+ * keeps the state machine (and therefore nothing) out of the transcript.
+ *
+ * This module is exactly that: a state-only Definition that copies each
+ * `tool-call-delta` into one small store keyed by call id, plus the React binding
+ * the tool view reads during the preparing stage. The store is the *only* place
+ * the plugin keeps data that is not derivable from the session log, so it is
+ * bounded (per call and by age) and never persisted.
+ */
+const { isPlainObject } = require("./shared/json.js");
+/** Longest argument text kept per call. */
+const MAX_STREAM_CHARS = 256 * 1024;
+/** How long an unused entry is kept before the next append prunes it. */
+const MAX_STREAM_AGE_MS = 120_000;
+const entries = new Map();
+const listeners = new Set();
+let pendingNotify = false;
+let timer;
+let clock = () => Date.now();
+/** Replace the clock (tests only). */
+function setStreamClock(now) {
+    clock = now;
+}
+function notifyNow() {
+    pendingNotify = false;
+    for (const listener of [...listeners]) {
+        try {
+            listener();
+        }
+        catch {
+            // A broken listener must not stop the others, and this runs inside the
+            // conversation engine's publication loop.
+        }
+    }
+}
+/** Coalesce notifications to one per animation frame. */
+function scheduleNotify() {
+    if (pendingNotify)
+        return;
+    pendingNotify = true;
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(notifyNow);
+        return;
+    }
+    if (typeof setTimeout === 'function') {
+        timer = setTimeout(notifyNow, 16);
+        return;
+    }
+    // A host without a scheduler (a static render harness): publish at once.
+    notifyNow();
+}
+/** Run pending notifications now (used by tests and by a manual flush). */
+function flushStreamNotifications() {
+    if (timer !== undefined && typeof clearTimeout === 'function') {
+        clearTimeout(timer);
+        timer = undefined;
+    }
+    if (pendingNotify)
+        notifyNow();
+}
+/** Subscribe to any call's streamed text changing. */
+function subscribeStream(listener) {
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
+}
+/** Argument text received so far for one call. */
+function streamTextFor(callId) {
+    if (callId === undefined || callId === '')
+        return undefined;
+    return entries.get(callId)?.text;
+}
+/** Whether the kept text was cut off at {@link MAX_STREAM_CHARS}. */
+function streamTruncatedFor(callId) {
+    if (callId === undefined || callId === '')
+        return false;
+    return entries.get(callId)?.truncated === true;
+}
+function prune(now) {
+    for (const [callId, entry] of entries) {
+        if (now - entry.updatedAt > MAX_STREAM_AGE_MS)
+            entries.delete(callId);
+    }
+}
+function append(callId, delta) {
+    if (callId === '' || delta === '')
+        return;
+    const now = clock();
+    prune(now);
+    const previous = entries.get(callId);
+    const room = MAX_STREAM_CHARS - (previous?.text.length ?? 0);
+    if (previous?.truncated === true || room <= 0) {
+        if (previous !== undefined)
+            previous.updatedAt = now;
+        return;
+    }
+    const text = (previous?.text ?? '') + (delta.length <= room ? delta : delta.slice(0, room));
+    entries.set(callId, { text, updatedAt: now, truncated: delta.length > room });
+    scheduleNotify();
+}
+/** Start or extend one call's argument text. */
+function appendStreamedArguments(callId, delta) {
+    append(callId, delta);
+}
+/** Forget one call's text (a settled call has its own `argsRaw`). */
+function dropStreamedArguments(callId) {
+    if (entries.delete(callId))
+        scheduleNotify();
+}
+/** Reset the store (tests, and a profile switch). */
+function resetStreams() {
+    if (entries.size === 0)
+        return;
+    entries.clear();
+    scheduleNotify();
+}
+function readChunk(match) {
+    const chunk = match.event.data?.chunk;
+    if (!isPlainObject(chunk))
+        return undefined;
+    const callId = typeof chunk.id === 'string' ? chunk.id : '';
+    if (callId === '')
+        return undefined;
+    if (chunk.type !== 'tool-call-delta')
+        return undefined;
+    const delta = chunk.argumentsDelta;
+    return typeof delta === 'string' ? { callId, delta } : undefined;
+}
+function advance(state, match) {
+    const chunk = readChunk(match);
+    if (chunk === undefined)
+        return state ?? { callId: '', seen: 0 };
+    append(chunk.callId, chunk.delta);
+    return { callId: chunk.callId, seen: (state?.callId === chunk.callId ? state.seen : 0) + chunk.delta.length };
+}
+/**
+ * Create the Definition that mirrors streaming arguments into the store.
+ *
+ * `kind` is unique per plugin installation and the Definition declares no view
+ * target, so the engine runs it without materialising a Node: the transcript is
+ * untouched whatever this observes.
+ */
+function createStreamDefinition() {
+    return {
+        kind: 'a2ui-stream',
+        match(event) {
+            if (!isPlainObject(event) || event.type !== 'assistant/live-chunk')
+                return null;
+            const chunk = readChunk({ event });
+            return chunk === undefined ? null : { id: chunk.callId, role: 'start' };
+        },
+        start(_context, match) {
+            return advance(undefined, match);
+        },
+        update(context, match) {
+            return advance(context.state, match);
+        },
+        // Live chunks are already published on the animation-frame cadence by the
+        // Assistant Definition; asking for the same cadence means this observation
+        // rides that flush instead of forcing a chat publication of its own.
+        publication() {
+            return 'animation-frame';
+        },
+    };
+}
+
+exports["MAX_STREAM_CHARS"] = MAX_STREAM_CHARS;
+exports["MAX_STREAM_AGE_MS"] = MAX_STREAM_AGE_MS;
+exports["setStreamClock"] = setStreamClock;
+exports["flushStreamNotifications"] = flushStreamNotifications;
+exports["subscribeStream"] = subscribeStream;
+exports["streamTextFor"] = streamTextFor;
+exports["streamTruncatedFor"] = streamTruncatedFor;
+exports["appendStreamedArguments"] = appendStreamedArguments;
+exports["dropStreamedArguments"] = dropStreamedArguments;
+exports["resetStreams"] = resetStreams;
+exports["createStreamDefinition"] = createStreamDefinition;
+};
 __registry["./shared/url.js"] = function(module, exports, require) {
 /**
  * URL and path admission for model-authored components.
@@ -5706,6 +6359,11 @@ function renderById(scope, id, depth, key, itemScope) {
         return fallback(scope, 'depth limit');
     const component = scope.view.state.components.get(id);
     if (component === undefined) {
+        // While the payload is still streaming, a child that has not arrived yet is
+        // expected: reserve its space with a placeholder instead of reporting a
+        // defect the user cannot do anything about.
+        if (scope.view.streaming === true)
+            return h('span', { key, className: 'a2ui-skel-line a2ui-skel-inline', 'aria-hidden': true });
         return h('span', { key }, fallback(scope, `${scope.view.t('childMissing')}: ${id}`));
     }
     // A nested child inside a template row inherits the row's item, so a `Text`
@@ -6132,8 +6790,13 @@ function renderProgress(scope, component) {
 function A2UISurface(props) {
     const { view } = props;
     const root = view.state.components.get('root');
-    if (root === undefined)
+    if (root === undefined) {
+        // The fold only returns surfaces that have a root; a streaming view without
+        // one still reserves space instead of reporting a defect.
+        if (view.streaming === true)
+            return h('div', { className: 'a2ui-skel', 'aria-hidden': true }, h('span', { className: 'a2ui-skel-line a2ui-skel-w70' }));
         return fallback({ view }, `${view.t('childMissing')}: root`);
+    }
     return h('div', { className: 'a2ui-surface' }, h(ComponentNode, { component: root, scope: { view }, depth: 1 }));
 }
 
@@ -6337,6 +7000,8 @@ const { COMPONENT_BY_NAME } = require("./shared/catalog.js");
 const { interactionFor, modelFor, setInteractionState, stateKey, storeVersion, subscribeStore, writeModel } = require("./client/model-store.js");
 const { FUNCTIONS } = require("./shared/functions.js");
 const { estimateExpansion } = require("./shared/budget.js");
+const { foldStreaming } = require("./shared/stream.js");
+const { dropStreamedArguments, subscribeStream, streamTextFor } = require("./client/stream-store.js");
 const { A2UISurface } = require("./client/surface.js");
 const { useClaimCopy, useCopyClaimed } = require("./client/claims-react.js");
 const { resolveValue } = require("./shared/binding.js");
@@ -6441,6 +7106,23 @@ function formatViolations(errors) {
         .map((error) => `${error.path === '' ? 'arguments' : error.path}: ${error.message}`)
         .join('\n');
 }
+/**
+ * Read the argument characters a preparing call has already streamed.
+ *
+ * Subscribed only while the call is being prepared, so a settled card costs
+ * nothing. The snapshot is a plain string, which keeps
+ * `useSyncExternalStore` from re-rendering on equal text.
+ */
+function useStreamedArguments(callId) {
+    const read = React.useCallback(() => (callId === undefined ? undefined : streamTextFor(callId)), [callId]);
+    // The same read serves server rendering: the tool view is only ever mounted in
+    // a browser, but a static harness must see exactly what the browser would.
+    return React.useSyncExternalStore(subscribeStream, read, read);
+}
+/** Placeholder body shown until the first component (and its root) arrives. */
+function Skeleton() {
+    return h('div', { className: 'a2ui-skel', 'aria-hidden': true }, h('span', { className: 'a2ui-skel-line a2ui-skel-w70' }), h('span', { className: 'a2ui-skel-line a2ui-skel-w92' }), h('span', { className: 'a2ui-skel-line a2ui-skel-w60' }), h('span', { className: 'a2ui-skel-block' }));
+}
 /** Build the user message that carries an A2UI action to the agent. */
 { const __reexport = require("./client/action.js"); exports["formatActionPrompt"] = __reexport["formatActionPrompt"]; }
 function openExternal(url) {
@@ -6463,6 +7145,18 @@ function A2UIToolView(props) {
     const payload = React.useMemo(() => readPayload(props), [props.block, props.phase]);
     const analysis = React.useMemo(() => analyse(payload), [payload]);
     const now = React.useMemo(() => Date.now(), [props.callId]);
+    // While the call is being prepared the arguments arrive as raw fragments, so
+    // the card is drawn from what has already closed (see `shared/stream.ts`).
+    const preparing = props.phase === 'preparing';
+    const streamedText = useStreamedArguments(preparing ? props.callId : undefined);
+    const streamed = React.useMemo(() => (streamedText === undefined || streamedText === '' ? undefined : foldStreaming(streamedText)), [streamedText]);
+    // Once the call settles its own `argsRaw` is authoritative, so the fragment
+    // copy is released immediately instead of waiting for the age bound.
+    React.useEffect(() => {
+        if (preparing)
+            return;
+        dropStreamedArguments(props.callId);
+    }, [preparing, props.callId]);
     // The tail copy claims the call; the row copy steps aside only while that
     // claim is held, and automatically restores the card when the tail unmounts.
     const claimedElsewhere = useCopyClaimed(sessionId, props.callId);
@@ -6560,10 +7254,33 @@ function A2UIToolView(props) {
         submit: (scope, component, name, context, userMessage) => submit(surface.surfaceId, scope, component, name, context, userMessage),
         runLocal: (scope, component, call) => runLocal(surface.surfaceId, scope, component, call),
     });
-    // Stage: the model is still streaming arguments — show a lightweight skeleton
-    // instead of flashing a broken surface.
-    if (props.phase === 'preparing' && payload.messages.length === 0 && payload.readError === undefined) {
-        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-notice', role: 'status' }, t('rendering')))));
+    // Stage: the arguments are still arriving. The card grows one component at a
+    // time out of what has already closed, and never turns into an error notice:
+    // a half-written payload is unfinished, not wrong. Nothing here is
+    // interactive — actions start once the call settles and its payload has been
+    // validated.
+    if (preparing) {
+        const streamView = (state) => ({
+            surfaceId: state.surfaceId,
+            callId: props.callId,
+            state,
+            // The streamed data model is authoritative for this frame; user edits and
+            // actions belong to the settled card.
+            model: state.dataModel,
+            locale,
+            now,
+            interaction: { state: 'idle' },
+            t,
+            streaming: true,
+            setValue: () => { },
+            submit: () => { },
+            runLocal: () => { },
+        });
+        const ready = streamed === undefined || streamed.stopped ? [] : streamed.surfaces;
+        const bodies = ready.length === 0
+            ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
+            : ready.map((state) => h('div', { key: state.surfaceId, className: 'a2ui-stack' }, ready.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null, h(A2UISurface, { view: streamView(state) })));
+        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true }, h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, streamed?.title ?? t('rendering')), h('span', { className: 'a2ui-card-state' }, t('streaming'))), h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-stack' }, ...bodies))));
     }
     const header = h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')));
     // A failed call never renders operable content: without this, an error result
@@ -6859,6 +7576,15 @@ const { DICTS, NS, en } = require("./client/locale.js");
 const { CSS } = require("./client/styles.js");
 const { A2UIToolView } = require("./client/tool-view.js");
 const { A2uiTurnTail } = require("./client/turn-tail.js");
+const { createStreamDefinition } = require("./client/stream-store.js");
+/**
+ * Test hooks: the live-argument store the preparing card reads.
+ *
+ * The render harness loads this bundle exactly as the browser does, so priming
+ * the store is the only way to render the progressive path against the shipped
+ * artifact instead of a re-implementation of it.
+ */
+{ const __reexport = require("./client/stream-store.js"); exports["__appendStreamedArguments"] = __reexport["appendStreamedArguments"]; exports["__flushStreamNotifications"] = __reexport["flushStreamNotifications"]; exports["__resetStreams"] = __reexport["resetStreams"]; exports["__streamTextFor"] = __reexport["streamTextFor"]; }
 /** Services this plugin needs before it can register anything. */
 const inject = ['slots', 'locale', 'sessions'];
 /** Stable style element id, also used to avoid double injection on reload. */
@@ -6915,6 +7641,34 @@ function makeSendPrompt(ctx) {
 function apply(ctx) {
     ctx.effect(installStyles, 'dsh-a2ui: styles');
     ctx.effect(() => ctx.locale.register(NS, DICTS), 'dsh-a2ui: locale');
+    // Streaming: observe the raw argument fragments of a call that is still being
+    // written, so the card can grow instead of waiting for the finished payload.
+    // The observer is a state-only Conversation Definition (no view target), which
+    // is the supported way to watch an event without touching the transcript.
+    ctx.effect(() => {
+        if (typeof ctx.inject !== 'function')
+            return undefined;
+        const fiber = ctx.inject(['uiConversation'], (scoped) => {
+            scoped.effect(() => {
+                const register = scoped.uiConversation?.events?.register;
+                if (typeof register !== 'function')
+                    return undefined;
+                try {
+                    const dispose = register(createStreamDefinition());
+                    return typeof dispose === 'function' ? dispose : undefined;
+                }
+                catch (cause) {
+                    // Losing the observer costs the progressive preview, never the card.
+                    ctx.logger?.warn?.('dsh-a2ui: streaming observer unavailable', cause);
+                    return undefined;
+                }
+            }, 'dsh-a2ui: stream observer');
+        });
+        return () => {
+            if (typeof fiber?.dispose === 'function')
+                void fiber.dispose();
+        };
+    }, 'dsh-a2ui: stream observer');
     const bound = ctx.locale.bind(NS);
     const t = (key) => {
         const value = bound(key);

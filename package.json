@@ -1,6 +1,6 @@
 {
   "name": "dsh-a2ui",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Generative UI for DeepSeek Harness: renders Google A2UI 1.0 surfaces inside the conversation with an agent -> UI -> agent interaction loop.",
   "keywords": [
     "dsh",
