@@ -1,148 +1,108 @@
-# dsh-a2ui — Generative UI for DeepSeek Harness
+# dsh-a2ui — Answer-first A2UI for DeepSeek Harness
 
-[![CI](https://github.com/ChimeSky/dsh-a2ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ChimeSky/dsh-a2ui/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![DSH plugin](https://img.shields.io/badge/dsh-plugin-8A2BE2)](https://github.com/topics/dsh-plugin)
+> **Make data-heavy AI answers easier to understand.**
+> *Let the agent answer with an inline, on-demand A2UI surface when a picture explains better than a paragraph.*
+
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./CHANGELOG.md)
+[![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
+[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![React Tests](https://img.shields.io/badge/react%20tests-17%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
 
-*Bring interactive, agent-generated interfaces into DeepSeek Harness through the Google A2UI protocol.*
+[简体中文](./README.md) | [Changelog](./CHANGELOG.md) | [Architecture](./docs/ARCHITECTURE.md) | [Test report](./docs/TEST-REPORT.md)
 
-[简体中文](README.md) | **English**
+**dsh-a2ui** is a DeepSeek Harness (DSH) plugin built on the Google A2UI 1.0 protocol that gives ordinary AI conversations **on-demand visual interfaces**.
 
----
+When an answer contains **data comparisons, statistical trends, numeric relationships or algorithm walk-throughs**, the agent can draw sortable tables, charts, KPI cards and lightly interactive components directly in the conversation; simple questions still get plain Markdown.
 
-## What it is
+Its goal is **not** to build a persistent dashboard or an app workbench. It is to **pick the right form for each answer (Answer-first, not dashboard-first)**.
 
-`dsh-a2ui` is an installable DeepSeek Harness (DSH) plugin that integrates **Google A2UI 1.0** (Agent-to-User Interface) into the chat surface:
+### Core traits
 
-- The agent calls the `a2ui` tool with a list of **A2UI 1.0 messages**.
-- The Host validates them against the official schema (surface ids, component graph, properties, data bindings, resource limits).
-- The browser renders them **inline in the conversation** as native-looking cards, tables, charts, forms, sliders and animations.
-- When the user clicks a button or submits a form, the plugin sends the A2UI `action` event back to the current session as an ordinary user message and the agent continues.
-
-Rendering is derived entirely from the **session log**: no plugin-private persistence, so reopening a conversation restores the UI, and replay never re-fires an action.
-
-> This is a **protocol implementation**, not a custom HTML/JSON lookalike. Message names, component types, property names and function signatures come from the A2UI v1.0 schemas (see [Compatibility](#compatibility)); extra components are declared through a **custom catalog**, not by bypassing the protocol.
-
----
-
-## Status (v0.3.0)
-
-> This is the progressive-streaming release: the card grows component by component while the model is still writing the arguments, instead of waiting for the finished payload. See [CHANGELOG.md](CHANGELOG.md) for the itemised list.
-
-| Capability | Status |
-|---|---|
-| Host tool registration (`a2ui`, `a2ui_catalog`) | Done |
-| A2UI 1.0 validation (`createSurface` / `updateComponents` / `updateDataModel` / `deleteSurface`) | Done |
-| Inline native rendering via `tool.call.toolview` | Done |
-| All 18 official basic-catalog components | Done |
-| Extension catalog: Table / Bar / Line / Pie / Stat / Progress / Plot / FramePlayer | Done |
-| Data-model bindings + local functions (`formatString`, `formatNumber`, validators, …) | Done |
-| Round trip (button/form → session → agent) | Done |
-| Multiple surfaces, incremental updates within one call | Done |
-| Session restore, replay without side effects | Done (derived from the log) |
-| Light/dark theme, responsive, keyboard, ARIA | Done (`--dsw-alias-*` tokens) |
-| Progressive streaming render | Done: during `preparing` the card grows from the messages and components that already closed, with placeholders for the rest (see [Progressive streaming](#progressive-streaming)) |
-| Replacing an existing card in place across calls | Not implemented (see [Known limitations](#known-limitations)) |
-| `callRendererFunction` / `agentFunctionResponse` | Not supported: explicitly rejected with a reason |
-| PTC (`run_code`) sub-call presentation | Partial: renders as a sub-call row, not styled specifically |
+| Trait | What it means |
+| :--- | :--- |
+| **Visuals on demand** | The agent decides from the answer whether a surface is worth drawing; the user does not have to type a special command |
+| **A2UI 1.0 protocol** | Standard messages and 26 controlled components, validated against the published schema; no raw HTML injection |
+| **Component-level progressive render** | As the model streams the tool arguments, each closed JSON value and component can appear, instead of a long blank wait |
+| **Lightweight interaction loop** | Table sorting, chart hover and slider adjustments run locally; when needed, an `agent -> UI -> agent` action sends the operation back |
+| **History stays honest** | One self-contained snapshot per call; the UI is re-rendered from the session log with no cross-turn state to maintain |
 
 ---
 
-## Install, enable, disable, remove
+## Quick start
 
-The plugin ships as a **bundle** (`dsh.bundle` + `dsh.client`): the repository root is the installable package, providing both the Host and browser halves. Build artifacts are committed, so installing does not compile anything.
+### 1. Install
 
-**A — from GitHub (recommended).** Run `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.0`. The tag pins the install; replace `desktop` with the target profile (usually `web` for the web build).
+The plugin ships as a bundle (`dsh.bundle` + `dsh.client`): the repository root is the installable package, and the build artifacts are committed, so installing does not compile anything.
 
-**B — frozen tarball.** `vendor/dsh-a2ui-0.3.0.tgz` matches the tested bytes: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.0.tgz`. `tools/install.ps1` wraps install, uninstall and an installed-copy check.
+- **From GitHub (recommended)**: `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.0`
+- **Frozen tarball**: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.0.tgz`, or run `tools/install.ps1`
+- **DSH plugin manager**: `plugin_manager action=install_bundle target=<absolute path or tarball>`
 
-**C — DSH plugin manager.** Run `plugin_manager action=install_bundle target=<absolute path or tarball>`. The bundle is written to the active profile (Desktop uses `desktop`) and appears in Settings → Plugins. New bundles activate through HMR; replacing an already-installed package requires a restart to load a fresh JavaScript module generation.
+Replace `desktop` with the target profile (usually `web` for the web build). Replacing an installed package requires a DSH restart to load the new JavaScript module generation.
 
-- Disable: `plugin_manager action=set_plugin target=dsh-a2ui enabled=false`. The two tools disappear from the model, the prompt section is removed, the chat view is no longer registered, and styles/dictionaries are disposed with their `ctx.effect` — ordinary chat is unaffected.
-- Enable: `enabled=true`.
-- Remove: `plugin_manager action=remove_bundle target=dsh-a2ui`.
+### 2. Just ask
+
+No "draw a chart" or "make a table" instruction is needed. When an answer is better shown than read, the agent generates a surface; simple questions stay prose.
+
+Tables sort by clicking a header, charts respond to hover and legend toggles, sliders and animations redraw locally. Only an `action.event` button or a form submit sends a user message back to the agent.
+
+### 3. Build from source (optional)
+
+```bash
+git clone https://github.com/ChimeSky/dsh-a2ui.git
+cd dsh-a2ui
+npm install --ignore-scripts
+npm run build
+npm run all
+```
+
+`npm run all` runs typecheck, build, tests, bundle invariants, the real-React render check and the fresh-home install check.
 
 ---
 
-## How the agent generates UI
+## How it decides
 
-Two tools plus one short prompt section:
+The guidance tells the agent to decide from the answer's content, not from a user command:
 
-- **`a2ui`** — `messages: object[]` (required), `title?: string`. Returns `{ ok, surfaces[], warnings[], note }`.
-- **`a2ui_catalog`** — returns the component/function reference on demand (`detail: "brief" | "full"`). The prompt only carries the *rules* for when a UI helps, so the full component table costs tokens only when actually needed.
-
-The prompt section requires Markdown for explanations and reserves the UI for things that are better seen than read: data comparison, charts, KPI tiles, configurable parameters, structured forms, step animations, approval controls. It also forbids repeating in prose what the surface already shows.
-
-### Trigger policy (proactive by default, `autoRender: true`)
-
-**The user does not have to say "chart", "visualize", "UI" or "a2ui".** The guidance tells the model to decide from *what the answer contains*:
-
-| Content | Surface |
+| Answer content | Surface |
 |---|---|
 | 3+ comparable rows (options, versions, items, before/after) | `Table`; 2-4 headline numbers as a `Row` of `Stat` |
-| Values over time / across categories / as shares | `BarChart`, `LineChart`, `PieChart` |
-| Target, progress, coverage | `Progress`, `Stat` with trend |
+| Values over time, across categories or as shares | `BarChart` / `LineChart` / `PieChart` |
+| Target, progress, coverage | `Progress` / `Stat` with trend |
 | A value worth trying, or a formula | `Slider` + `Plot` bound to the data model |
 | Discrete steps, ordering, algorithm walk-through | `FramePlayer` |
 | Input or approval the user must give | form components + one submit/approve button |
 
-**No surface** for: a single fact, a definition, yes/no, a greeting, a one-or-two-sentence explanation, code, diffs, logs, paths. Numbers a surface already shows must not be repeated in text.
+**No surface** for: a single fact, a definition, yes/no, a greeting, a one-or-two-sentence explanation, code, diffs, logs, paths. Numbers a surface already shows are not repeated in prose.
 
-Cost: the guidance is ~2.8 KB (~700 tokens) of always-on prompt; the component reference still loads on demand through `a2ui_catalog`.
+The guidance is ~2.8 KB (~700 tokens) of always-on prompt; the full component reference loads on demand through `a2ui_catalog`.
 
-| Config | Default | Meaning |
-|---|---|---|
-| `autoRender` | `true` | `false` switches to "only when requested or clearly needed", tightening both the prompt and the tool description |
-| `catalogTool` | `true` | register the `a2ui_catalog` reference tool |
-| `sectionOrder` | `120` | order of the prompt section |
-| `muteSection` | `false` | drop the prompt section entirely (tools stay) |
-| `toolName` | `a2ui` | **not recommended**: the client view is registered under this name |
+## Design decision: one call, one self-contained snapshot
 
-### Progressive streaming
+**One tool call, one self-contained UI snapshot.**
 
-The model writes A2UI arguments as fragments, so during the `preparing` stage there is no complete JSON to parse. Earlier versions showed a skeleton and only painted the card once the arguments were finished. Since v0.3.0 the card grows while it is being generated:
+Each `a2ui` call produces one card that contains only that call's messages. **Updating an earlier card from a later call is deliberately unsupported** — a later turn cannot rewrite a surface that already appeared. The UI therefore sits in the transcript as a record, needs no cross-turn state, and replays predictably.
 
-1. **Read each Session's event window.** A preparing card subscribes to the already-open Session binding and reads its own `tool-call-delta` fragments. Each Session has its own event window, so two calls with the same ID in different Sessions stay separate.
-2. **Collect only calls the host names `a2ui`.** The first fragment of a call carries its tool name: anything else is ignored outright, and a **name-less fragment is only appended to a call that is already identified**, so another tool's arguments (a `shell` command line, say) never enter the cache.
-3. **Recover only what closed.** The recovery scanner (`src/shared/partial-json.ts`) walks the prefix and returns only values whose own slice `JSON.parse` accepts: finished messages, finished components. A half-written component is dropped, so the preview never shows half a component or invents data.
-4. **Keep the Surface and its data until the root arrives.** The preview and settled result share `applyMessageBatch`. A `createSurface` can be followed by data and component updates. The preview draws the accumulated data as soon as the root is ready. Messages with an explicit unsupported version are skipped.
-5. **Validate closed components.** The preview uses the settled validator's component type, catalog, property and alias checks. It skips invalid components and shows the skeleton when the remaining Surface cannot be drawn.
-6. **Absence is a placeholder.** A child that is referenced but has not arrived renders as a skeleton, never as a "missing child" error: unfinished is not a defect.
-7. **The preview body is `inert`.** Keyboard, pointer, submit and write interactions are disabled while the card is preparing. The normal card restores its usual focus and interaction behavior.
-8. **Release withdrawn fragments.** A window replacement recomputes the prefix. Settling or cancelling a call clears its prefix, and unmounting the card releases its subscription.
+A2UI incremental messages still work: `createSurface → updateComponents → updateDataModel` **within one call** (including delete-then-create) compose correctly.
 
-Bounds and stop conditions:
+When a changed interface really must be shown, send a complete `createSurface` (components plus `dataModel`): the old card stays as it was and the new card shows the new state.
 
-| Limit | Value / behaviour |
+The cost is one extra card per change; the benefit is predictable replay and no cross-turn state.
+
+## Interaction: local first
+
+| Interaction | Behaviour |
 |---|---|
-| Retained argument text per preview | 262,144 UTF-16 code units, truncated beyond that |
-| Cache entries / total size | 32 / 1,048,576 UTF-16 code units, oldest evicted first |
-| Characters scanned per frame | 512 KiB |
-| Recovered JSON nesting depth | 128 |
-| Components per message / per surface | 300 / 400 (an over-limit intermediate is not drawn; the settled result decides) |
-| Expanded nodes / data units per call | 6,000 / 6,000 (the same `LIMITS` as the settled path); beyond that the surfaces that already fit are kept |
-| Malformed prefix | Preview stops and falls back to the skeleton; the Host still reports the precise error |
-| One surface over its own budget | That surface is skipped; the others keep previewing |
+| Chart hover | Bar / line / pie highlight the point and show an in-chart tooltip; the line chart adds a guide line and lists every series at that category; pie slices lift out and the centre shows that slice's value and share |
+| Legend click | Shows/hides a series (local redraw) |
+| Table header | Click to sort (asc, desc, off) with `aria-sort` |
+| Tabs / sliders / animation | Switch, redraw, play/pause/step/speed — all local |
+| `action.event` buttons | **Only these send a message and start a turn**; their hover text says so, and the prompt only allows them for an explicit submit/approve/refresh request |
 
-> The preview changes no authority: whether a payload may render, and what is wrong with it, is still decided by `validateToolArguments` on the Host. Streaming only replaces *waiting* with *appearing*. Because `assistant/live-chunk` is a transient event, reopening a session always renders the validated cards.
+The rule: anything the interface can do locally must not send a message. Only an `action.event` button or a form submit sends a normal user message, carrying the `context` resolved against the current data model.
 
-### Examples
-
-A single call can compose a complete surface: a card with `ChoicePicker` and `Button` for choosing a plan; `BarChart` and `LineChart` sharing one data model; `Slider` bound to `Plot` variables for local redraws; `FramePlayer` playing precomputed step animations. Exact parameters, component properties and allowed values are in the `a2ui_catalog` `full` output.
-
----
-
-## How a user action reaches the agent
-
-Clicking a button whose action is `action.event` (or submitting a form) builds an A2UI 1.0 `action` message and sends a message starting with `[A2UI action]` through the **session's own Conversation service** as a normal queued user message. The payload carries `name`, `surfaceId`, `sourceComponentId`, `timestamp` and the `context` resolved against the current data model.
-
-- It uses the native message path, so Host admission rules (running turn, queue limits, permissions) apply exactly as if the user had typed it. A surface cannot grant itself capabilities.
-- `context` values are resolved against the **current data model** at click time, so edited form values are always included.
-- Only `action.event` bothers the agent; `action.functionCall` (e.g. `openUrl`) runs locally.
-- Replay never re-fires an action: it always takes a real click.
-
----
+Every component follows DSH's light/dark theme (`--dsw-alias-*` tokens), supports keyboard operation and ARIA labels; tables scroll horizontally and charts scale proportionally on narrow screens.
 
 ## Components
 
@@ -165,9 +125,70 @@ Default `catalogId` is `dsh-a2ui/catalog/v1` (everything below); the official ba
 | `Plot` | Safe arithmetic function plot; `variables` may bind to the data model for local redraws |
 | `FramePlayer` | Step animation (play/pause/step/reset/speed) over precomputed frames |
 
-`Plot` expressions are evaluated by a **hand-written parser** that accepts only numbers, `x`, caller-supplied variables, `+ - * / ^ %`, parentheses, and a closed set of math functions. `this`, `window`, `constructor`, and anything outside the whitelist fail to compile. No `eval`, no `new Function`.
+`Plot` expressions are evaluated by a **hand-written parser** that accepts only numbers, `x`, caller-supplied variables, `+ - * / ^ %`, parentheses and a closed set of math functions. Anything outside the whitelist fails to compile. No `eval`, no `new Function`.
 
----
+### Bindings and functions
+
+- Binding: `{"@path": "/json/pointer"}` (relative paths inside template items bind to the current row; a leading `/` is absolute).
+- Function: `{"@call": "formatNumber", "args": {"value": {"@path": "/total"}, "decimals": 2}}`.
+- Implemented official functions: `required`, `regex`, `length`, `numeric`, `email`, `formatString`, `formatNumber`, `formatCurrency`, `formatDate`, `pluralize`, `openUrl`, `and`, `or`, `not`, `@index`.
+- `formatString` supports `${/path}`, `${formatNumber(value:/total, decimals:0)}`, `${'literal'}` and `\${` escaping.
+
+## Sending an action back to the agent
+
+Clicking an `action.event` button or submitting a form builds an A2UI 1.0 `action` message and sends a message starting with `[A2UI action]` through the **session's own Conversation service** as a normal queued user message. The payload carries `name`, `surfaceId`, `sourceComponentId`, `timestamp` and the `context` resolved against the current data model.
+
+- **Native message path**: Host admission rules (running turn, queue limits, permissions) apply exactly as if the user had typed it; a surface cannot grant itself capabilities.
+- Only `action.event` bothers the agent; `action.functionCall` (e.g. `openUrl`) runs in the browser.
+- Replay never re-fires an action: it always takes a real click.
+
+## Compatibility and protocol
+
+| Item | Version |
+|---|---|
+| Verified on | **DSH 0.2.2-rc.1** (Desktop/Web, profile `desktop`) |
+| `engines.dsh` | `>=0.2.2-rc.1 <0.3.0-0` |
+| A2UI protocol | **1.0** (`version: "1.0"`; v0.8/v0.9 payloads are rejected with a clear message) |
+| Spec source | v1.0 zod schemas + basic catalog in `@a2ui/web_core@0.15.0` (Apache-2.0) |
+| Node | ≥ 20 (build requires `typescript`) |
+| Browser side | only `react`, provided by the Harness module table |
+
+Validation and rendering are **independent implementations of the A2UI 1.0 schemas**, not a call into the official runtime validator; message types, component names, properties and function signatures follow the published definitions, and extensions are declared through the standard catalog mechanism (`catalogId`), not a private format.
+
+**Why the official `@a2ui/react` renderer is not used:** its basic catalog has no Table/Chart/Progress/Select (the chart catalog is unpublished), it ships Material-style components and CSS that would clash with `--dsw-alias-*` theming, and it adds `zod` + `markdown-it` to a single-file client bundle. The protocol layer, validator and action channel are therefore reimplemented from the schemas; swapping in the official renderer would mean replacing `src/client/surface.tsx` only.
+
+## Security
+
+| Risk | Handling |
+|---|---|
+| Model-authored HTML/script | All text is a React text node; inline Markdown only produces `<strong>/<em>/<code>/<br>`; `dangerouslySetInnerHTML` does not exist in the bundle |
+| Arbitrary code execution | No `eval` / `new Function`; `Plot` uses a whitelist arithmetic parser |
+| Hostile URLs | `safeMediaUrl` admits only `http(s)` (plus `data:image/*;base64` for images); `javascript:`, `file:`, `data:text/html` are rejected; `openUrl` requires a user gesture |
+| Unknown components/properties | Rejected at validation with a JSON path; the renderer additionally degrades to a readable placeholder instead of throwing |
+| Oversized/deep/cyclic graphs | 32 messages, 300 components per message, 400 per surface, depth 64, 16K strings, 500 series points, 400 frames, 384K payload; cycle and duplicate-id detection |
+| Expanded-size budget | Before rendering, expanded nodes and data units are estimated: one surface above 4000 nodes or 5000 units, or one call above 6000 / 6000, is rejected. Host and client share the estimator |
+| Catastrophic regex | `regex` runs the specification's static safety check and rejects backreferences, lookbehind, named groups, `\p{...}`, `\cX` and inline flags; input is capped at 4096 code points and matching runs on a bounded evaluator |
+| Deep JSON | `isJsonValue` is iterative and bounded at 128 levels, checked before serialization: an 11,000-level array is rejected instead of overflowing the stack |
+| Hostile JSON Pointers | Path ≤ 1024 chars, ≤ 64 segments, array index ≤ 10000, no prototype segments, sparse writes refused, `-` append supported; a refused write is reported at `updateDataModel.path` |
+| Privilege escalation | A surface can only ask the agent for work through a normal user message; files/commands/network still go through the agent's tools and approvals |
+| Plugin isolation | Every registration is owned by `ctx.effect`; disabling removes the view, styles, dictionaries, tools and prompt section |
+
+Trade-off: `Image` accepts `https://` URLs, so rendering causes a request to that host (no credentials, `referrerPolicy="no-referrer"`). For a fully offline setup, use `data:` images only.
+
+## Design boundaries and known limitations
+
+### Deliberately unsupported
+
+- **Updating an earlier card from a later call**: see [Design decision](#design-decision-one-call-one-self-contained-snapshot).
+- **`callRendererFunction` / `agentFunctionResponse`**: A2UI 1.0 bidirectional function calls need an agent→renderer reply channel between tool calls, which the tool model does not provide; sending them yields an explicit error.
+
+### Known limitations
+
+- **The streamed preview is an intermediate state**: during `preparing` only closed components are drawn, the whole graph is not validated and the card is not interactive; when the call reaches `start`/`result` the validated snapshot replaces it. If the prefix stops parsing the preview falls back to the skeleton and the Host still reports the precise error.
+- **PTC / code mode**: `run_code` sub-calls render as nested rows without dedicated styling.
+- **Media needs the network** except `data:` images.
+- **Relative bindings inside template items are read-only**; editing requires an absolute `/...` path.
+- **`regex` has a match work limit**: accepted patterns run on a bounded evaluator capped at 100,000 steps per match; hitting the cap returns `valid: false` (common shapes are unaffected).
 
 ## Architecture
 
@@ -175,7 +196,7 @@ Default `catalogId` is `dsh-a2ui/catalog/v1` (everything below); the official ba
 DeepSeek Agent
    │  a2ui({ messages, title })
    ▼
-Host  ──  catalog + schema validation (surface / component / property / binding / depth / quota)
+Host  ──  A2UI 1.0 schema validation (surface / component / property / binding / depth / quota)
    │      tool result { ok, surfaces, warnings }; a replay copy is kept in result meta
    ▼
 Session log (tool/call + tool/result.meta)   ← single source of truth
@@ -192,79 +213,15 @@ Chat UI (multiple surfaces per card)
 conversation.send("[A2UI action] …")  →  current session → agent
 ```
 
-Design choices:
+Three implementation constraints:
 
-1. **The UI is the log.** One tool call is one self-contained surface snapshot; the renderer folds only that call's messages. No private store, restore is a re-render, replay is idempotent.
+1. **The UI is the log.** One tool call is one snapshot; the renderer folds only that call's messages. No private store, restore is a re-render.
 2. **Validate twice, implement once.** `src/shared` is imported by both halves, so "server accepts, browser crashes" cannot happen.
-3. **Edits stay local.** Slider/input writes go to a copy-on-write model in component state, never into the log.
-4. **Zero runtime dependencies.** The browser half only `require`s `react`; charts are hand-written SVG (no CDN, no chart library, offline-capable).
+3. **Zero runtime dependencies.** The browser half only `require`s `react`; charts are hand-written SVG (no CDN, no chart library, offline-capable).
 
----
+Streaming recovery, fragment cache bounds, card hosting and copy claims are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Security
-
-| Risk | Handling |
-|---|---|
-| Model-authored HTML/script | All text is a React text node; inline Markdown only produces `<strong>/<em>/<code>/<br>`; `dangerouslySetInnerHTML` does not exist in the bundle |
-| Arbitrary code execution | No `eval` / `new Function`; `Plot` uses a whitelist arithmetic parser |
-| Hostile URLs | `safeMediaUrl` admits only `http(s)` (plus `data:image/*;base64` for images); `javascript:`, `file:`, `data:text/html` are rejected; `openUrl` requires a user gesture |
-| Unknown components/properties | Rejected at validation with a JSON path; the renderer additionally degrades to a readable placeholder instead of throwing (a throw blanks the whole slot) |
-| Oversized/deep/cyclic graphs | 32 messages, 300 components per message, 400 per surface, depth 64, 16K strings, 500 series points, 400 frames, 384K payload; cycle and duplicate-id detection |
-| Expanded-size budget | Before rendering, the expanded **node** count (templates multiply by data length) and data units (table rows + chart points + animation items + Plot scatter points) are estimated: one surface above 4000 nodes or 5000 units, or one call above 6000 nodes / 6000 units in total, is rejected. Host and client share the estimator |
-| Catastrophic regex | `regex` runs the specification's static safety check (longer than 256 code points; a bounded-above-1 quantifier over a subexpression with an unbounded one; an unbounded quantifier over alternatives sharing a first character; adjacent unbounded quantifiers with overlapping character sets) and rejects backreferences, lookbehind, named groups, `\p{...}`, `\cX` and inline flags. Input is capped at 4096 code points. A literal pattern fails validation; a bound one is refused at evaluation |
-| Deep JSON | `isJsonValue` is iterative and bounded at 128 levels, checked before any serialization: an 11,000-level array is rejected instead of overflowing the stack |
-| Hostile JSON Pointers | Path ≤ 1024 chars, ≤ 64 segments, array index ≤ 10000, no `__proto__`/`prototype`/`constructor`, sparse writes refused (no hole-punched arrays), `-` append supported. A refused write is reported at `updateDataModel.path` instead of claiming success |
-| Privilege escalation | A surface can only ask the agent for work through a normal user message; files/commands/network still go through the agent's tools and approvals |
-| Plugin isolation | Every registration is owned by `ctx.effect`; disabling removes the view, styles, dictionaries, tools and prompt section |
-
-Trade-off: `Image` accepts `https://` URLs, so rendering causes a request to that host (no credentials, `referrerPolicy="no-referrer"`). For a fully offline setup, use `data:` images only.
-
----
-
-## Compatibility
-
-| Item | Version |
-|---|---|
-| Verified on | **DSH 0.2.2-rc.1** (Desktop/Web, profile `desktop`) |
-| `engines.dsh` | `>=0.2.2-rc.1 <0.3.0-0` |
-| A2UI protocol | **1.0** (`version: "1.0"`; v0.8/v0.9 payloads are rejected with a clear message) |
-| Spec source | v1.0 zod schemas + basic catalog in `@a2ui/web_core@0.15.0` (Apache-2.0) |
-| Node | ≥ 20 (build requires `typescript`) |
-| Browser side | only `react`, provided by the Harness module table |
-
-**Why the official `@a2ui/react` renderer is not used:** its basic catalog has no Table/Chart/Progress/Select (the chart catalog is unpublished), it ships its own Material-style components and CSS that would clash with `--dsw-alias-*` theming, and it adds `zod` + `markdown-it` to a single-file client bundle where only `react` is guaranteed. The protocol layer, validator and action channel are therefore reimplemented from the official schemas; swapping in the official renderer would mean replacing `src/client/surface.tsx` only.
-
----
-
-## Interaction (local by default, no agent traffic)
-
-| Interaction | Behaviour |
-|---|---|
-| Chart hover | Bar / line / pie highlight the point and show an in-chart tooltip; the line chart adds a guide line and lists every series at that category; pie slices lift out and the centre shows that slice's value and share |
-| Legend click | Shows/hides a series (local redraw) |
-| Table header | Click to sort (asc, desc, off) with `aria-sort` |
-| Tabs / sliders / animation | Switch, redraw, play/pause/step/speed — all local |
-| `action.event` buttons | **Only these send a message and start a turn**, and their hover text says so; the prompt only allows them for an explicit submit/approve/refresh request |
-
-The rule: anything the interface can do locally must not send a message. Sorting, legend toggling, tooltips, tab switching and slider redraws are pure client state.
-
-## Known limitations
-
-1. **Placement and the "never disappears" guarantee.** The card has two hosts: the **turn tail** (`conversation.chat.turnTail`), which renders after the turn's answer in the main flow and never folds with the process area, and the **process row** (`tool.call.toolview`), used while the tool is still running and as the fallback. They coordinate through **copy claims**: while the tail copy is mounted it claims the call and the process row collapses to a one-line pointer; the moment the tail copy unmounts for any reason (paging, a new turn, an aborted turn) the claim is released and the process row restores the full card. The interface therefore degrades to an expandable row instead of vanishing.
-2. **Each card contains only its own call's messages.** One tool call is one self-contained card: the renderer folds that call's messages, so `createSurface → updateComponents → updateDataModel` inside one call composes correctly (including delete-then-create), but a **cross-call** `updateComponents` / `updateDataModel` / `deleteSurface` does not modify a card rendered in an earlier turn — it renders as an "interface updated" note instead of replacing the card in place.
-   - To show a **changed** interface, send a **complete** `createSurface` (components plus `dataModel`); see [Example — interactive card](#example--interactive-card).
-   - To remove an old card, `deleteSurface` and re-create it **within the same call**.
-   - True cross-call live surfaces need a DSH session-projection change and are a separate piece of work; the snapshot contract above is what this release supports (locked by 8 regression tests).
-3. **The streamed preview is not the authority.** While the arguments are still arriving the card draws a *recovery view* — only closed components, no whole-graph validation, not interactive. When the call reaches `start`/`result` the validated snapshot replaces it, so an intermediate state may show placeholder skeletons or a chart with the data points that have arrived so far. If the prefix stops parsing, the preview gives up and the Host still reports the precise validation error.
-4. **`callRendererFunction` / `agentFunctionResponse` unsupported.** They need an agent→renderer channel between tool calls, which the tool model does not provide; sending them yields an explicit error.
-5. **PTC / code mode**: `run_code` sub-calls render as nested rows without dedicated styling.
-6. **Media needs the network** except `data:` images.
-7. **Relative bindings inside template items are read-only**; editing requires an absolute `/...` path.
-8. **`regex` has a match work limit.** Accepted patterns run on a bounded evaluator capped at 100,000 steps per match; hitting the cap returns `valid: false` with `pattern exceeded the match work limit`. An extremely long **non-matching** input can therefore be reported as invalid (common shapes are unaffected: greedy-first evaluation means ordinary inputs never need exhaustive backtracking). Combine a higher constant with the 4096-code-point input cap if you need looser semantics.
-
----
-
-## Development
+## Development and tests
 
 ```bash
 npm install --ignore-scripts     # typescript/@types + react/react-dom/jsdom (test and render checks only)
@@ -277,19 +234,9 @@ npm run pack:vendor              # regenerate vendor/dsh-a2ui-<version>.tgz
 npm run all                      # all of the above
 ```
 
-**The build never deletes a file.** The compiler emits into memory; linking and the `lib/**` copy are driven by that emit manifest. If `lib/` still holds a file that belongs to no current module, the build **prints its full path** rather than removing it — remove that exact file yourself with `Remove-Item "path"` if it is unwanted.
+Current scale: 160 automated cases (10 jsdom DOM cases, 26 streaming cases, 43 official examples), 17 real-React render cases and 32 bundle invariants. Details and the split between "verified in a real DSH" and "verified headlessly only" are in [docs/TEST-REPORT.md](docs/TEST-REPORT.md); per-version changes are in [CHANGELOG.md](CHANGELOG.md).
 
-The build does not use esbuild: its native service needs pipes that the Windows sandbox refuses (`spawn EPERM`). `tools/build.mjs` compiles in-process through the TypeScript compiler API, then links the browser half into one file with a ~120-line module registry wrapped in `__ModuleLoader__.load({ id, factory })`. `npm test` uses `tools/run-tests.mjs` for the same reason (no child process per file). `index.js`, `lib/**` and `client.js` are build artifacts committed to the repository so that `dsh plugin add github:` works without a build step; rerun `npm run build` and commit after changing `src/`.
-
-The pinned official catalog examples live in `tests/fixtures/examples` (commit `58379ad`) and are validated by `npm test`; `tools/fetch-fixtures.mjs` downloads them again.
-
----
-
-## Test results
-
-See [docs/TEST-REPORT.md](docs/TEST-REPORT.md) for the acceptance scenarios, the 130 automated cases (including 10 jsdom DOM cases and the 43 official examples), the 11 real-React render cases, and an explicit split between "verified in a real DSH Desktop session" and "verified headlessly only".
-
----
+`index.js`, `lib/**` and `client.js` are build artifacts committed to the repository so that `dsh plugin add github:` works without a build step; rerun `npm run build` and commit after changing `src/`. The build never deletes a file and does not use esbuild (the sandbox refuses its native service pipes).
 
 ## License and attribution
 
