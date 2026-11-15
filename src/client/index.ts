@@ -11,7 +11,7 @@ import { DICTS, NS, en } from './locale.js'
 import { CSS } from './styles.js'
 import { A2UIToolView, type ClientRuntime } from './tool-view.js'
 import { A2uiTurnTail } from './turn-tail.js'
-import { createStreamDefinition } from './stream-store.js'
+import { createStreamDefinition, resetStreams } from './stream-store.js'
 
 /**
  * Test hooks: the live-argument store the preparing card reads.
@@ -119,23 +119,34 @@ export function apply(ctx: ClientContext): void {
   // The observer is a state-only Conversation Definition (no view target), which
   // is the supported way to watch an event without touching the transcript.
   ctx.effect(() => {
-    if (typeof ctx.inject !== 'function') return undefined
+    if (typeof ctx.inject !== 'function') return () => resetStreams()
     const fiber = ctx.inject(['uiConversation'], (scoped) => {
       scoped.effect(() => {
-        const register = scoped.uiConversation?.events?.register
-        if (typeof register !== 'function') return undefined
+        // The registry is a class instance: its `register` is a method that reads
+        // `this`, so it must be called *on* the events object. Taking the method
+        // out of it first would throw and silently disable the preview.
+        const events = scoped.uiConversation?.events
+        if (events === undefined || typeof events.register !== 'function') return undefined
+        let dispose: (() => void) | undefined
         try {
-          const dispose = register(createStreamDefinition())
-          return typeof dispose === 'function' ? dispose : undefined
+          const registered = events.register(createStreamDefinition())
+          dispose = typeof registered === 'function' ? registered : undefined
         } catch (cause) {
           // Losing the observer costs the progressive preview, never the card.
           ctx.logger?.warn?.('dsh-a2ui: streaming observer unavailable', cause)
           return undefined
         }
+        // The live-argument cache belongs to this registration: unloading the
+        // observer releases it, and a re-mount starts from an empty cache.
+        return () => {
+          if (dispose !== undefined) dispose()
+          resetStreams()
+        }
       }, 'dsh-a2ui: stream observer')
     })
     return () => {
       if (typeof fiber?.dispose === 'function') void fiber.dispose()
+      resetStreams()
     }
   }, 'dsh-a2ui: stream observer')
 

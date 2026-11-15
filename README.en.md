@@ -103,24 +103,28 @@ Cost: the guidance is ~2.8 KB (~700 tokens) of always-on prompt; the component r
 
 The model writes A2UI arguments as fragments, so during the `preparing` stage there is no complete JSON to parse. Earlier versions showed a skeleton and only painted the card once the arguments were finished. Since v0.3.0 the card grows while it is being generated:
 
-1. **Observe the raw fragments out of band.** The plugin registers a Conversation Definition with **no view target** (`kind: a2ui-stream`) that copies the `tool-call-delta` text of `assistant/live-chunk` events per call id. Without a `target` it materialises no node, so the transcript and history replay are untouched.
-2. **Recover only what closed.** The recovery scanner (`src/shared/partial-json.ts`) walks the prefix and returns only values whose own slice `JSON.parse` accepts: finished messages, finished components. A half-written component is dropped, so the preview never shows half a component or invents data.
-3. **Fold with the same semantics.** Closed messages go through the *same* `applyMessageBatch` the settled snapshot uses, so create → update → dataModel composition is identical and surfaces never jump when the call settles.
-4. **Per-component structure checks, plus the budget.** Each component is shape-checked on its own (duplicate ids, illegal ids, the pseudo-component `Surface` are dropped) and the whole surface still has to pass the render budget; nothing is drawn until `root` arrives, so no empty card flashes.
-5. **Absence is a placeholder.** A child that is referenced but has not arrived renders as a skeleton, never as a "missing child" error: unfinished is not a defect.
-6. **The preview is not interactive.** The card is `pointer-events: none` with `aria-busy`, and submits/writes are disabled until the call reaches `start`/`result` and the full payload passes Host validation.
-7. **Switch to the authoritative snapshot.** Once the arguments are complete the validated snapshot replaces the preview and the fragment copy is released immediately.
+1. **Observe the raw fragments out of band.** The plugin registers a Conversation Definition with **no view target** (`kind: a2ui-stream`) that copies the `tool-call-delta` text of `assistant/live-chunk` events. Without a `target` it materialises no node, so the transcript and history replay are untouched. Registration goes through the registry *method* (`events.register(...)`), and the disposer it returns is released together with the cache when the plugin unloads.
+2. **Collect only calls the host names `a2ui`.** The first fragment of a call carries its tool name: anything else is ignored outright, and a **name-less fragment is only appended to a call that is already identified**, so another tool's arguments (a `shell` command line, say) never enter the cache.
+3. **Recover only what closed.** The recovery scanner (`src/shared/partial-json.ts`) walks the prefix and returns only values whose own slice `JSON.parse` accepts: finished messages, finished components. A half-written component is dropped, so the preview never shows half a component or invents data.
+4. **Fold with the same semantics.** Closed messages go through the *same* `applyMessageBatch` the settled snapshot uses, so create → update → dataModel composition is identical and surfaces never jump when the call settles.
+5. **A closed component is still validated like the settled path validates it.** Each component is checked on its own for type, catalog, every property and the official aliases (the validator's own functions, via `checkComponentAlone`). A component that is complete but illegal is dropped, and an illegal root or an unsafe snapshot falls back to the skeleton: the preview never draws what the real result would reject. A *legal* component whose children have not arrived still gets placeholders.
+6. **Absence is a placeholder.** A child that is referenced but has not arrived renders as a skeleton, never as a "missing child" error: unfinished is not a defect.
+7. **The preview body is `inert`.** Tab, Enter, Space and the mouse cannot reach a preview control, and submits/writes are stubs; the settled card restores the normal focus and interaction behaviour once the payload passes Host validation.
+8. **Switch to the authoritative snapshot and release.** The validated snapshot replaces the preview as soon as the arguments are complete. The cache is derived from the Definition's own state — **a replay replaces the prefix instead of appending to it** — and is released when the call settles (`tool/call` / `tool/result`), when the plugin unloads, on age, or on size.
 
 Bounds and stop conditions:
 
 | Limit | Value / behaviour |
 |---|---|
-| Retained fragment text per call | 256 KiB (truncated beyond that; the preview stops) |
-| Retention after the last fragment | 120 s (pruned lazily on the next append) |
+| Retained fragment text per call | 256 KiB (truncated beyond that; that card stops previewing) |
+| Cache entries / total characters | 32 / 1 MiB, oldest evicted first |
+| Retention after the last fragment | 120 s (pruned lazily on the next write, so a closed session needs no extra cleanup) |
 | Characters scanned per frame | 512 KiB |
 | Recovered JSON nesting depth | 128 |
+| Components per message / per surface | 300 / 400 (an over-limit intermediate is not drawn; the settled result decides) |
+| Expanded nodes / data units per call | 6,000 / 6,000 (the same `LIMITS` as the settled path); beyond that the surfaces that already fit are kept |
 | Malformed prefix | Preview stops and falls back to the skeleton; the Host still reports the precise error |
-| Partial tree over the render budget | Preview stops (an over-budget intermediate is never drawn) |
+| One surface over its own budget | That surface is skipped; the others keep previewing |
 
 > The preview changes no authority: whether a payload may render, and what is wrong with it, is still decided by `validateToolArguments` on the Host. Streaming only replaces *waiting* with *appearing*. Because `assistant/live-chunk` is a transient event, reopening a session always renders the validated cards.
 

@@ -244,6 +244,17 @@ async function loadClientBundle() {
 const reactStub = {
   createElement: (type, props, ...children) => ({ type, props, children }),
   Fragment: Symbol.for('react.fragment'),
+  // The real React exposes a base class; the preview error boundary needs it at
+  // render time, not at module load.
+  Component: class {
+    constructor(props) {
+      this.props = props
+      this.state = {}
+    }
+    setState(next) {
+      this.state = { ...this.state, ...next }
+    }
+  },
   useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect: () => {},
   useMemo: (factory) => factory(),

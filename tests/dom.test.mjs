@@ -48,7 +48,7 @@ let sent = []
 /** When set, the next queued send rejects with this message. */
 let sendFailure = null
 
-const { View, Tail } = loadView({
+const { View, Tail, module: bundle } = loadView({
   locale: 'en-US',
   // The plugin attaches the modal's Escape/Tab handling to `document`, so the
   // bundle must see the same document the test dispatches into.
@@ -402,4 +402,64 @@ test('a modal traps focus, closes on Escape and returns focus to its trigger', (
   const restored = query(view.container, '.a2ui-modal-trigger button')
   assert.equal(window.document.activeElement, restored, 'focus returns to the trigger')
   view.unmount()
+})
+
+/**
+ * The generating preview must be genuinely read-only.
+ *
+ * jsdom does not implement `inert` semantics, so the DOM assertion is the
+ * attribute React actually produced (the browser is what makes it block Tab and
+ * clicks); the behavioural half is asserted separately: a click on a preview
+ * button queues nothing, and the same call once settled is a normal card again.
+ */
+test('the generating preview body is inert and hands over to an interactive card', () => {
+  bundle.__resetStreams()
+  const callId = 'call_stream_dom'
+  const components = [
+    { id: 'root', component: 'Tabs', tabs: [{ title: 'One', child: 'panel' }] },
+    { id: 'panel', component: 'Column', children: ['text', 'button'] },
+    { id: 'text', component: 'Text', text: 'streamed text' },
+    { id: 'button', component: 'Button', child: 'label', action: { event: { name: 'go' } } },
+    { id: 'label', component: 'Text', text: 'Send it' },
+  ]
+  const messages = [{ version: '1.0', createSurface: { surfaceId: 'live', catalogId: 'dsh-a2ui/catalog/v1', components } }]
+  bundle.__appendStreamedArguments(callId, JSON.stringify({ messages }))
+  bundle.__flushStreamNotifications()
+
+  sent = []
+  const preparing = mount(
+    React.createElement(View, {
+      callId,
+      toolName: 'a2ui',
+      sessionId: 'session-stream-dom',
+      phase: 'preparing',
+      block: { phase: 'preparing', callId, name: 'a2ui', subCalls: [] },
+    }),
+  )
+  const body = query(preparing.container, '.a2ui-card-streaming .a2ui-card-body')
+  assert.equal(body.getAttribute('inert'), '', 'the preview body carries the inert attribute')
+  assert.equal(preparing.container.querySelectorAll('.a2ui-card-streaming').length, 1)
+  // The content is still drawn — inert blocks input, it does not hide the card.
+  assert.ok(query(preparing.container, '[role="tab"]') !== null)
+  assert.equal(query(preparing.container, '.a2ui-card-title').textContent, 'Building interface…')
+  assert.equal(query(preparing.container, '.a2ui-card-state').textContent, 'generating')
+
+  // The submit path is a stub during the preview, so even a synthetic click queues
+  // nothing (this is the guard that does not depend on `inert`).
+  click(query(preparing.container, '.a2ui-btn'))
+  assert.deepEqual(sent, [], 'a preview click must not send an action')
+  preparing.unmount()
+
+  // Same call, settled: a normal interactive card with no inert body.
+  bundle.__resetStreams()
+  const settled = mount(React.createElement(View, viewProps({ callId, block: surfaceBlock(messages) })))
+  assert.equal(settled.container.querySelector('.a2ui-card-streaming'), null)
+  const settledBody = query(settled.container, '.a2ui-card-body')
+  assert.equal(settledBody.hasAttribute('inert'), false, 'the settled card is not inert')
+  const tab = query(settled.container, '[role="tab"]')
+  assert.equal(tab.getAttribute('tabindex'), '0', 'the settled card is back in the tab order')
+  click(query(settled.container, '.a2ui-btn'))
+  assert.equal(sent.length, 1, 'the settled card still sends its action')
+  settled.unmount()
+  bundle.__resetStreams()
 })

@@ -324,6 +324,17 @@ primed(
 
 primed('preparing with no usable content keeps the skeleton', 'call_bare', '{"messages":[{"version":"1.0","crea', ['Building interface'], [])
 
+// The reviewer's bypass: a component that closed but is illegal on its own must
+// not be drawn by the preview (the settled path rejects the same payload).
+const illegalTabs = JSON.stringify({
+  messages: [{ version: '1.0', createSurface: { surfaceId: 'tabs', catalogId: 'dsh-a2ui/catalog/v1', components: [{ id: 'root', component: 'Tabs', tabs: [null] }] } }],
+})
+primed('preparing refuses a closed but illegal component', 'call_illegal', illegalTabs, ['Building interface'], ['Missing child', 'Error'])
+
+renderCase('settled path still rejects the same illegal payload', View, { ...baseProps, phase: 'result', block: block(JSON.parse(illegalTabs).messages, 'Illegal') }, [
+  'failed validation',
+])
+
 renderCase(
   'host rejection is readable',
   View,

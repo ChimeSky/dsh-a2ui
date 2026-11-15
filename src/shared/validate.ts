@@ -291,6 +291,41 @@ function checkComponentProperties(
  */
 export { childReferences }
 
+/** One component validated on its own, outside any component graph. */
+export interface ComponentCheck {
+  /** The normalized component, present only when nothing was reported. */
+  component?: A2UIComponent
+  errors: Violation[]
+}
+
+/**
+ * Validate a single component in isolation: shape, catalog and every property.
+ *
+ * The settled path validates a whole call, which a streaming preview cannot do —
+ * a component whose children are still being written is normal there, and the
+ * graph is incomplete by definition. What *is* decidable for a closed component
+ * object is exactly what this reuses from the settled path, so a preview can
+ * never draw a component the settled path would reject.
+ *
+ * @param value the component value, already recovered from the payload.
+ * @param catalogId the catalog the enclosing surface declares.
+ * @param path diagnostic path.
+ */
+export function checkComponentAlone(value: unknown, catalogId: string, path = '/component'): ComponentCheck {
+  const errors: Violation[] = []
+  const normalized = normalizeAliases(value, path, errors)
+  const component = checkComponentShape(normalized, path, errors)
+  if (component === undefined) return { errors }
+  const declared = checkCatalogId(component.catalogId, `${path}/catalogId`, errors)
+  const resolved = resolveCatalogId(catalogId, declared)
+  if (resolved === undefined) {
+    fail(errors, path, `cannot resolve catalog "${declared ?? catalogId}"`)
+    return { errors }
+  }
+  checkComponentProperties(component, resolved, path, errors, resolved !== BASIC_CATALOG_ID)
+  return errors.length === 0 ? { component, errors } : { errors }
+}
+
 interface GraphCheck {
   components: Map<string, A2UIComponent>
   strict: boolean

@@ -3114,6 +3114,34 @@ function checkComponentProperties(component, catalogId, path, out, isExtensionCa
  * uses; re-exported here for callers that already import from the validator.
  */
 
+/**
+ * Validate a single component in isolation: shape, catalog and every property.
+ *
+ * The settled path validates a whole call, which a streaming preview cannot do —
+ * a component whose children are still being written is normal there, and the
+ * graph is incomplete by definition. What *is* decidable for a closed component
+ * object is exactly what this reuses from the settled path, so a preview can
+ * never draw a component the settled path would reject.
+ *
+ * @param value the component value, already recovered from the payload.
+ * @param catalogId the catalog the enclosing surface declares.
+ * @param path diagnostic path.
+ */
+function checkComponentAlone(value, catalogId, path = '/component') {
+    const errors = [];
+    const normalized = normalizeAliases(value, path, errors);
+    const component = checkComponentShape(normalized, path, errors);
+    if (component === undefined)
+        return { errors };
+    const declared = checkCatalogId(component.catalogId, `${path}/catalogId`, errors);
+    const resolved = resolveCatalogId(catalogId, declared);
+    if (resolved === undefined) {
+        fail(errors, path, `cannot resolve catalog "${declared ?? catalogId}"`);
+        return { errors };
+    }
+    checkComponentProperties(component, resolved, path, errors, resolved !== BASIC_CATALOG_ID);
+    return errors.length === 0 ? { component, errors } : { errors };
+}
 function checkGraph(graph) {
     const { components, strict, errors, warnings, pathPrefix } = graph;
     if (components.size === 0)
@@ -3570,6 +3598,7 @@ function looksLikeMessage(value) {
     return isPlainObject(value) && (MESSAGE_KINDS.some((kind) => kind in value) || 'version' in value);
 }
 
+exports["checkComponentAlone"] = checkComponentAlone;
 exports["applyMessageBatch"] = applyMessageBatch;
 exports["validateToolArguments"] = validateToolArguments;
 exports["looksLikeMessage"] = looksLikeMessage;
@@ -3983,113 +4012,147 @@ __registry["./shared/stream.js"] = function(module, exports, require) {
  * The finished-call path is strict — `validateToolArguments` decides, and a
  * single violation turns the whole card into a readable error. That is right for
  * settled data and useless for data still arriving, so this module is the
- * deliberately weaker sibling used *only* while a call is being prepared:
+ * deliberately different sibling used *only* while a call is being prepared. It
+ * still refuses everything the settled path refuses; it only relaxes the parts
+ * that *cannot* be decided yet:
  *
- * - It folds whatever {@link recoverArguments} could close (whole messages, whole
- *   components) with the same merge semantics the settled path uses, so a surface
- *   grows instead of being rebuilt.
- * - Every component is shape-checked on its own (id, type name) and the resulting
- *   surface still has to pass the expansion budget, so a partial tree cannot be
- *   larger than a settled one.
- * - A surface without its `root` component yet is not rendered at all: there is
- *   nothing to place, and an empty card would flicker.
+ * - Graph completeness is not required: a component whose children have not been
+ *   written renders a placeholder. That is expected in a stream, not a defect.
+ * - Everything decidable for a *closed* component is decided — shape, catalog and
+ *   every property, plus the aliases the official examples use — through the same
+ *   validator functions the settled path calls. A component that is complete but
+ *   illegal is dropped, so a preview can never draw what the real result rejects.
+ * - A surface without its `root`, or whose root was dropped, is not drawn at all.
+ * - The render budget is applied per surface *and* per call, in the same units and
+ *   against the same `LIMITS` the settled path uses, before any element exists.
  *
  * Nothing here authorises anything: the streaming card is non-interactive, and
  * the settled call replaces it with the validated snapshot.
  */
+const { PROTOCOL_VERSION, resolveCatalogId } = require("./shared/catalog.js");
 const { estimateExpansion } = require("./shared/budget.js");
 const { isPlainObject } = require("./shared/json.js");
 const { LIMITS } = require("./shared/limits.js");
 const { recoverArguments } = require("./shared/partial-json.js");
-const { EXTENSION_CATALOG_ID, PROTOCOL_VERSION } = require("./shared/catalog.js");
-const { applyMessageBatch } = require("./shared/validate.js");
-/** Component and surface ids the protocol admits. */
-const ID_PATTERN = /^[A-Za-z0-9._:-]+$/u;
-const EMPTY = { surfaces: [], components: 0, streaming: false, stopped: false };
-function validId(value) {
-    return typeof value === 'string' && value !== '' && value.length <= LIMITS.maxIdLength && ID_PATTERN.test(value);
+const { applyMessageBatch, checkComponentAlone } = require("./shared/validate.js");
+const EMPTY = { surfaces: [], components: 0, streaming: false, stopped: false, truncated: false };
+function usableId(value) {
+    return typeof value === 'string' && value !== '' && value.length <= LIMITS.maxIdLength;
 }
 /**
- * Keep the components that are structurally complete.
+ * Keep the components that are complete *and* legal on their own.
  *
- * Property values are *not* validated here: every renderer reads its properties
- * totally (an absent or wrongly typed value falls back), and validating a graph
- * whose children may still arrive would reject exactly the intermediate states
- * this module exists to draw. The settled call is still fully validated.
+ * @param value the recovered `components` array.
+ * @param catalogId the catalog the enclosing surface declares.
  */
-function sanitiseComponents(value) {
+function sanitiseComponents(value, catalogId) {
     if (!Array.isArray(value))
-        return [];
-    const out = [];
-    const seen = new Set();
-    for (const entry of value.slice(0, LIMITS.maxComponentsPerMessage)) {
-        if (!isPlainObject(entry))
-            continue;
-        if (!validId(entry.id))
-            continue;
-        if (seen.has(entry.id))
-            continue;
-        if (typeof entry.component !== 'string' || entry.component === '' || entry.component === 'Surface')
-            continue;
-        seen.add(entry.id);
-        out.push(entry);
+        return { components: [], root: false, dropped: true, overLimit: false };
+    if (value.length > LIMITS.maxComponentsPerMessage) {
+        // The settled path rejects the whole call at this point, so drawing a
+        // truncated version would show something that can never be real.
+        return { components: [], root: false, dropped: true, overLimit: true };
     }
-    return out;
+    const components = [];
+    const seen = new Set();
+    let root = false;
+    let dropped = false;
+    for (const entry of value) {
+        const checked = checkComponentAlone(entry, catalogId);
+        const component = checked.component;
+        if (component === undefined || seen.has(component.id)) {
+            // Illegal on its own, or a repeated id (a protocol error in one message).
+            // The first declaration wins so the preview stays stable while writing.
+            dropped = true;
+            continue;
+        }
+        seen.add(component.id);
+        if (component.id === 'root')
+            root = true;
+        components.push(component);
+    }
+    return { components, root, dropped, overLimit: false };
 }
-/** Shape-check one recovered message; anything unfamiliar is skipped. */
-function sanitiseMessage(value) {
+/**
+ * Shape-check one recovered message against the catalog its surface declares.
+ *
+ * @param value the recovered message.
+ * @param catalogs catalog ids learned earlier in this same fold, by surface id.
+ */
+function sanitiseMessage(value, catalogs) {
+    const skip = { root: false, dropped: true };
     if (!isPlainObject(value))
-        return undefined;
+        return skip;
     const create = value.createSurface;
     if (isPlainObject(create)) {
-        if (!validId(create.surfaceId))
-            return undefined;
-        const catalogId = typeof create.catalogId === 'string' && create.catalogId !== '' ? create.catalogId : EXTENSION_CATALOG_ID;
+        if (!usableId(create.surfaceId))
+            return skip;
+        const declared = typeof create.catalogId === 'string' && create.catalogId !== '' ? create.catalogId : undefined;
+        const catalogId = resolveCatalogId(declared, undefined);
+        if (catalogId === undefined)
+            return skip;
+        const components = sanitiseComponents(create.components, catalogId);
+        if (components.overLimit)
+            return skip;
         return {
-            version: PROTOCOL_VERSION,
-            createSurface: {
-                surfaceId: create.surfaceId,
-                catalogId,
-                ...(typeof create.sendDataModel === 'boolean' ? { sendDataModel: create.sendDataModel } : {}),
-                ...(isPlainObject(create.dataModel) ? { dataModel: create.dataModel } : {}),
-                components: sanitiseComponents(create.components),
+            message: {
+                version: PROTOCOL_VERSION,
+                createSurface: {
+                    surfaceId: create.surfaceId,
+                    catalogId,
+                    ...(typeof create.sendDataModel === 'boolean' ? { sendDataModel: create.sendDataModel } : {}),
+                    ...(isPlainObject(create.dataModel) ? { dataModel: create.dataModel } : {}),
+                    components: components.components,
+                },
             },
+            root: components.root,
+            dropped: components.dropped,
         };
     }
     const update = value.updateComponents;
     if (isPlainObject(update)) {
-        if (!validId(update.surfaceId))
-            return undefined;
+        if (!usableId(update.surfaceId))
+            return skip;
+        // An update inherits the catalog of the surface it addresses; without a
+        // create in this fold the default catalog is the only assumption available,
+        // and it is the one the settled path starts from too.
+        const catalogId = catalogs.get(update.surfaceId) ?? resolveCatalogId(undefined, undefined);
+        if (catalogId === undefined)
+            return skip;
+        const components = sanitiseComponents(update.components, catalogId);
+        if (components.overLimit)
+            return skip;
         return {
-            version: PROTOCOL_VERSION,
-            updateComponents: { surfaceId: update.surfaceId, components: sanitiseComponents(update.components) },
+            message: { version: PROTOCOL_VERSION, updateComponents: { surfaceId: update.surfaceId, components: components.components } },
+            root: false,
+            dropped: components.dropped,
         };
     }
     const data = value.updateDataModel;
     if (isPlainObject(data)) {
-        if (!validId(data.surfaceId))
-            return undefined;
+        if (!usableId(data.surfaceId))
+            return skip;
         if (!Object.prototype.hasOwnProperty.call(data, 'value'))
-            return undefined;
+            return skip;
         const path = data.path;
         if (path !== undefined && typeof path !== 'string')
-            return undefined;
+            return skip;
         return {
-            version: PROTOCOL_VERSION,
-            updateDataModel: {
-                surfaceId: data.surfaceId,
-                ...(typeof path === 'string' ? { path } : {}),
-                value: data.value,
+            message: {
+                version: PROTOCOL_VERSION,
+                updateDataModel: { surfaceId: data.surfaceId, ...(typeof path === 'string' ? { path } : {}), value: data.value },
             },
+            root: false,
+            dropped: false,
         };
     }
     const drop = value.deleteSurface;
     if (isPlainObject(drop)) {
-        if (!validId(drop.surfaceId))
-            return undefined;
-        return { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } };
+        if (!usableId(drop.surfaceId))
+            return skip;
+        return { message: { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } }, root: false, dropped: false };
     }
-    return undefined;
+    return skip;
 }
 /**
  * Fold the argument characters received so far into renderable surfaces.
@@ -4101,33 +4164,76 @@ function foldStreaming(text) {
     const recovered = recoverArguments(text);
     if (recovered.invalid)
         return { ...EMPTY, stopped: true };
+    let truncated = recovered.messages.length > LIMITS.maxMessages;
+    const catalogs = new Map();
     const messages = [];
-    for (const message of recovered.messages) {
-        const sanitised = sanitiseMessage(message);
-        if (sanitised !== undefined)
-            messages.push(sanitised);
+    for (const value of recovered.messages.slice(0, LIMITS.maxMessages)) {
+        const sanitised = sanitiseMessage(value, catalogs);
+        if (sanitised.dropped)
+            truncated = true;
+        const message = sanitised.message;
+        if (message === undefined)
+            continue;
+        if ('createSurface' in message) {
+            const surfaceId = message.createSurface.surfaceId;
+            const catalogId = message.createSurface.catalogId;
+            // Remember the catalog so a later `updateComponents` in the same fold is
+            // checked against the catalog its surface actually declares.
+            if (catalogId !== undefined)
+                catalogs.set(surfaceId, catalogId);
+            if (!sanitised.root) {
+                // Declared without a usable root: nothing to draw *yet*. Skip the create
+                // so the fold cannot promote an unrelated later update into a card.
+                continue;
+            }
+        }
+        messages.push(message);
     }
     if (messages.length === 0)
-        return { ...EMPTY, streaming: recovered.open };
+        return { ...EMPTY, streaming: recovered.open, truncated };
     const folded = applyMessageBatch(new Map(), messages);
     const surfaces = [];
     let components = 0;
+    let nodes = 0;
+    let dataUnits = 0;
+    let created = 0;
     for (const touch of folded.touches) {
         if (touch.deleted)
             continue;
         const state = folded.surfaces.get(touch.surfaceId);
         if (state === undefined)
             continue;
-        // Without a declared root there is nothing to place yet: an empty card would
+        // Without a declared root there is nothing to place: an empty card would
         // appear and disappear as each component lands.
         if (!state.components.has('root'))
             continue;
+        // The same per-surface count the settled path enforces; a preview must not
+        // draw a surface that can never become legal.
+        if (state.components.size > LIMITS.maxComponentsPerSurface) {
+            truncated = true;
+            continue;
+        }
+        if (touch.created) {
+            created += 1;
+            if (created > LIMITS.maxSurfacesPerCall) {
+                truncated = true;
+                continue;
+            }
+        }
         const estimate = estimateExpansion(state);
         if (estimate.reason !== undefined) {
-            // A partial tree over the settled budget is never completed into a legal
-            // one, and drawing it would freeze the tab.
-            return { ...EMPTY, stopped: true };
+            // Over the per-surface budget: this surface can never become legal.
+            truncated = true;
+            continue;
         }
+        if (nodes + estimate.nodes > LIMITS.maxTotalExpandedNodes || dataUnits + estimate.dataUnits > LIMITS.maxTotalExpandedDataUnits) {
+            // The call as a whole is over budget. Keep the surfaces that already fit —
+            // a stable, safe snapshot — and let the settled result take over.
+            truncated = true;
+            break;
+        }
+        nodes += estimate.nodes;
+        dataUnits += estimate.dataUnits;
         surfaces.push(state);
         components += state.components.size;
     }
@@ -4137,6 +4243,7 @@ function foldStreaming(text) {
         components,
         streaming: recovered.open,
         stopped: false,
+        truncated,
     };
 }
 
@@ -4154,18 +4261,31 @@ __registry["./client/stream-store.js"] = function(module, exports, require) {
  * for a plugin to see an event: registering a Definition with **no view target**
  * keeps the state machine (and therefore nothing) out of the transcript.
  *
- * This module is exactly that: a state-only Definition that copies each
- * `tool-call-delta` into one small store keyed by call id, plus the React binding
- * the tool view reads during the preparing stage. The store is the *only* place
- * the plugin keeps data that is not derivable from the session log, so it is
- * bounded (per call and by age) and never persisted.
+ * Three rules keep this honest:
+ *
+ * 1. The Definition's own state is the source of truth. It is recomputed from
+ *    scratch on every context replay, and the cache is a *replacement* of that
+ *    state, never an append to a separate global log — so replaying the same
+ *    events twice yields the same prefix instead of a duplicated one.
+ * 2. Only calls the host named `a2ui` are collected. A delta that carries no
+ *    name is appended only to a call that is already tracked; an unattributed
+ *    fragment is never buffered, because it may belong to any tool.
+ * 3. The cache is bounded twice (per call, and in total), and an entry is
+ *    released as soon as the host settles the call (`tool/call` means the
+ *    arguments are complete and `argsRaw` takes over).
  */
 const { isPlainObject } = require("./shared/json.js");
-/** Longest argument text kept per call. */
+/** Wire name of the tool whose arguments can be previewed. */
+const STREAM_TOOL_NAME = 'a2ui';
+/** Longest argument text kept for one call. */
 const MAX_STREAM_CHARS = 256 * 1024;
-/** How long an unused entry is kept before the next append prunes it. */
+/** Longest argument text kept across every call in one browser session. */
+const MAX_STREAM_TOTAL_CHARS = 1024 * 1024;
+/** Most calls kept at once; the oldest entry is evicted beyond this. */
+const MAX_STREAM_ENTRIES = 32;
+/** How long an untouched entry survives, so a lost `tool/call` still expires. */
 const MAX_STREAM_AGE_MS = 120_000;
-const entries = new Map();
+const cache = new Map();
 const listeners = new Set();
 let pendingNotify = false;
 let timer;
@@ -4202,7 +4322,7 @@ function scheduleNotify() {
     // A host without a scheduler (a static render harness): publish at once.
     notifyNow();
 }
-/** Run pending notifications now (used by tests and by a manual flush). */
+/** Run pending notifications now (used by tests and by the operator). */
 function flushStreamNotifications() {
     if (timer !== undefined && typeof clearTimeout === 'function') {
         clearTimeout(timer);
@@ -4222,86 +4342,184 @@ function subscribeStream(listener) {
 function streamTextFor(callId) {
     if (callId === undefined || callId === '')
         return undefined;
-    return entries.get(callId)?.text;
+    return cache.get(callId)?.text;
 }
 /** Whether the kept text was cut off at {@link MAX_STREAM_CHARS}. */
 function streamTruncatedFor(callId) {
     if (callId === undefined || callId === '')
         return false;
-    return entries.get(callId)?.truncated === true;
+    return cache.get(callId)?.truncated === true;
 }
-function prune(now) {
-    for (const [callId, entry] of entries) {
+function totalChars() {
+    let total = 0;
+    for (const entry of cache.values())
+        total += entry.text.length;
+    return total;
+}
+/** Drop entries that are over the age bound, then the oldest until within size. */
+function trim(now, keep) {
+    for (const [callId, entry] of cache) {
         if (now - entry.updatedAt > MAX_STREAM_AGE_MS)
-            entries.delete(callId);
+            cache.delete(callId);
+    }
+    while (cache.size > MAX_STREAM_ENTRIES || totalChars() > MAX_STREAM_TOTAL_CHARS) {
+        let oldestId;
+        let oldestAt = Number.POSITIVE_INFINITY;
+        for (const [callId, entry] of cache) {
+            if (callId === keep)
+                continue;
+            if (entry.updatedAt < oldestAt) {
+                oldestAt = entry.updatedAt;
+                oldestId = callId;
+            }
+        }
+        if (oldestId === undefined)
+            break;
+        cache.delete(oldestId);
     }
 }
-function append(callId, delta) {
+/**
+ * Write one call's text, keeping the cache bounded.
+ *
+ * A call that is itself larger than the whole-call allowance is dropped rather
+ * than allowed to evict every other call: the preview degrades to the skeleton
+ * for that one card, which is exactly what a browser without this feature shows.
+ */
+function publish(callId, text, truncated = false) {
+    const now = clock();
+    const previous = cache.get(callId);
+    if (text === undefined) {
+        if (previous === undefined)
+            return;
+        cache.delete(callId);
+        scheduleNotify();
+        return;
+    }
+    cache.set(callId, { text, updatedAt: now, truncated });
+    trim(now, callId);
+    if (!cache.has(callId)) {
+        // Over the total bound on its own.
+        if (previous !== undefined)
+            scheduleNotify();
+        return;
+    }
+    if (previous?.text !== text || previous.truncated !== truncated)
+        scheduleNotify();
+}
+/** Test hook: append fragments directly, bypassing the Definition. */
+function appendStreamedArguments(callId, delta) {
     if (callId === '' || delta === '')
         return;
-    const now = clock();
-    prune(now);
-    const previous = entries.get(callId);
+    const previous = cache.get(callId);
     const room = MAX_STREAM_CHARS - (previous?.text.length ?? 0);
     if (previous?.truncated === true || room <= 0) {
         if (previous !== undefined)
-            previous.updatedAt = now;
+            previous.updatedAt = clock();
         return;
     }
     const text = (previous?.text ?? '') + (delta.length <= room ? delta : delta.slice(0, room));
-    entries.set(callId, { text, updatedAt: now, truncated: delta.length > room });
-    scheduleNotify();
-}
-/** Start or extend one call's argument text. */
-function appendStreamedArguments(callId, delta) {
-    append(callId, delta);
+    publish(callId, text, (previous?.truncated ?? false) || delta.length > room);
 }
 /** Forget one call's text (a settled call has its own `argsRaw`). */
 function dropStreamedArguments(callId) {
-    if (entries.delete(callId))
-        scheduleNotify();
+    publish(callId, undefined);
 }
-/** Reset the store (tests, and a profile switch). */
+/** Reset the whole cache (plugin unload, profile switch, tests). */
 function resetStreams() {
-    if (entries.size === 0)
+    if (cache.size === 0)
         return;
-    entries.clear();
+    cache.clear();
     scheduleNotify();
 }
-function readChunk(match) {
-    const chunk = match.event.data?.chunk;
-    if (!isPlainObject(chunk))
+const EMPTY_STATE = { callId: '', tracked: false, text: '', truncated: false };
+function idOf(value) {
+    return typeof value === 'string' && value !== '' ? value : '';
+}
+/** The call a settle event refers to, if the event carries one. */
+function settledCallId(event) {
+    // `tool/call` names its tool, so a foreign call is not even given a context.
+    if (event.type === 'tool/call')
+        return event.data?.name === STREAM_TOOL_NAME ? idOf(event.data?.callId) : '';
+    if (event.type === 'tool/result') {
+        // A result carries no tool name; the release is a keyed delete, so matching
+        // every result is harmless and covers a call whose `tool/call` fell outside
+        // the loaded window.
+        const message = event.data?.message;
+        if (!isPlainObject(message))
+            return '';
+        const source = message.source;
+        return isPlainObject(source) ? idOf(source.callId) : '';
+    }
+    return '';
+}
+function deltaOf(event) {
+    if (event.type !== 'assistant/live-chunk')
         return undefined;
-    const callId = typeof chunk.id === 'string' ? chunk.id : '';
-    if (callId === '')
+    const chunk = event.data?.chunk;
+    if (!isPlainObject(chunk))
         return undefined;
     if (chunk.type !== 'tool-call-delta')
         return undefined;
-    const delta = chunk.argumentsDelta;
-    return typeof delta === 'string' ? { callId, delta } : undefined;
-}
-function advance(state, match) {
-    const chunk = readChunk(match);
-    if (chunk === undefined)
-        return state ?? { callId: '', seen: 0 };
-    append(chunk.callId, chunk.delta);
-    return { callId: chunk.callId, seen: (state?.callId === chunk.callId ? state.seen : 0) + chunk.delta.length };
+    const callId = idOf(chunk.id);
+    if (callId === '')
+        return undefined;
+    const text = typeof chunk.argumentsDelta === 'string' ? chunk.argumentsDelta : '';
+    return typeof chunk.name === 'string' && chunk.name !== '' ? { callId, name: chunk.name, text } : { callId, text };
 }
 /**
- * Create the Definition that mirrors streaming arguments into the store.
+ * Fold one event into the Definition state.
  *
- * `kind` is unique per plugin installation and the Definition declares no view
- * target, so the engine runs it without materialising a Node: the transcript is
+ * The state owns the text; the cache mirrors it. Replaying the same context from
+ * its earliest match therefore *replaces* the text instead of appending to it
+ * again.
+ */
+function advance(previous, match) {
+    const base = previous ?? EMPTY_STATE;
+    const settled = settledCallId(match.event);
+    if (settled !== '') {
+        // The host has the complete arguments: `argsRaw` renders from here on.
+        publish(settled, undefined);
+        return base.callId === settled ? EMPTY_STATE : base;
+    }
+    const delta = deltaOf(match.event);
+    if (delta === undefined)
+        return base;
+    const sameCall = base.callId === delta.callId;
+    const tracked = delta.name === undefined ? sameCall && base.tracked : delta.name === STREAM_TOOL_NAME;
+    if (!tracked) {
+        // Unidentified or foreign: keep the decision so later unnamed fragments stay
+        // out of the preview instead of being attributed by guesswork.
+        return { callId: delta.callId, tracked: false, text: '', truncated: false };
+    }
+    const room = MAX_STREAM_CHARS - (sameCall ? base.text.length : 0);
+    const truncated = sameCall ? base.truncated : false;
+    if (room <= 0 || truncated) {
+        publish(delta.callId, sameCall ? base.text : '', true);
+        return { callId: delta.callId, tracked: true, text: sameCall ? base.text : '', truncated: true };
+    }
+    const text = (sameCall ? base.text : '') + (delta.text.length <= room ? delta.text : delta.text.slice(0, room));
+    const overflow = delta.text.length > room;
+    publish(delta.callId, text, overflow);
+    return { callId: delta.callId, tracked: true, text, truncated: overflow };
+}
+/**
+ * Create the Definition that mirrors streaming arguments into the cache.
+ *
+ * `kind` is unique per installation and the Definition declares no view target,
+ * so the engine runs it without materialising a Node: the transcript is
  * untouched whatever this observes.
  */
 function createStreamDefinition() {
     return {
         kind: 'a2ui-stream',
         match(event) {
-            if (!isPlainObject(event) || event.type !== 'assistant/live-chunk')
+            if (!isPlainObject(event))
                 return null;
-            const chunk = readChunk({ event });
-            return chunk === undefined ? null : { id: chunk.callId, role: 'start' };
+            const delta = deltaOf(event);
+            if (delta !== undefined)
+                return { id: delta.callId, role: 'start' };
+            const settled = settledCallId(event);
+            return settled === '' ? null : { id: settled, role: 'update' };
         },
         start(_context, match) {
             return advance(undefined, match);
@@ -4309,16 +4527,18 @@ function createStreamDefinition() {
         update(context, match) {
             return advance(context.state, match);
         },
-        // Live chunks are already published on the animation-frame cadence by the
-        // Assistant Definition; asking for the same cadence means this observation
-        // rides that flush instead of forcing a chat publication of its own.
+        // Live chunks already publish on the animation-frame cadence; asking for the
+        // same cadence rides that flush instead of forcing a chat publication.
         publication() {
             return 'animation-frame';
         },
     };
 }
 
+exports["STREAM_TOOL_NAME"] = STREAM_TOOL_NAME;
 exports["MAX_STREAM_CHARS"] = MAX_STREAM_CHARS;
+exports["MAX_STREAM_TOTAL_CHARS"] = MAX_STREAM_TOTAL_CHARS;
+exports["MAX_STREAM_ENTRIES"] = MAX_STREAM_ENTRIES;
 exports["MAX_STREAM_AGE_MS"] = MAX_STREAM_AGE_MS;
 exports["setStreamClock"] = setStreamClock;
 exports["flushStreamNotifications"] = flushStreamNotifications;
@@ -7123,6 +7343,67 @@ function useStreamedArguments(callId) {
 function Skeleton() {
     return h('div', { className: 'a2ui-skel', 'aria-hidden': true }, h('span', { className: 'a2ui-skel-line a2ui-skel-w70' }), h('span', { className: 'a2ui-skel-line a2ui-skel-w92' }), h('span', { className: 'a2ui-skel-line a2ui-skel-w60' }), h('span', { className: 'a2ui-skel-block' }));
 }
+let previewBoundaryType;
+function previewBoundary() {
+    if (previewBoundaryType !== undefined)
+        return previewBoundaryType;
+    class PreviewBoundary extends React.Component {
+        state = { failed: false };
+        static getDerivedStateFromError() {
+            return { failed: true };
+        }
+        componentDidUpdate(previous) {
+            // A new fragment may well fix whatever threw: recover instead of staying
+            // blank for the rest of the call.
+            if (this.state.failed && previous.text !== this.props.text)
+                this.setState({ failed: false });
+        }
+        render() {
+            return this.state.failed ? Skeleton() : this.props.children;
+        }
+    }
+    previewBoundaryType = PreviewBoundary;
+    return previewBoundaryType;
+}
+/**
+ * The card shown during `preparing`.
+ *
+ * Its body is inert: the preview renders unvalidated components, so Tab, Enter,
+ * Space and the mouse must not reach a control before the call settles. `inert`
+ * is set through the DOM because React 18 does not type it; a host that rejects
+ * the attribute simply loses the extra guard, since submit/write are also stubs
+ * here and the settled card is what can actually act.
+ */
+function StreamingCard(props) {
+    const bodyRef = React.useRef(null);
+    React.useEffect(() => {
+        const node = bodyRef.current;
+        if (node === null)
+            return undefined;
+        node.setAttribute('inert', '');
+        return () => node.removeAttribute('inert');
+    }, []);
+    const view = (state) => ({
+        surfaceId: state.surfaceId,
+        callId: props.callId,
+        state,
+        // The streamed data model is authoritative for this frame; edits and actions
+        // belong to the settled card.
+        model: state.dataModel,
+        locale: props.locale,
+        now: props.now,
+        interaction: { state: 'idle' },
+        t: props.t,
+        streaming: true,
+        setValue: () => { },
+        submit: () => { },
+        runLocal: () => { },
+    });
+    const bodies = props.surfaces.length === 0
+        ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
+        : props.surfaces.map((state) => h('div', { key: state.surfaceId, className: 'a2ui-stack' }, props.surfaces.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null, h(A2UISurface, { view: view(state) })));
+    return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true }, h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, props.title), h('span', { className: 'a2ui-card-state' }, props.t('streaming'))), h('div', { className: 'a2ui-card-body', ref: bodyRef }, h(previewBoundary(), { text: props.text }, h('div', { className: 'a2ui-stack' }, ...bodies)))));
+}
 /** Build the user message that carries an A2UI action to the agent. */
 { const __reexport = require("./client/action.js"); exports["formatActionPrompt"] = __reexport["formatActionPrompt"]; }
 function openExternal(url) {
@@ -7254,33 +7535,19 @@ function A2UIToolView(props) {
         submit: (scope, component, name, context, userMessage) => submit(surface.surfaceId, scope, component, name, context, userMessage),
         runLocal: (scope, component, call) => runLocal(surface.surfaceId, scope, component, call),
     });
-    // Stage: the arguments are still arriving. The card grows one component at a
-    // time out of what has already closed, and never turns into an error notice:
-    // a half-written payload is unfinished, not wrong. Nothing here is
-    // interactive — actions start once the call settles and its payload has been
-    // validated.
+    // Stage: the arguments are still arriving. The card grows out of what has
+    // already closed, never turns into an error notice (a half-written payload is
+    // unfinished, not wrong) and never lets a control be operated.
     if (preparing) {
-        const streamView = (state) => ({
-            surfaceId: state.surfaceId,
+        return h(StreamingCard, {
             callId: props.callId,
-            state,
-            // The streamed data model is authoritative for this frame; user edits and
-            // actions belong to the settled card.
-            model: state.dataModel,
+            title: streamed?.title ?? t('rendering'),
+            surfaces: streamed === undefined || streamed.stopped ? [] : streamed.surfaces,
+            text: streamedText ?? '',
             locale,
             now,
-            interaction: { state: 'idle' },
             t,
-            streaming: true,
-            setValue: () => { },
-            submit: () => { },
-            runLocal: () => { },
         });
-        const ready = streamed === undefined || streamed.stopped ? [] : streamed.surfaces;
-        const bodies = ready.length === 0
-            ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
-            : ready.map((state) => h('div', { key: state.surfaceId, className: 'a2ui-stack' }, ready.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null, h(A2UISurface, { view: streamView(state) })));
-        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true }, h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, streamed?.title ?? t('rendering')), h('span', { className: 'a2ui-card-state' }, t('streaming'))), h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-stack' }, ...bodies))));
     }
     const header = h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')));
     // A failed call never renders operable content: without this, an error result
@@ -7576,7 +7843,7 @@ const { DICTS, NS, en } = require("./client/locale.js");
 const { CSS } = require("./client/styles.js");
 const { A2UIToolView } = require("./client/tool-view.js");
 const { A2uiTurnTail } = require("./client/turn-tail.js");
-const { createStreamDefinition } = require("./client/stream-store.js");
+const { createStreamDefinition, resetStreams } = require("./client/stream-store.js");
 /**
  * Test hooks: the live-argument store the preparing card reads.
  *
@@ -7647,26 +7914,38 @@ function apply(ctx) {
     // is the supported way to watch an event without touching the transcript.
     ctx.effect(() => {
         if (typeof ctx.inject !== 'function')
-            return undefined;
+            return () => resetStreams();
         const fiber = ctx.inject(['uiConversation'], (scoped) => {
             scoped.effect(() => {
-                const register = scoped.uiConversation?.events?.register;
-                if (typeof register !== 'function')
+                // The registry is a class instance: its `register` is a method that reads
+                // `this`, so it must be called *on* the events object. Taking the method
+                // out of it first would throw and silently disable the preview.
+                const events = scoped.uiConversation?.events;
+                if (events === undefined || typeof events.register !== 'function')
                     return undefined;
+                let dispose;
                 try {
-                    const dispose = register(createStreamDefinition());
-                    return typeof dispose === 'function' ? dispose : undefined;
+                    const registered = events.register(createStreamDefinition());
+                    dispose = typeof registered === 'function' ? registered : undefined;
                 }
                 catch (cause) {
                     // Losing the observer costs the progressive preview, never the card.
                     ctx.logger?.warn?.('dsh-a2ui: streaming observer unavailable', cause);
                     return undefined;
                 }
+                // The live-argument cache belongs to this registration: unloading the
+                // observer releases it, and a re-mount starts from an empty cache.
+                return () => {
+                    if (dispose !== undefined)
+                        dispose();
+                    resetStreams();
+                };
             }, 'dsh-a2ui: stream observer');
         });
         return () => {
             if (typeof fiber?.dispose === 'function')
                 void fiber.dispose();
+            resetStreams();
         };
     }, 'dsh-a2ui: stream observer');
     const bound = ctx.locale.bind(NS);

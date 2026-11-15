@@ -39,13 +39,61 @@ arguments, instead of appearing all at once when the arguments finish.
 
 ### Tests
 
-- 13 new cases in `tests/streaming.test.mjs`: recovery of a truncated payload, monotonic growth
-  over every prefix of a real payload, escape decoding, malformed/depth refusal, create+update
-  merging, structural skipping, budget stop, store bounding/pruning, and the Definition's
-  match/start/update contract.
-- 3 new real-React render cases (driven through the shipped `client.js`): a preparing card draws
-  the components that arrived, drops the half-written one, and keeps the skeleton when nothing is
-  usable yet.
+- 26 cases in `tests/streaming.test.mjs`: recovery of a truncated payload,
+  monotonic growth over every prefix of a real payload, escape decoding,
+  malformed/depth refusal, create+update merging, structural skipping, a
+  closed-but-illegal component (the review's `Tabs` payload and a bad `Table`),
+  per-surface and per-call budget stops, cache bounding (per call, entries,
+  total characters), replay idempotence, tool-name filtering, concurrent calls,
+  release on settle, and the `apply()`-level registration test whose fake
+  registry reads `this` (calling it detached throws there too).
+- 5 real-React render cases driven through the shipped `client.js`: a preparing
+  card draws the components that arrived, drops the half-written one, keeps the
+  skeleton when nothing is usable, refuses the illegal `Tabs`, and the settled
+  path still reports that same payload as invalid.
+- 1 jsdom case: the preview body is inert and a synthetic click queues nothing,
+  and the same call settled is a normal interactive card again.
+- 3 bundle invariants (the observer, the fragment reader, the recovery bound).
+
+### Fixed (review pass)
+
+- **The observer never registered.** `events.register` was taken out of the
+  registry object and called as a plain function, so `this` was lost and the
+  call threw inside the guard — the preview silently stayed at the skeleton in
+  every real session. It is now invoked on the registry, and a regression test
+  goes through `apply()` with a registry whose `register` reads `this` (calling
+  it detached throws there too, so the test fails if the bug returns).
+- **Replaying a window duplicated the prefix.** The cache was a global log that
+  `start`/`update` appended to unconditionally, so a second replay of the same
+  events produced `{"messages":[{{"messages":[{`. The text now lives in the
+  Definition state, which the engine rebuilds from the earliest match, and the
+  cache is a replacement of that state: replay is idempotent.
+- **Foreign tools were collected.** Every `tool-call-delta` was kept, including
+  another tool's arguments. Only calls the host names `a2ui` are tracked now, and
+  a name-less fragment is appended only to a call that is already identified.
+- **The cache had no lifecycle.** Entries were released only when a mounted card
+  settled, and only bounded per call. `tool/call` and `tool/result` now release
+  the entry, the plugin's own teardown clears the cache, and the cache is bounded
+  in entries (32) and total characters (1 MiB) as well as per call.
+- **A closed component was not validated.** `{"id":"root","component":"Tabs",
+  "tabs":[null]}` was accepted by the preview and threw while rendering. Closed
+  components now go through the settled path's own property validation
+  (`checkComponentAlone`), so an illegal component is dropped, an illegal root
+  falls back to the skeleton, and the same payload still produces the original
+  validation error once settled.
+- **The aggregate budget was not enforced.** Two surfaces of 3,501 nodes each
+  passed the preview (7,002 in total) while the settled path rejects the call at
+  6,000. The preview now accumulates expanded nodes and data units across the
+  call against the same `LIMITS`, keeps the surfaces that already fit, and skips
+  a surface over its own budget; message, surface and component counts are
+  enforced too.
+- **The preview was reachable from the keyboard.** `pointer-events: none` stops
+  the mouse only, so Tab still entered a preview's tab strip. The preview body is
+  `inert` now (set through the DOM, so it works on React 18 and 19), and a DOM
+  test asserts the attribute is present while generating and gone once settled.
+- **Preview failures could blank the slot.** A preview-only error boundary shows
+  the skeleton instead; it is deliberately scoped to the preview so a settled
+  card still surfaces its own errors.
 
 ## 0.2.1 — 2026-11-13
 

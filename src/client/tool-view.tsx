@@ -225,6 +225,129 @@ function Skeleton(): ReturnType<typeof h> {
   )
 }
 
+/**
+ * Preview-only error boundary.
+ *
+ * The streaming fold validates every closed component, so a preview should never
+ * throw; this is the backstop that keeps a slip in one renderer from blanking the
+ * whole slot. It is deliberately *not* wrapped around the settled card: a real
+ * result must keep surfacing its own errors.
+ *
+ * The class is created on first render rather than at module load, so merely
+ * loading the bundle never depends on `React.Component` being present.
+ */
+interface PreviewBoundaryProps {
+  readonly text: string
+  readonly children?: unknown
+}
+
+type PreviewBoundaryType = new (props: PreviewBoundaryProps) => React.Component<PreviewBoundaryProps, { failed: boolean }>
+
+let previewBoundaryType: PreviewBoundaryType | undefined
+
+function previewBoundary(): PreviewBoundaryType {
+  if (previewBoundaryType !== undefined) return previewBoundaryType
+  class PreviewBoundary extends React.Component<PreviewBoundaryProps, { failed: boolean }> {
+    override state = { failed: false }
+
+    static getDerivedStateFromError(): { failed: boolean } {
+      return { failed: true }
+    }
+
+    override componentDidUpdate(previous: PreviewBoundaryProps): void {
+      // A new fragment may well fix whatever threw: recover instead of staying
+      // blank for the rest of the call.
+      if (this.state.failed && previous.text !== this.props.text) this.setState({ failed: false })
+    }
+
+    override render(): React.ReactNode {
+      return this.state.failed ? Skeleton() : (this.props.children as React.ReactNode)
+    }
+  }
+  previewBoundaryType = PreviewBoundary as unknown as PreviewBoundaryType
+  return previewBoundaryType
+}
+
+/** Props of the card drawn while the arguments are still arriving. */
+interface StreamingCardProps {
+  callId: string
+  title: string
+  surfaces: readonly SurfaceState[]
+  text: string
+  locale: string
+  now: number
+  t: (key: string) => string
+}
+
+/**
+ * The card shown during `preparing`.
+ *
+ * Its body is inert: the preview renders unvalidated components, so Tab, Enter,
+ * Space and the mouse must not reach a control before the call settles. `inert`
+ * is set through the DOM because React 18 does not type it; a host that rejects
+ * the attribute simply loses the extra guard, since submit/write are also stubs
+ * here and the settled card is what can actually act.
+ */
+function StreamingCard(props: StreamingCardProps): ReturnType<typeof h> {
+  const bodyRef = React.useRef<HTMLDivElement | null>(null)
+  React.useEffect(() => {
+    const node = bodyRef.current
+    if (node === null) return undefined
+    node.setAttribute('inert', '')
+    return () => node.removeAttribute('inert')
+  }, [])
+
+  const view = (state: SurfaceState): SurfaceView => ({
+    surfaceId: state.surfaceId,
+    callId: props.callId,
+    state,
+    // The streamed data model is authoritative for this frame; edits and actions
+    // belong to the settled card.
+    model: state.dataModel,
+    locale: props.locale,
+    now: props.now,
+    interaction: { state: 'idle' },
+    t: props.t,
+    streaming: true,
+    setValue: () => {},
+    submit: () => {},
+    runLocal: () => {},
+  })
+
+  const bodies: Array<ReturnType<typeof h>> =
+    props.surfaces.length === 0
+      ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
+      : props.surfaces.map((state) =>
+          h(
+            'div',
+            { key: state.surfaceId, className: 'a2ui-stack' },
+            props.surfaces.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null,
+            h(A2UISurface, { view: view(state) }),
+          ),
+        )
+
+  return h(
+    'div',
+    { className: 'a2ui-root' },
+    h(
+      'div',
+      { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true },
+      h(
+        'div',
+        { className: 'a2ui-card-head' },
+        sparkle('a2ui-card-spark'),
+        h('span', { className: 'a2ui-card-title' }, props.title),
+        h('span', { className: 'a2ui-card-state' }, props.t('streaming')),
+      ),
+      h(
+        'div',
+        { className: 'a2ui-card-body', ref: bodyRef },
+        h(previewBoundary(), { text: props.text }, h('div', { className: 'a2ui-stack' }, ...bodies)),
+      ),
+    ),
+  )
+}
+
 /** Build the user message that carries an A2UI action to the agent. */
 export { formatActionPrompt } from './action.js'
 
@@ -386,56 +509,19 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
     runLocal: (scope, component, call) => runLocal(surface.surfaceId, scope, component, call),
   })
 
-  // Stage: the arguments are still arriving. The card grows one component at a
-  // time out of what has already closed, and never turns into an error notice:
-  // a half-written payload is unfinished, not wrong. Nothing here is
-  // interactive — actions start once the call settles and its payload has been
-  // validated.
+  // Stage: the arguments are still arriving. The card grows out of what has
+  // already closed, never turns into an error notice (a half-written payload is
+  // unfinished, not wrong) and never lets a control be operated.
   if (preparing) {
-    const streamView = (state: SurfaceState): SurfaceView => ({
-      surfaceId: state.surfaceId,
+    return h(StreamingCard, {
       callId: props.callId,
-      state,
-      // The streamed data model is authoritative for this frame; user edits and
-      // actions belong to the settled card.
-      model: state.dataModel,
+      title: streamed?.title ?? t('rendering'),
+      surfaces: streamed === undefined || streamed.stopped ? [] : streamed.surfaces,
+      text: streamedText ?? '',
       locale,
       now,
-      interaction: { state: 'idle' },
       t,
-      streaming: true,
-      setValue: () => {},
-      submit: () => {},
-      runLocal: () => {},
     })
-    const ready = streamed === undefined || streamed.stopped ? [] : streamed.surfaces
-    const bodies: Array<ReturnType<typeof h>> =
-      ready.length === 0
-        ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
-        : ready.map((state) =>
-            h(
-              'div',
-              { key: state.surfaceId, className: 'a2ui-stack' },
-              ready.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null,
-              h(A2UISurface, { view: streamView(state) }),
-            ),
-          )
-    return h(
-      'div',
-      { className: 'a2ui-root' },
-      h(
-        'div',
-        { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true },
-        h(
-          'div',
-          { className: 'a2ui-card-head' },
-          sparkle('a2ui-card-spark'),
-          h('span', { className: 'a2ui-card-title' }, streamed?.title ?? t('rendering')),
-          h('span', { className: 'a2ui-card-state' }, t('streaming')),
-        ),
-        h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-stack' }, ...bodies)),
-      ),
-    )
   }
 
   const header = h(

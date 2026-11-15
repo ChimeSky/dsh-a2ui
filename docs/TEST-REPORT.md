@@ -21,9 +21,9 @@
 |---|---|
 | TypeScript 类型检查（`strict`） | ✅ 0 错误 |
 | 构建 | 35 个模块；`client.js` 329 KiB；`lib/**` 16 模块 + `index.js` |
-| 单元/集成/验收用例 | ✅ **146 / 146 通过**（`node:test`，`duration ≈ 2.6 s`） |
-| 真实 React 渲染 | ✅ **14 / 14**（`npm run render`） |
-| DOM 事件用例 | ✅ **10 / 10**（jsdom，`tests/dom.test.mjs`） |
+| 单元/集成/验收用例 | ✅ **160 / 160 通过**（`node:test`，`duration ≈ 3 s`） |
+| 真实 React 渲染 | ✅ **16 / 16**（`npm run render`） |
+| DOM 事件用例 | ✅ **14 / 14**（jsdom，`tests/dom.test.mjs`） |
 | 官方 catalog 样例 | ✅ **43 / 43**（`tests/fixtures/examples`，commit `58379ad`) |
 | Bundle 不变量检查 | ✅ **32 / 32 通过** |
 
@@ -37,10 +37,10 @@
 | `tests/turn-tail.test.mjs` | 9 | 轮末转录查询：仅取本轮、跳过隐藏节点、结果阶段从 `call.name` 取名、非 a2ui 排除、store/order 缺失返回空、Map 与普通对象兼容；`turnDataSource` 载荷映射（顺序、start→result 阶段切换、畸形输入） |
 | `tests/claims.test.mjs` | 5 | 副本认领：会话/调用隔离、嵌套认领与幂等释放、缺失标识不认领、订阅通知与退订、订阅者抛错不影响已记录的认领 |
 | `tests/limits.test.mjs` | 26 | 正则安全子集与 ReDoS 拒绝（含耗时断言与独立进程超时用例）、46,656 叶节点载荷、长列表模板、超大序列图表、正常嵌套模板、展开估算、指针长度/段数/下标/原型链、稀疏数组拒绝、合法追加与删除、字段级错误定位；官方四条安全规则的正反例（`(?:ab){2}`、`([A-Z]){2}`、相邻无界量词、`\d+\s*\d+`）、散点计数、多 Surface 总预算、11,000 层 JSON、拒绝写入的字段路径、`pointerWrite` 三态、**有界求值器与既有匹配语义一致**（`regex keeps the existing matching semantics for regular validation patterns`） |
-| `tests/dom.test.mjs` | 10 | jsdom 真实事件：过程行编辑经轮末接管仍在、双击只入队一次、发送失败（`QUEUE_FULL`）后表单可编辑并可重试、成功后锁定、隐藏节点不渲染、改名工具靠 meta 渲染（正反例）、官方 `00_incremental` 每行按钮携带本行餐厅名、Tabs 方向键/Home/End 与 roving tabindex、Modal 初始焦点/Tab 环/Esc/焦点回归 |
+| `tests/dom.test.mjs` | 14 | jsdom 真实事件：过程行编辑经轮末接管仍在、双击只入队一次、发送失败（`QUEUE_FULL`）后表单可编辑并可重试、成功后锁定、隐藏节点不渲染、改名工具靠 meta 渲染（正反例）、官方 `00_incremental` 每行按钮携带本行餐厅名、Tabs 方向键/Home/End 与 roving tabindex、Modal 初始焦点/Tab 环/Esc/焦点回归 |
 | `tests/client-units.test.mjs` | 11 | action 信封与时间戳、模板行作用域取值、编辑后取值、userMessage、超限拒绝、日期时间往返（纯时间/ISO/date min-max/垃圾输入）、柱状图零点基线域、Plot 断点切分 |
 | `tests/acceptance.test.mjs` | 9 | 见下节验收场景 1–9 |
-| `tests/streaming.test.mjs` | 13 | 渐进式流式渲染：截断载荷的恢复（只保留已闭合的组件）、对真实载荷**每个前缀**的单调增长断言、转义只解码一次、非法语法与深度越界一律停止、create+update 合并、结构性非法组件被跳过、超预算停止、分片存储的上限/惰性清理/释放、观察器 Definition 的 match/start/update 与「无视图目标」 |
+| `tests/streaming.test.mjs` | 26 | 渐进式流式渲染：截断载荷的恢复（只保留已闭合的组件）、对真实载荷**每个前缀**的单调增长断言、转义只解码一次、非法语法与深度越界一律停止、create+update 合并、结构性非法组件被跳过、**已闭合但非法的组件**（审查给的 `Tabs` 载荷与畸形 `Table`）不绘制且正式路径仍报错、单张/单次调用的展开节点与数据单元预算、消息/表面/组件数上限、分片缓存的三重上限（单次 256 KiB、条目 32、总量 1 MiB）与惰性清理、**重放幂等**、工具名过滤（`shell` 参数不入缓存、无名续片只接已识别调用）、并发调用互不串扰、结算/结果事件释放、以及经 `apply()` 的**注册器回归用例**（替身的 `register` 读取 `this`：detach 调用会抛错，正是修复前的缺陷） |
 
 **第 8 条需求（交互性）的验证方式**：图表悬停、图例开关、表头排序都是纯客户端状态，无法在无头环境断言像素；已通过 9 个 SSR 渲染用例（含官方 `00_incremental` 等价 fixture、逐条内容断言）确认「带交互逻辑的组件树仍能完整渲染且不抛异常」，交互行为本身需要人眼确认（见第五节）。
 
@@ -157,7 +157,7 @@
 | GUI 内完整链路（点卡片 → 入队消息 → 新一轮 → 重开会话 → 历史分页） | 需要运行中的 Host + 浏览器；DOM 用例覆盖到「点击产生何种消息」，但真实入队与重开画面本次未执行 |
 | 两个真实会话并排的视觉隔离 | 仅逻辑层验证 |
 | `FramePlayer` 动画时序、Slider 拖动实时重绘的流畅度 | 需要真实浏览器交互 |
-| 渐进式流式渲染的**实时**观感（卡片逐块长出、占位骨架收束） | 已验证链路：恢复器/折叠器的 13 个单元用例、3 个走**已发布 bundle** 的真实 React 渲染用例（先向 store 注入分片，再渲染 `preparing` 卡片）、以及 DSH 源码侧对「无 `target` 的 state-only Context 会收到事件」的核对。**未**在真实一轮对话里目击：agent 浏览器无法取得 GUI 的访问令牌（`dsh web` 启动时打印的带 token 链接），因此没有第二个客户端可以发起一轮真实生成。请页面刷新后让模型生成一个多组件界面自验 |
+| 渐进式流式渲染的**实时**观感（卡片逐块长出、占位骨架收束） | 已验证链路：`tests/streaming.test.mjs` 的 26 个用例（含**经 `apply()` 的注册器回归**、重放幂等、工具名过滤、缓存上限）、5 个走**已发布 bundle** 的真实 React 渲染用例、1 个 jsdom 用例（预览正文 `inert`、合成点击不入队、结算后恢复交互）。注册器替身读取 `this`，与 DSH 的 `ConversationEventRegistry.register` 同构——但仍是替身，不是真实注册器实例。**未**在真实一轮对话里目击：agent 浏览器无法取得 GUI 的访问令牌，没有第二个客户端可以发起一轮真实生成。请页面刷新后让模型生成一个多组件界面自验 |
 
 ## 六、开发过程中发现并修复的问题
 
