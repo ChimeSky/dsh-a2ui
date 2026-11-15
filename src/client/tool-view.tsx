@@ -18,7 +18,7 @@ import type { Violation } from '../shared/schema.js'
 import { FUNCTIONS } from '../shared/functions.js'
 import { estimateExpansion } from '../shared/budget.js'
 import { foldStreaming } from '../shared/stream.js'
-import { dropStreamedArguments, subscribeStream, streamTextFor } from './stream-store.js'
+import { watchStream, type SessionEventSource } from './stream-store.js'
 import { A2UISurface } from './surface.js'
 import type { InteractionState, Scope, SurfaceView } from './context.js'
 import { useClaimCopy, useCopyClaimed } from './claims-react.js'
@@ -30,6 +30,7 @@ export interface ClientRuntime {
   t: (key: string) => string
   locale: () => string
   sendPrompt: (sessionId: string, text: string) => Promise<void>
+  streamSource?: (sessionId: string) => SessionEventSource | undefined
 }
 
 interface ToolBlockLike {
@@ -199,18 +200,15 @@ function formatViolations(errors: Violation[]): string {
     .join('\n')
 }
 
-/**
- * Read the argument characters a preparing call has already streamed.
- *
- * Subscribed only while the call is being prepared, so a settled card costs
- * nothing. The snapshot is a plain string, which keeps
- * `useSyncExternalStore` from re-rendering on equal text.
- */
-function useStreamedArguments(callId: string | undefined): string | undefined {
-  const read = React.useCallback(() => (callId === undefined ? undefined : streamTextFor(callId)), [callId])
-  // The same read serves server rendering: the tool view is only ever mounted in
-  // a browser, but a static harness must see exactly what the browser would.
-  return React.useSyncExternalStore(subscribeStream, read, read)
+const emptyStream = {
+  subscribe: () => () => {},
+  getSnapshot: () => undefined,
+  getServerSnapshot: () => undefined,
+}
+
+function useStreamedArguments(source: SessionEventSource | undefined, callId: string): string | undefined {
+  const stream = React.useMemo(() => source === undefined ? emptyStream : watchStream(source, callId), [source, callId])
+  return React.useSyncExternalStore(stream.subscribe, stream.getSnapshot, stream.getServerSnapshot)
 }
 
 /** Placeholder body shown until the first component (and its root) arrives. */
@@ -375,18 +373,12 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
   // While the call is being prepared the arguments arrive as raw fragments, so
   // the card is drawn from what has already closed (see `shared/stream.ts`).
   const preparing = props.phase === 'preparing'
-  const streamedText = useStreamedArguments(preparing ? props.callId : undefined)
+  const source = preparing && sessionId !== undefined ? runtime.streamSource?.(sessionId) : undefined
+  const streamedText = useStreamedArguments(source, props.callId)
   const streamed = React.useMemo(
     () => (streamedText === undefined || streamedText === '' ? undefined : foldStreaming(streamedText)),
     [streamedText],
   )
-
-  // Once the call settles its own `argsRaw` is authoritative, so the fragment
-  // copy is released immediately instead of waiting for the age bound.
-  React.useEffect(() => {
-    if (preparing) return
-    dropStreamedArguments(props.callId)
-  }, [preparing, props.callId])
 
   // The tail copy claims the call; the row copy steps aside only while that
   // claim is held, and automatically restores the card when the tail unmounts.

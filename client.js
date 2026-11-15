@@ -3971,6 +3971,7 @@ function recoverArguments(text) {
     }
     const title = typeof scan.value.title === 'string' ? scan.value.title : undefined;
     const messages = [];
+    let partialMessage;
     let open = !scan.complete;
     const raw = scan.value.messages;
     if (Array.isArray(raw)) {
@@ -3979,8 +3980,10 @@ function recoverArguments(text) {
                 // The message being written: keep whatever it already closed inside it
                 // (its components), so the partial surface can be drawn.
                 const salvaged = stripIncomplete(message.value);
-                if (isPlainObject(salvaged))
+                if (isPlainObject(salvaged)) {
+                    partialMessage = messages.length;
                     messages.push(salvaged);
+                }
                 open = true;
                 continue;
             }
@@ -3993,6 +3996,7 @@ function recoverArguments(text) {
     return {
         ...(title === undefined ? {} : { title }),
         messages,
+        ...(partialMessage === undefined ? {} : { partialMessage }),
         open,
         invalid: false,
         closed: scan.complete && !open,
@@ -4012,16 +4016,14 @@ __registry["./shared/stream.js"] = function(module, exports, require) {
  * The finished-call path is strict — `validateToolArguments` decides, and a
  * single violation turns the whole card into a readable error. That is right for
  * settled data and useless for data still arriving, so this module is the
- * deliberately different sibling used *only* while a call is being prepared. It
- * still refuses everything the settled path refuses; it only relaxes the parts
- * that *cannot* be decided yet:
+ * sibling used only while a call is being prepared:
  *
  * - Graph completeness is not required: a component whose children have not been
  *   written renders a placeholder. That is expected in a stream, not a defect.
  * - Everything decidable for a *closed* component is decided — shape, catalog and
  *   every property, plus the aliases the official examples use — through the same
  *   validator functions the settled path calls. A component that is complete but
- *   illegal is dropped, so a preview can never draw what the real result rejects.
+ *   illegal is dropped.
  * - A surface without its `root`, or whose root was dropped, is not drawn at all.
  * - The render budget is applied per surface *and* per call, in the same units and
  *   against the same `LIMITS` the settled path uses, before any element exists.
@@ -4037,7 +4039,7 @@ const { recoverArguments } = require("./shared/partial-json.js");
 const { applyMessageBatch, checkComponentAlone } = require("./shared/validate.js");
 const EMPTY = { surfaces: [], components: 0, streaming: false, stopped: false, truncated: false };
 function usableId(value) {
-    return typeof value === 'string' && value !== '' && value.length <= LIMITS.maxIdLength;
+    return typeof value === 'string' && value.length <= LIMITS.maxIdLength && /^[A-Za-z0-9._:-]+$/u.test(value);
 }
 /**
  * Keep the components that are complete *and* legal on their own.
@@ -4047,15 +4049,14 @@ function usableId(value) {
  */
 function sanitiseComponents(value, catalogId) {
     if (!Array.isArray(value))
-        return { components: [], root: false, dropped: true, overLimit: false };
+        return { components: [], dropped: value !== undefined, overLimit: false };
     if (value.length > LIMITS.maxComponentsPerMessage) {
         // The settled path rejects the whole call at this point, so drawing a
         // truncated version would show something that can never be real.
-        return { components: [], root: false, dropped: true, overLimit: true };
+        return { components: [], dropped: true, overLimit: true };
     }
     const components = [];
     const seen = new Set();
-    let root = false;
     let dropped = false;
     for (const entry of value) {
         const checked = checkComponentAlone(entry, catalogId);
@@ -4067,28 +4068,34 @@ function sanitiseComponents(value, catalogId) {
             continue;
         }
         seen.add(component.id);
-        if (component.id === 'root')
-            root = true;
         components.push(component);
     }
-    return { components, root, dropped, overLimit: false };
+    return { components, dropped, overLimit: false };
 }
 /**
  * Shape-check one recovered message against the catalog its surface declares.
  *
  * @param value the recovered message.
  * @param catalogs catalog ids learned earlier in this same fold, by surface id.
+ * @param partial whether more properties can still arrive in this message.
  */
-function sanitiseMessage(value, catalogs) {
-    const skip = { root: false, dropped: true };
+function sanitiseMessage(value, catalogs, partial) {
+    const skip = { dropped: true };
     if (!isPlainObject(value))
+        return skip;
+    // A version written last is still unknown while this message is open. A
+    // complete, explicit version must match, even if the message is still open.
+    if (value.version !== PROTOCOL_VERSION && (!partial || Object.hasOwn(value, 'version')))
+        return skip;
+    if (Object.keys(value).filter((key) => key !== 'version').length !== 1)
         return skip;
     const create = value.createSurface;
     if (isPlainObject(create)) {
-        if (!usableId(create.surfaceId))
+        if (!usableId(create.surfaceId) || catalogs.has(create.surfaceId))
             return skip;
-        const declared = typeof create.catalogId === 'string' && create.catalogId !== '' ? create.catalogId : undefined;
-        const catalogId = resolveCatalogId(declared, undefined);
+        if (create.catalogId !== undefined && typeof create.catalogId !== 'string')
+            return skip;
+        const catalogId = resolveCatalogId(typeof create.catalogId === 'string' ? create.catalogId : undefined, undefined);
         if (catalogId === undefined)
             return skip;
         const components = sanitiseComponents(create.components, catalogId);
@@ -4105,7 +4112,6 @@ function sanitiseMessage(value, catalogs) {
                     components: components.components,
                 },
             },
-            root: components.root,
             dropped: components.dropped,
         };
     }
@@ -4113,10 +4119,7 @@ function sanitiseMessage(value, catalogs) {
     if (isPlainObject(update)) {
         if (!usableId(update.surfaceId))
             return skip;
-        // An update inherits the catalog of the surface it addresses; without a
-        // create in this fold the default catalog is the only assumption available,
-        // and it is the one the settled path starts from too.
-        const catalogId = catalogs.get(update.surfaceId) ?? resolveCatalogId(undefined, undefined);
+        const catalogId = catalogs.get(update.surfaceId);
         if (catalogId === undefined)
             return skip;
         const components = sanitiseComponents(update.components, catalogId);
@@ -4124,13 +4127,12 @@ function sanitiseMessage(value, catalogs) {
             return skip;
         return {
             message: { version: PROTOCOL_VERSION, updateComponents: { surfaceId: update.surfaceId, components: components.components } },
-            root: false,
             dropped: components.dropped,
         };
     }
     const data = value.updateDataModel;
     if (isPlainObject(data)) {
-        if (!usableId(data.surfaceId))
+        if (!usableId(data.surfaceId) || !catalogs.has(data.surfaceId))
             return skip;
         if (!Object.prototype.hasOwnProperty.call(data, 'value'))
             return skip;
@@ -4142,7 +4144,6 @@ function sanitiseMessage(value, catalogs) {
                 version: PROTOCOL_VERSION,
                 updateDataModel: { surfaceId: data.surfaceId, ...(typeof path === 'string' ? { path } : {}), value: data.value },
             },
-            root: false,
             dropped: false,
         };
     }
@@ -4150,7 +4151,7 @@ function sanitiseMessage(value, catalogs) {
     if (isPlainObject(drop)) {
         if (!usableId(drop.surfaceId))
             return skip;
-        return { message: { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } }, root: false, dropped: false };
+        return { message: { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } }, dropped: false };
     }
     return skip;
 }
@@ -4167,8 +4168,8 @@ function foldStreaming(text) {
     let truncated = recovered.messages.length > LIMITS.maxMessages;
     const catalogs = new Map();
     const messages = [];
-    for (const value of recovered.messages.slice(0, LIMITS.maxMessages)) {
-        const sanitised = sanitiseMessage(value, catalogs);
+    for (const [index, value] of recovered.messages.slice(0, LIMITS.maxMessages).entries()) {
+        const sanitised = sanitiseMessage(value, catalogs, index === recovered.partialMessage);
         if (sanitised.dropped)
             truncated = true;
         const message = sanitised.message;
@@ -4181,11 +4182,9 @@ function foldStreaming(text) {
             // checked against the catalog its surface actually declares.
             if (catalogId !== undefined)
                 catalogs.set(surfaceId, catalogId);
-            if (!sanitised.root) {
-                // Declared without a usable root: nothing to draw *yet*. Skip the create
-                // so the fold cannot promote an unrelated later update into a card.
-                continue;
-            }
+        }
+        else if ('deleteSurface' in message) {
+            catalogs.delete(message.deleteSurface.surfaceId);
         }
         messages.push(message);
     }
@@ -4198,7 +4197,7 @@ function foldStreaming(text) {
     let dataUnits = 0;
     let created = 0;
     for (const touch of folded.touches) {
-        if (touch.deleted)
+        if (touch.deleted || !touch.created)
             continue;
         const state = folded.surfaces.get(touch.surfaceId);
         if (state === undefined)
@@ -4213,12 +4212,10 @@ function foldStreaming(text) {
             truncated = true;
             continue;
         }
-        if (touch.created) {
-            created += 1;
-            if (created > LIMITS.maxSurfacesPerCall) {
-                truncated = true;
-                continue;
-            }
+        created += 1;
+        if (created > LIMITS.maxSurfacesPerCall) {
+            truncated = true;
+            continue;
         }
         const estimate = estimateExpansion(state);
         if (estimate.reason !== undefined) {
@@ -4251,304 +4248,165 @@ exports["foldStreaming"] = foldStreaming;
 };
 __registry["./client/stream-store.js"] = function(module, exports, require) {
 /**
- * Live tool-argument observation.
- *
- * The browser's `tool.call.toolview` receives a `PreparingToolCall`, whose
- * documented argument reader (`PartialArguments`) exposes *top-level* fields
- * only: a nested `messages` array cannot be read until it closes, so a preparing
- * view has no characters to render. The raw fragments do exist, however, in the
- * `assistant/live-chunk` stream — and a Conversation Context is the supported way
- * for a plugin to see an event: registering a Definition with **no view target**
- * keeps the state machine (and therefore nothing) out of the transcript.
- *
- * Three rules keep this honest:
- *
- * 1. The Definition's own state is the source of truth. It is recomputed from
- *    scratch on every context replay, and the cache is a *replacement* of that
- *    state, never an append to a separate global log — so replaying the same
- *    events twice yields the same prefix instead of a duplicated one.
- * 2. Only calls the host named `a2ui` are collected. A delta that carries no
- *    name is appended only to a call that is already tracked; an unattributed
- *    fragment is never buffered, because it may belong to any tool.
- * 3. The cache is bounded twice (per call, and in total), and an entry is
- *    released as soon as the host settles the call (`tool/call` means the
- *    arguments are complete and `argsRaw` takes over).
+ * The Session event window is the authority for live tool arguments. A
+ * preparing card borrows that window without retaining or opening a Session.
+ * The window reports withdrawals too, even when there is no tool result.
  */
 const { isPlainObject } = require("./shared/json.js");
-/** Wire name of the tool whose arguments can be previewed. */
-const STREAM_TOOL_NAME = 'a2ui';
-/** Longest argument text kept for one call. */
 const MAX_STREAM_CHARS = 256 * 1024;
-/** Longest argument text kept across every call in one browser session. */
 const MAX_STREAM_TOTAL_CHARS = 1024 * 1024;
-/** Most calls kept at once; the oldest entry is evicted beyond this. */
 const MAX_STREAM_ENTRIES = 32;
-/** How long an untouched entry survives, so a lost `tool/call` still expires. */
-const MAX_STREAM_AGE_MS = 120_000;
+// Reader identity includes the event source of the exact Session binding and
+// the call. A subscriber in another Session cannot read or overwrite it.
 const cache = new Map();
-const listeners = new Set();
+const changed = new Set();
+let totalChars = 0;
 let pendingNotify = false;
-let timer;
-let clock = () => Date.now();
-/** Replace the clock (tests only). */
-function setStreamClock(now) {
-    clock = now;
-}
-function notifyNow() {
+function notifyReaders() {
     pendingNotify = false;
-    for (const listener of [...listeners]) {
-        try {
-            listener();
-        }
-        catch {
-            // A broken listener must not stop the others, and this runs inside the
-            // conversation engine's publication loop.
-        }
-    }
+    const readers = [...changed];
+    changed.clear();
+    for (const reader of readers)
+        reader.notify();
 }
-/** Coalesce notifications to one per animation frame. */
 function scheduleNotify() {
-    if (pendingNotify)
+    if (pendingNotify || changed.size === 0)
         return;
     pendingNotify = true;
-    if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(notifyNow);
+    if (typeof requestAnimationFrame === 'function')
+        requestAnimationFrame(notifyReaders);
+    else if (typeof setTimeout === 'function')
+        setTimeout(notifyReaders, 16);
+    else
+        notifyReaders();
+}
+/** Release a copy of the arguments on eviction and unmount alike. */
+function remove(reader) {
+    const previous = cache.get(reader);
+    if (previous === undefined)
         return;
-    }
-    if (typeof setTimeout === 'function') {
-        timer = setTimeout(notifyNow, 16);
+    cache.delete(reader);
+    totalChars -= previous.text.length;
+}
+function publish(reader, next) {
+    const previous = cache.get(reader);
+    if (next === previous)
         return;
+    remove(reader);
+    if (next !== undefined) {
+        cache.set(reader, next);
+        totalChars += next.text.length;
     }
-    // A host without a scheduler (a static render harness): publish at once.
-    notifyNow();
-}
-/** Run pending notifications now (used by tests and by the operator). */
-function flushStreamNotifications() {
-    if (timer !== undefined && typeof clearTimeout === 'function') {
-        clearTimeout(timer);
-        timer = undefined;
+    if (next?.text !== previous?.text)
+        changed.add(reader);
+    while (cache.size > MAX_STREAM_ENTRIES || totalChars > MAX_STREAM_TOTAL_CHARS) {
+        const oldest = cache.keys().next().value;
+        remove(oldest);
+        changed.add(oldest);
     }
-    if (pendingNotify)
-        notifyNow();
-}
-/** Subscribe to any call's streamed text changing. */
-function subscribeStream(listener) {
-    listeners.add(listener);
-    return () => {
-        listeners.delete(listener);
-    };
-}
-/** Argument text received so far for one call. */
-function streamTextFor(callId) {
-    if (callId === undefined || callId === '')
-        return undefined;
-    return cache.get(callId)?.text;
-}
-/** Whether the kept text was cut off at {@link MAX_STREAM_CHARS}. */
-function streamTruncatedFor(callId) {
-    if (callId === undefined || callId === '')
-        return false;
-    return cache.get(callId)?.truncated === true;
-}
-function totalChars() {
-    let total = 0;
-    for (const entry of cache.values())
-        total += entry.text.length;
-    return total;
-}
-/** Drop entries that are over the age bound, then the oldest until within size. */
-function trim(now, keep) {
-    for (const [callId, entry] of cache) {
-        if (now - entry.updatedAt > MAX_STREAM_AGE_MS)
-            cache.delete(callId);
-    }
-    while (cache.size > MAX_STREAM_ENTRIES || totalChars() > MAX_STREAM_TOTAL_CHARS) {
-        let oldestId;
-        let oldestAt = Number.POSITIVE_INFINITY;
-        for (const [callId, entry] of cache) {
-            if (callId === keep)
-                continue;
-            if (entry.updatedAt < oldestAt) {
-                oldestAt = entry.updatedAt;
-                oldestId = callId;
-            }
-        }
-        if (oldestId === undefined)
-            break;
-        cache.delete(oldestId);
-    }
-}
-/**
- * Write one call's text, keeping the cache bounded.
- *
- * A call that is itself larger than the whole-call allowance is dropped rather
- * than allowed to evict every other call: the preview degrades to the skeleton
- * for that one card, which is exactly what a browser without this feature shows.
- */
-function publish(callId, text, truncated = false) {
-    const now = clock();
-    const previous = cache.get(callId);
-    if (text === undefined) {
-        if (previous === undefined)
-            return;
-        cache.delete(callId);
-        scheduleNotify();
-        return;
-    }
-    cache.set(callId, { text, updatedAt: now, truncated });
-    trim(now, callId);
-    if (!cache.has(callId)) {
-        // Over the total bound on its own.
-        if (previous !== undefined)
-            scheduleNotify();
-        return;
-    }
-    if (previous?.text !== text || previous.truncated !== truncated)
-        scheduleNotify();
-}
-/** Test hook: append fragments directly, bypassing the Definition. */
-function appendStreamedArguments(callId, delta) {
-    if (callId === '' || delta === '')
-        return;
-    const previous = cache.get(callId);
-    const room = MAX_STREAM_CHARS - (previous?.text.length ?? 0);
-    if (previous?.truncated === true || room <= 0) {
-        if (previous !== undefined)
-            previous.updatedAt = clock();
-        return;
-    }
-    const text = (previous?.text ?? '') + (delta.length <= room ? delta : delta.slice(0, room));
-    publish(callId, text, (previous?.truncated ?? false) || delta.length > room);
-}
-/** Forget one call's text (a settled call has its own `argsRaw`). */
-function dropStreamedArguments(callId) {
-    publish(callId, undefined);
-}
-/** Reset the whole cache (plugin unload, profile switch, tests). */
-function resetStreams() {
-    if (cache.size === 0)
-        return;
-    cache.clear();
     scheduleNotify();
 }
-const EMPTY_STATE = { callId: '', tracked: false, text: '', truncated: false };
-function idOf(value) {
-    return typeof value === 'string' && value !== '' ? value : '';
-}
-/** The call a settle event refers to, if the event carries one. */
-function settledCallId(event) {
-    // `tool/call` names its tool, so a foreign call is not even given a context.
-    if (event.type === 'tool/call')
-        return event.data?.name === STREAM_TOOL_NAME ? idOf(event.data?.callId) : '';
-    if (event.type === 'tool/result') {
-        // A result carries no tool name; the release is a keyed delete, so matching
-        // every result is harmless and covers a call whose `tool/call` fell outside
-        // the loaded window.
-        const message = event.data?.message;
-        if (!isPlainObject(message))
-            return '';
-        const source = message.source;
-        return isPlainObject(source) ? idOf(source.callId) : '';
+function foldEntries(entries, callId, previous) {
+    let current = previous;
+    for (const { type, event } of entries) {
+        if (event.seq <= (current?.seq ?? -Infinity))
+            continue;
+        const data = event.data;
+        if (type === 'event') {
+            if (current === undefined)
+                continue;
+            if (event.type === 'tool/call' && data.callId === callId)
+                current = undefined;
+            const message = data.message;
+            if (event.type === 'tool/result' && isPlainObject(message) && isPlainObject(message.source) && message.source.callId === callId) {
+                current = undefined;
+            }
+            continue;
+        }
+        if (event.type !== 'assistant/live-chunk' || typeof data.attemptId !== 'string')
+            continue;
+        const chunk = data.chunk;
+        if (!isPlainObject(chunk) || chunk.type !== 'tool-call-delta' || chunk.id !== callId)
+            continue;
+        const previous = current;
+        const matchingAttempt = previous !== undefined && previous.attemptId === data.attemptId;
+        if (typeof chunk.name === 'string' && chunk.name !== '') {
+            if (chunk.name !== 'a2ui') {
+                if (matchingAttempt)
+                    current = undefined;
+                continue;
+            }
+        }
+        else if (!matchingAttempt) {
+            // An unnamed delta belongs only to an already identified attempt.
+            continue;
+        }
+        const prefix = matchingAttempt ? previous.text : '';
+        const delta = typeof chunk.argumentsDelta === 'string' ? chunk.argumentsDelta : '';
+        current = {
+            attemptId: data.attemptId,
+            seq: event.seq,
+            text: prefix + delta.slice(0, MAX_STREAM_CHARS - prefix.length),
+        };
     }
-    return '';
+    return current;
 }
-function deltaOf(event) {
-    if (event.type !== 'assistant/live-chunk')
-        return undefined;
-    const chunk = event.data?.chunk;
-    if (!isPlainObject(chunk))
-        return undefined;
-    if (chunk.type !== 'tool-call-delta')
-        return undefined;
-    const callId = idOf(chunk.id);
-    if (callId === '')
-        return undefined;
-    const text = typeof chunk.argumentsDelta === 'string' ? chunk.argumentsDelta : '';
-    return typeof chunk.name === 'string' && chunk.name !== '' ? { callId, name: chunk.name, text } : { callId, text };
-}
-/**
- * Fold one event into the Definition state.
- *
- * The state owns the text; the cache mirrors it. Replaying the same context from
- * its earliest match therefore *replaces* the text instead of appending to it
- * again.
- */
-function advance(previous, match) {
-    const base = previous ?? EMPTY_STATE;
-    const settled = settledCallId(match.event);
-    if (settled !== '') {
-        // The host has the complete arguments: `argsRaw` renders from here on.
-        publish(settled, undefined);
-        return base.callId === settled ? EMPTY_STATE : base;
-    }
-    const delta = deltaOf(match.event);
-    if (delta === undefined)
-        return base;
-    const sameCall = base.callId === delta.callId;
-    const tracked = delta.name === undefined ? sameCall && base.tracked : delta.name === STREAM_TOOL_NAME;
-    if (!tracked) {
-        // Unidentified or foreign: keep the decision so later unnamed fragments stay
-        // out of the preview instead of being attributed by guesswork.
-        return { callId: delta.callId, tracked: false, text: '', truncated: false };
-    }
-    const room = MAX_STREAM_CHARS - (sameCall ? base.text.length : 0);
-    const truncated = sameCall ? base.truncated : false;
-    if (room <= 0 || truncated) {
-        publish(delta.callId, sameCall ? base.text : '', true);
-        return { callId: delta.callId, tracked: true, text: sameCall ? base.text : '', truncated: true };
-    }
-    const text = (sameCall ? base.text : '') + (delta.text.length <= room ? delta.text : delta.text.slice(0, room));
-    const overflow = delta.text.length > room;
-    publish(delta.callId, text, overflow);
-    return { callId: delta.callId, tracked: true, text, truncated: overflow };
-}
-/**
- * Create the Definition that mirrors streaming arguments into the cache.
- *
- * `kind` is unique per installation and the Definition declares no view target,
- * so the engine runs it without materialising a Node: the transcript is
- * untouched whatever this observes.
- */
-function createStreamDefinition() {
+/** Follow one preparing call while its card is mounted. */
+function watchStream(source, callId) {
+    const listeners = new Set();
+    const reader = {
+        notify() {
+            for (const listener of listeners)
+                listener();
+        },
+    };
+    let revision;
+    let unsubscribe;
+    const accept = () => {
+        const window = source.getSnapshot();
+        if (window.revision === revision)
+            return;
+        const previousRevision = revision;
+        revision = window.revision;
+        const current = cache.get(reader);
+        const { change } = window;
+        if (previousRevision === undefined || window.revision !== previousRevision + 1 || change.kind === 'replace' || change.kind === 'prepend') {
+            publish(reader, foldEntries(window.entries, callId));
+        }
+        else if (change.kind === 'append') {
+            publish(reader, foldEntries(change.entries, callId, current));
+        }
+        else if (change.kind === 'settle-assistant' && change.attemptId === current?.attemptId) {
+            publish(reader, undefined);
+        }
+    };
     return {
-        kind: 'a2ui-stream',
-        match(event) {
-            if (!isPlainObject(event))
-                return null;
-            const delta = deltaOf(event);
-            if (delta !== undefined)
-                return { id: delta.callId, role: 'start' };
-            const settled = settledCallId(event);
-            return settled === '' ? null : { id: settled, role: 'update' };
-        },
-        start(_context, match) {
-            return advance(undefined, match);
-        },
-        update(context, match) {
-            return advance(context.state, match);
-        },
-        // Live chunks already publish on the animation-frame cadence; asking for the
-        // same cadence rides that flush instead of forcing a chat publication.
-        publication() {
-            return 'animation-frame';
+        getSnapshot: () => cache.get(reader)?.text,
+        getServerSnapshot: () => foldEntries(source.getSnapshot().entries, callId)?.text,
+        subscribe(listener) {
+            listeners.add(listener);
+            if (unsubscribe === undefined) {
+                unsubscribe = source.subscribe(accept);
+                accept();
+            }
+            return () => {
+                listeners.delete(listener);
+                if (listeners.size !== 0)
+                    return;
+                unsubscribe?.();
+                unsubscribe = undefined;
+                revision = undefined;
+                changed.delete(reader);
+                remove(reader);
+            };
         },
     };
 }
 
-exports["STREAM_TOOL_NAME"] = STREAM_TOOL_NAME;
 exports["MAX_STREAM_CHARS"] = MAX_STREAM_CHARS;
 exports["MAX_STREAM_TOTAL_CHARS"] = MAX_STREAM_TOTAL_CHARS;
 exports["MAX_STREAM_ENTRIES"] = MAX_STREAM_ENTRIES;
-exports["MAX_STREAM_AGE_MS"] = MAX_STREAM_AGE_MS;
-exports["setStreamClock"] = setStreamClock;
-exports["flushStreamNotifications"] = flushStreamNotifications;
-exports["subscribeStream"] = subscribeStream;
-exports["streamTextFor"] = streamTextFor;
-exports["streamTruncatedFor"] = streamTruncatedFor;
-exports["appendStreamedArguments"] = appendStreamedArguments;
-exports["dropStreamedArguments"] = dropStreamedArguments;
-exports["resetStreams"] = resetStreams;
-exports["createStreamDefinition"] = createStreamDefinition;
+exports["watchStream"] = watchStream;
 };
 __registry["./shared/url.js"] = function(module, exports, require) {
 /**
@@ -7221,7 +7079,7 @@ const { interactionFor, modelFor, setInteractionState, stateKey, storeVersion, s
 const { FUNCTIONS } = require("./shared/functions.js");
 const { estimateExpansion } = require("./shared/budget.js");
 const { foldStreaming } = require("./shared/stream.js");
-const { dropStreamedArguments, subscribeStream, streamTextFor } = require("./client/stream-store.js");
+const { watchStream } = require("./client/stream-store.js");
 const { A2UISurface } = require("./client/surface.js");
 const { useClaimCopy, useCopyClaimed } = require("./client/claims-react.js");
 const { resolveValue } = require("./shared/binding.js");
@@ -7326,18 +7184,14 @@ function formatViolations(errors) {
         .map((error) => `${error.path === '' ? 'arguments' : error.path}: ${error.message}`)
         .join('\n');
 }
-/**
- * Read the argument characters a preparing call has already streamed.
- *
- * Subscribed only while the call is being prepared, so a settled card costs
- * nothing. The snapshot is a plain string, which keeps
- * `useSyncExternalStore` from re-rendering on equal text.
- */
-function useStreamedArguments(callId) {
-    const read = React.useCallback(() => (callId === undefined ? undefined : streamTextFor(callId)), [callId]);
-    // The same read serves server rendering: the tool view is only ever mounted in
-    // a browser, but a static harness must see exactly what the browser would.
-    return React.useSyncExternalStore(subscribeStream, read, read);
+const emptyStream = {
+    subscribe: () => () => { },
+    getSnapshot: () => undefined,
+    getServerSnapshot: () => undefined,
+};
+function useStreamedArguments(source, callId) {
+    const stream = React.useMemo(() => source === undefined ? emptyStream : watchStream(source, callId), [source, callId]);
+    return React.useSyncExternalStore(stream.subscribe, stream.getSnapshot, stream.getServerSnapshot);
 }
 /** Placeholder body shown until the first component (and its root) arrives. */
 function Skeleton() {
@@ -7429,15 +7283,9 @@ function A2UIToolView(props) {
     // While the call is being prepared the arguments arrive as raw fragments, so
     // the card is drawn from what has already closed (see `shared/stream.ts`).
     const preparing = props.phase === 'preparing';
-    const streamedText = useStreamedArguments(preparing ? props.callId : undefined);
+    const source = preparing && sessionId !== undefined ? runtime.streamSource?.(sessionId) : undefined;
+    const streamedText = useStreamedArguments(source, props.callId);
     const streamed = React.useMemo(() => (streamedText === undefined || streamedText === '' ? undefined : foldStreaming(streamedText)), [streamedText]);
-    // Once the call settles its own `argsRaw` is authoritative, so the fragment
-    // copy is released immediately instead of waiting for the age bound.
-    React.useEffect(() => {
-        if (preparing)
-            return;
-        dropStreamedArguments(props.callId);
-    }, [preparing, props.callId]);
     // The tail copy claims the call; the row copy steps aside only while that
     // claim is held, and automatically restores the card when the tail unmounts.
     const claimedElsewhere = useCopyClaimed(sessionId, props.callId);
@@ -7843,15 +7691,6 @@ const { DICTS, NS, en } = require("./client/locale.js");
 const { CSS } = require("./client/styles.js");
 const { A2UIToolView } = require("./client/tool-view.js");
 const { A2uiTurnTail } = require("./client/turn-tail.js");
-const { createStreamDefinition, resetStreams } = require("./client/stream-store.js");
-/**
- * Test hooks: the live-argument store the preparing card reads.
- *
- * The render harness loads this bundle exactly as the browser does, so priming
- * the store is the only way to render the progressive path against the shipped
- * artifact instead of a re-implementation of it.
- */
-{ const __reexport = require("./client/stream-store.js"); exports["__appendStreamedArguments"] = __reexport["appendStreamedArguments"]; exports["__flushStreamNotifications"] = __reexport["flushStreamNotifications"]; exports["__resetStreams"] = __reexport["resetStreams"]; exports["__streamTextFor"] = __reexport["streamTextFor"]; }
 /** Services this plugin needs before it can register anything. */
 const inject = ['slots', 'locale', 'sessions'];
 /** Stable style element id, also used to avoid double injection on reload. */
@@ -7908,46 +7747,6 @@ function makeSendPrompt(ctx) {
 function apply(ctx) {
     ctx.effect(installStyles, 'dsh-a2ui: styles');
     ctx.effect(() => ctx.locale.register(NS, DICTS), 'dsh-a2ui: locale');
-    // Streaming: observe the raw argument fragments of a call that is still being
-    // written, so the card can grow instead of waiting for the finished payload.
-    // The observer is a state-only Conversation Definition (no view target), which
-    // is the supported way to watch an event without touching the transcript.
-    ctx.effect(() => {
-        if (typeof ctx.inject !== 'function')
-            return () => resetStreams();
-        const fiber = ctx.inject(['uiConversation'], (scoped) => {
-            scoped.effect(() => {
-                // The registry is a class instance: its `register` is a method that reads
-                // `this`, so it must be called *on* the events object. Taking the method
-                // out of it first would throw and silently disable the preview.
-                const events = scoped.uiConversation?.events;
-                if (events === undefined || typeof events.register !== 'function')
-                    return undefined;
-                let dispose;
-                try {
-                    const registered = events.register(createStreamDefinition());
-                    dispose = typeof registered === 'function' ? registered : undefined;
-                }
-                catch (cause) {
-                    // Losing the observer costs the progressive preview, never the card.
-                    ctx.logger?.warn?.('dsh-a2ui: streaming observer unavailable', cause);
-                    return undefined;
-                }
-                // The live-argument cache belongs to this registration: unloading the
-                // observer releases it, and a re-mount starts from an empty cache.
-                return () => {
-                    if (dispose !== undefined)
-                        dispose();
-                    resetStreams();
-                };
-            }, 'dsh-a2ui: stream observer');
-        });
-        return () => {
-            if (typeof fiber?.dispose === 'function')
-                void fiber.dispose();
-            resetStreams();
-        };
-    }, 'dsh-a2ui: stream observer');
     const bound = ctx.locale.bind(NS);
     const t = (key) => {
         const value = bound(key);
@@ -7959,6 +7758,7 @@ function apply(ctx) {
         t,
         locale: () => toBcp47(ctx.locale.getLocale()?.id),
         sendPrompt: makeSendPrompt(ctx),
+        streamSource: (sessionId) => ctx.sessions.binding?.(sessionId)?.eventSource,
     };
     ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'a2ui', locale: NS }, (props) => h(A2UIToolView, { ...props, runtime, mode: 'row' }))), 'dsh-a2ui: tool view');
     // The turn tail is the card's visible home: it renders after the turn's answer,

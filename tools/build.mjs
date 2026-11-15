@@ -339,7 +339,7 @@ async function buildSharedForTests(outputs) {
   ]
   for (const [id, source] of modules) chunks.push(`__registry[${JSON.stringify(id)}] = function(module, exports, require) {\n${source}\n};`)
   chunks.push(`export const shared = __load("./shared/index.js");`)
-  chunks.push(`export const client = Object.fromEntries(["action", "charts", "claims", "datetime", "index", "stream-store", "surface", "surfaces", "tool-view"].map(name => [name, __load("./client/" + name + ".js")]));`)
+  chunks.push(`export const client = Object.fromEntries(["action", "charts", "claims", "datetime", "stream-store", "surfaces"].map(name => [name, __load("./client/" + name + ".js")]));`)
   await writeFile(target, `${chunks.join('\n')}\n`, 'utf8')
 }
 

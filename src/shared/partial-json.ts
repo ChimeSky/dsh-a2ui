@@ -217,6 +217,8 @@ export interface RecoveredArguments {
    * one still being written when its own complete content is usable.
    */
   messages: unknown[]
+  /** Index of the salvaged message whose object has yet to close. */
+  partialMessage?: number
   /** Whether any message (or the argument object itself) is still open. */
   open: boolean
   /** The prefix is not the JSON object this protocol expects. */
@@ -247,6 +249,7 @@ export function recoverArguments(text: string): RecoveredArguments {
   }
   const title = typeof scan.value.title === 'string' ? scan.value.title : undefined
   const messages: unknown[] = []
+  let partialMessage: number | undefined
   let open = !scan.complete
   const raw = scan.value.messages
   if (Array.isArray(raw)) {
@@ -255,7 +258,10 @@ export function recoverArguments(text: string): RecoveredArguments {
         // The message being written: keep whatever it already closed inside it
         // (its components), so the partial surface can be drawn.
         const salvaged = stripIncomplete(message.value)
-        if (isPlainObject(salvaged)) messages.push(salvaged)
+        if (isPlainObject(salvaged)) {
+          partialMessage = messages.length
+          messages.push(salvaged)
+        }
         open = true
         continue
       }
@@ -266,6 +272,7 @@ export function recoverArguments(text: string): RecoveredArguments {
   return {
     ...(title === undefined ? {} : { title }),
     messages,
+    ...(partialMessage === undefined ? {} : { partialMessage }),
     open,
     invalid: false,
     closed: scan.complete && !open,

@@ -103,22 +103,21 @@ Cost: the guidance is ~2.8 KB (~700 tokens) of always-on prompt; the component r
 
 The model writes A2UI arguments as fragments, so during the `preparing` stage there is no complete JSON to parse. Earlier versions showed a skeleton and only painted the card once the arguments were finished. Since v0.3.0 the card grows while it is being generated:
 
-1. **Observe the raw fragments out of band.** The plugin registers a Conversation Definition with **no view target** (`kind: a2ui-stream`) that copies the `tool-call-delta` text of `assistant/live-chunk` events. Without a `target` it materialises no node, so the transcript and history replay are untouched. Registration goes through the registry *method* (`events.register(...)`), and the disposer it returns is released together with the cache when the plugin unloads.
+1. **Read each Session's event window.** A preparing card subscribes to the already-open Session binding and reads its own `tool-call-delta` fragments. Each Session has its own event window, so two calls with the same ID in different Sessions stay separate.
 2. **Collect only calls the host names `a2ui`.** The first fragment of a call carries its tool name: anything else is ignored outright, and a **name-less fragment is only appended to a call that is already identified**, so another tool's arguments (a `shell` command line, say) never enter the cache.
 3. **Recover only what closed.** The recovery scanner (`src/shared/partial-json.ts`) walks the prefix and returns only values whose own slice `JSON.parse` accepts: finished messages, finished components. A half-written component is dropped, so the preview never shows half a component or invents data.
-4. **Fold with the same semantics.** Closed messages go through the *same* `applyMessageBatch` the settled snapshot uses, so create → update → dataModel composition is identical and surfaces never jump when the call settles.
-5. **A closed component is still validated like the settled path validates it.** Each component is checked on its own for type, catalog, every property and the official aliases (the validator's own functions, via `checkComponentAlone`). A component that is complete but illegal is dropped, and an illegal root or an unsafe snapshot falls back to the skeleton: the preview never draws what the real result would reject. A *legal* component whose children have not arrived still gets placeholders.
+4. **Keep the Surface and its data until the root arrives.** The preview and settled result share `applyMessageBatch`. A `createSurface` can be followed by data and component updates. The preview draws the accumulated data as soon as the root is ready. Messages with an explicit unsupported version are skipped.
+5. **Validate closed components.** The preview uses the settled validator's component type, catalog, property and alias checks. It skips invalid components and shows the skeleton when the remaining Surface cannot be drawn.
 6. **Absence is a placeholder.** A child that is referenced but has not arrived renders as a skeleton, never as a "missing child" error: unfinished is not a defect.
-7. **The preview body is `inert`.** Tab, Enter, Space and the mouse cannot reach a preview control, and submits/writes are stubs; the settled card restores the normal focus and interaction behaviour once the payload passes Host validation.
-8. **Switch to the authoritative snapshot and release.** The validated snapshot replaces the preview as soon as the arguments are complete. The cache is derived from the Definition's own state — **a replay replaces the prefix instead of appending to it** — and is released when the call settles (`tool/call` / `tool/result`), when the plugin unloads, on age, or on size.
+7. **The preview body is `inert`.** Keyboard, pointer, submit and write interactions are disabled while the card is preparing. The normal card restores its usual focus and interaction behavior.
+8. **Release withdrawn fragments.** A window replacement recomputes the prefix. Settling or cancelling a call clears its prefix, and unmounting the card releases its subscription.
 
 Bounds and stop conditions:
 
 | Limit | Value / behaviour |
 |---|---|
-| Retained fragment text per call | 256 KiB (truncated beyond that; that card stops previewing) |
-| Cache entries / total characters | 32 / 1 MiB, oldest evicted first |
-| Retention after the last fragment | 120 s (pruned lazily on the next write, so a closed session needs no extra cleanup) |
+| Retained argument text per preview | 262,144 UTF-16 code units, truncated beyond that |
+| Cache entries / total size | 32 / 1,048,576 UTF-16 code units, oldest evicted first |
 | Characters scanned per frame | 512 KiB |
 | Recovered JSON nesting depth | 128 |
 | Components per message / per surface | 300 / 400 (an over-limit intermediate is not drawn; the settled result decides) |

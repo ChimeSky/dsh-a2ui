@@ -12,7 +12,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
-import { loadView, renderToHtml, visibleText, ROOT } from './lib/render-view.mjs'
+import { loadView, renderToHtml, sessionEvents, toolDelta, visibleText, ROOT } from './lib/render-view.mjs'
 
 const useRecorded = process.argv.includes('--session')
 
@@ -183,7 +183,8 @@ function recordedCall() {
 /* Run                                                                  */
 /* ------------------------------------------------------------------ */
 
-const { View, Tail, module: bundle } = loadView({ locale: 'en-US' })
+const feed = sessionEvents()
+const { View, Tail } = loadView({ locale: 'en-US', eventSource: () => feed })
 const failures = []
 let passed = 0
 
@@ -273,17 +274,12 @@ renderCase('official 00_incremental renders every row', View, { ...baseProps, ph
 
 renderCase('preparing shows a skeleton', View, { ...baseProps, phase: 'preparing', block: { phase: 'preparing', callId: 'call_p', name: 'a2ui', subCalls: [] } }, ['Building interface'])
 
-/* Progressive rendering: the card is drawn from the fragments that already
- * closed, against the shipped bundle, through the same store the observer
- * Definition fills at runtime. */
-const hooks = bundle
-
+/* Render preparing against the same Session binding used by the browser. */
 function primed(name, callId, text, expectations, forbidden) {
-  hooks.__resetStreams()
-  hooks.__appendStreamedArguments(callId, text)
-  hooks.__flushStreamNotifications()
+  const cut = Math.floor(text.length / 2)
+  feed.replace([toolDelta(1, callId, text.slice(0, cut), { name: 'a2ui' }), toolDelta(2, callId, text.slice(cut))])
   renderCase(name, View, { ...baseProps, callId, phase: 'preparing', block: { phase: 'preparing', callId, name: 'a2ui', subCalls: [] } }, expectations, forbidden)
-  hooks.__resetStreams()
+  feed.replace([])
 }
 
 const streamingPayload = JSON.stringify({
@@ -323,6 +319,10 @@ primed(
 )
 
 primed('preparing with no usable content keeps the skeleton', 'call_bare', '{"messages":[{"version":"1.0","crea', ['Building interface'], [])
+
+primed('preparing renders the official incremental rows', 'call_official_stream', JSON.stringify({ messages: officialIncremental() }).slice(0, -1), [
+  'generating', 'The Golden Fork', "Ocean's Bounty", 'Pizzeria Roma', 'Spice Route',
+])
 
 // The reviewer's bypass: a component that closed but is illegal on its own must
 // not be drawn by the preview (the settled path rejects the same payload).

@@ -1,28 +1,12 @@
-/**
- * Progressive rendering: recovering a partly streamed payload, folding it into
- * drawable surfaces, the client cache that carries the raw fragments, and the
- * observer registration that connects the two.
- *
- * The properties that matter and are asserted here:
- *
- * - recovery never invents data: only values whose own slice `JSON.parse`
- *   accepts are ever returned, and a half-written component is never rendered;
- * - a *closed* component is checked exactly like the settled path checks it, so
- *   a preview cannot draw something the real result would reject;
- * - the fold is monotonic while a payload streams in and is bounded per surface
- *   and per call, in the units the settled path uses;
- * - the cache is derived from the Definition's own state, so replaying the same
- *   events twice yields the same prefix instead of a duplicated one;
- * - only calls the host named `a2ui` are collected, and the registration goes
- *   through the registry *method* (the reviewer's `this` bug).
- */
+/** Progressive argument recovery, folding, and live Session window handling. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { sessionEvents, toolDelta } from '../tools/lib/render-view.mjs'
 
 const { shared, client } = await import('../build/shared.mjs')
 const { recoverArguments, foldStreaming, validateToolArguments, MAX_RECOVERY_DEPTH, LIMITS } = shared
-const store = client['stream-store']
-const plugin = client.index
+const { watchStream, MAX_STREAM_CHARS, MAX_STREAM_ENTRIES, MAX_STREAM_TOTAL_CHARS } = client['stream-store']
 
 /** A complete, valid single-surface call, as the model would write it. */
 const SURFACE = {
@@ -331,315 +315,162 @@ test('a surface with more components than the settled path allows is left out', 
   assert.equal(validateToolArguments(JSON.parse(JSON.stringify({ messages: [over('big')] }))).ok, false)
 })
 
-/* ------------------------------------------------------------------ */
-/* Cache and observer                                                  */
-/* ------------------------------------------------------------------ */
-
-function delta(callId, argumentsDelta, name) {
-  return { event: { type: 'assistant/live-chunk', data: { chunk: { type: 'tool-call-delta', id: callId, name, argumentsDelta } } } }
-}
-
-function settle(callId) {
-  return { event: { type: 'tool/call', data: { callId, name: 'a2ui' } } }
-}
-
-test('the cache keeps, bounds and releases fragments', () => {
-  store.resetStreams()
-  store.setStreamClock(() => 1_000)
-  let notifications = 0
-  const unsubscribe = store.subscribeStream(() => {
-    notifications += 1
-  })
-
-  store.appendStreamedArguments('call-1', '{"mess')
-  store.appendStreamedArguments('call-1', 'ages":[]}')
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-1'), '{"messages":[]}')
-  assert.equal(notifications, 1, 'appends coalesce into one notification')
-  assert.equal(store.streamTextFor('other'), undefined)
-
-  // Repeated identical text does not notify again.
-  store.appendStreamedArguments('call-1', '')
-  store.flushStreamNotifications()
-  assert.equal(notifications, 1)
-
-  store.appendStreamedArguments('call-2', 'x'.repeat(store.MAX_STREAM_CHARS + 10))
-  assert.equal(store.streamTextFor('call-2').length, store.MAX_STREAM_CHARS)
-  assert.equal(store.streamTruncatedFor('call-2'), true)
-
-  // Age prunes on the next write, so a long session cannot accumulate text.
-  store.setStreamClock(() => 1_000 + store.MAX_STREAM_AGE_MS + 1)
-  store.appendStreamedArguments('call-3', '{}')
-  assert.equal(store.streamTextFor('call-1'), undefined)
-  assert.equal(store.streamTextFor('call-3'), '{}')
-
-  store.dropStreamedArguments('call-3')
-  assert.equal(store.streamTextFor('call-3'), undefined)
-  store.resetStreams()
-  unsubscribe()
-  store.flushStreamNotifications()
-  store.setStreamClock(() => Date.now())
+test('official incremental messages prepare and update the model before the root arrives', () => {
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/examples/00_incremental.json', import.meta.url), 'utf8'))
+  const beforeRoot = foldStreaming(JSON.stringify({ messages: fixture.messages.slice(0, 2) }))
+  assert.deepEqual(beforeRoot.surfaces, [])
+  const args = JSON.stringify({ messages: fixture.messages })
+  const preview = foldStreaming(args.slice(0, -1))
+  const settled = validateToolArguments({ messages: fixture.messages })
+  assert.equal(settled.ok, true)
+  assert.equal(preview.surfaces.length, 1)
+  assert.deepEqual(preview.surfaces[0].dataModel, settled.states.get(preview.surfaces[0].surfaceId).dataModel)
 })
 
-test('the cache is bounded in entries and in total characters', () => {
-  store.resetStreams()
-  store.setStreamClock(() => 5_000)
-  for (let index = 0; index < store.MAX_STREAM_ENTRIES + 5; index += 1) {
-    store.appendStreamedArguments(`call-${index}`, `{"n":${index}}`)
+test('explicitly unsupported versions and closed messages without a version do not render', () => {
+  const { version, ...rest } = SURFACE
+  const backwards = { ...rest, version }
+  const valid = JSON.stringify({ messages: [backwards] })
+  const beforeVersion = valid.slice(0, valid.indexOf(',"version"'))
+  assert.equal(foldStreaming(beforeVersion).surfaces.length, 1, 'a version written last can still arrive')
+  const unsupported = valid.replace('"version":"1.0"', '"version":"0.8"')
+  for (const text of [unsupported, unsupported.slice(0, -3), JSON.stringify({ messages: [rest] })]) {
+    assert.equal(foldStreaming(text).surfaces.length, 0)
   }
-  assert.equal(store.streamTextFor('call-0'), undefined, 'the oldest entry is evicted')
-  assert.equal(store.streamTextFor(`call-${store.MAX_STREAM_ENTRIES + 4}`), `{"n":${store.MAX_STREAM_ENTRIES + 4}}`)
-
-  // The total allowance also holds: five calls at the per-call cap exceed it, so
-  // the oldest is dropped instead of the newest.
-  store.resetStreams()
-  const full = 'x'.repeat(store.MAX_STREAM_CHARS)
-  for (let index = 0; index < 5; index += 1) store.appendStreamedArguments(`big-${index}`, full)
-  assert.equal(store.streamTextFor('big-0'), undefined, 'the total allowance evicted the oldest')
-  assert.equal(store.streamTextFor('big-4').length, store.MAX_STREAM_CHARS)
-  store.resetStreams()
-  store.setStreamClock(() => Date.now())
 })
 
-test('replaying the same events cannot duplicate the prefix', () => {
-  store.resetStreams()
-  const definition = store.createStreamDefinition()
-  const replay = () => {
-    // Exactly what a window replacement does: start at the earliest match, then
-    // fold the rest as updates.
-    let state = definition.start(undefined, delta('call-r', '{"mes', 'a2ui'))
-    state = definition.update({ state }, delta('call-r', 'sages":[{'))
-    store.flushStreamNotifications()
-    return state
-  }
-  const first = replay()
-  const text = store.streamTextFor('call-r')
-  assert.equal(text, '{"messages":[{')
-  const second = replay()
-  assert.equal(store.streamTextFor('call-r'), text, 'a replay replaces the prefix')
-  assert.equal(second.seen ?? text.length, text.length)
-  assert.equal(first.text, text)
-  store.resetStreams()
+test('updates draw only Surfaces created in the current call and respect deletion', () => {
+  const { surfaceId, components } = SURFACE.createSurface
+  const update = { version: '1.0', updateComponents: { surfaceId, components } }
+  const drop = { version: '1.0', deleteSurface: { surfaceId } }
+  assert.equal(foldStreaming(JSON.stringify({ messages: [update] })).surfaces.length, 0)
+  assert.equal(foldStreaming(JSON.stringify({ messages: [SURFACE, drop, update] })).surfaces.length, 0)
+  assert.equal(foldStreaming(JSON.stringify({ messages: [SURFACE, drop, SURFACE] })).surfaces.length, 1)
 })
 
-test('only calls the host named a2ui are collected', () => {
-  store.resetStreams()
-  const definition = store.createStreamDefinition()
+test('the Session window replaces prefixes, ignores repeated sequence numbers and recovers across revisions', () => {
+  const feed = sessionEvents()
+  const stream = watchStream(feed, 'call')
+  const off = stream.subscribe(() => {})
+  try {
+    const first = toolDelta(1, 'call', '{"mes', { name: 'a2ui' })
+    const second = toolDelta(2, 'call', 'sages":[{')
+    feed.append(first, second)
+    assert.equal(stream.getSnapshot(), '{"messages":[{')
+    feed.append(second)
+    assert.equal(stream.getSnapshot(), '{"messages":[{')
+    feed.replace([first, second])
+    assert.equal(stream.getSnapshot(), '{"messages":[{')
+    feed.prepend({ type: 'event', event: { type: 'tool/call', seq: 0, data: { callId: 'older' } } })
+    assert.equal(stream.getSnapshot(), '{"messages":[{')
 
-  // A foreign tool is never tracked, and its later unnamed fragments stay out.
-  let state = definition.start(undefined, delta('call-shell', '{"cmd":"rm -rf /"', 'shell'))
-  state = definition.update({ state }, delta('call-shell', ',"more":"x"'))
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-shell'), undefined)
-
-  // An unattributed fragment before any name is not buffered at all.
-  state = definition.start(undefined, delta('call-early', '{"unknown"'))
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-early'), undefined)
-
-  // An unnamed fragment after the name extends the tracked call.
-  state = definition.start(undefined, delta('call-ours', '{"mess', 'a2ui'))
-  state = definition.update({ state }, delta('call-ours', 'ages":[]}'))
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-ours'), '{"messages":[]}')
-  assert.equal(store.streamTextFor('call-shell'), undefined)
-  store.resetStreams()
+    const missed = toolDelta(3, 'call', 'x')
+    const latest = toolDelta(4, 'call', 'y')
+    feed.skipRevision([first, second, missed, latest], [latest])
+    assert.equal(stream.getSnapshot(), '{"messages":[{xy')
+    feed.replace([])
+    assert.equal(stream.getSnapshot(), undefined)
+  } finally {
+    off()
+  }
+  assert.equal(feed.subscriberCount(), 0)
 })
 
-test('two concurrent calls never mix their arguments', () => {
-  store.resetStreams()
-  const definition = store.createStreamDefinition()
-  const a = definition.start(undefined, delta('call-a', '{"a":1}', 'a2ui'))
-  const b = definition.start(undefined, delta('call-b', '{"b":2}', 'a2ui'))
-  definition.update({ state: a }, delta('call-a', '{"a":1}'))
-  definition.update({ state: b }, delta('call-b', '{"b":2}'))
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-a'), '{"a":1}{"a":1}')
-  assert.equal(store.streamTextFor('call-b'), '{"b":2}{"b":2}')
-  store.resetStreams()
+test('settling one attempt or call never clears another and never revives withdrawn arguments', () => {
+  const feed = sessionEvents()
+  const first = watchStream(feed, 'first')
+  const second = watchStream(feed, 'second')
+  const off = [first.subscribe(() => {}), second.subscribe(() => {})]
+  try {
+    feed.append(
+      toolDelta(1, 'first', 'one', { name: 'a2ui', attemptId: 'a' }),
+      toolDelta(2, 'second', 'two', { name: 'a2ui', attemptId: 'b' }),
+    )
+    feed.settle('a')
+    assert.equal(first.getSnapshot(), undefined)
+    assert.equal(second.getSnapshot(), 'two')
+    feed.append(toolDelta(3, 'first', 'anonymous', { attemptId: 'a' }))
+    assert.equal(first.getSnapshot(), undefined)
+    feed.append({ type: 'event', event: { type: 'tool/call', seq: 4, data: { callId: 'second' } } })
+    assert.equal(second.getSnapshot(), undefined)
+    feed.append(toolDelta(5, 'first', 'retry', { name: 'a2ui', attemptId: 'retry' }))
+    feed.settle('a')
+    assert.equal(first.getSnapshot(), 'retry')
+    feed.append({ type: 'event', event: { type: 'tool/result', seq: 6, data: { message: { source: { callId: 'first' } } } } })
+    assert.equal(first.getSnapshot(), undefined)
+  } finally {
+    off.forEach((dispose) => dispose())
+  }
 })
 
-test('a settled call releases its fragments', () => {
-  store.resetStreams()
-  const definition = store.createStreamDefinition()
-  const state = definition.start(undefined, delta('call-done', '{"messages":[]}', 'a2ui'))
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-done'), '{"messages":[]}')
-  definition.update({ state }, settle('call-done'))
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-done'), undefined)
-
-  // `tool/result` is the fallback when `tool/call` fell outside the window.
-  definition.start(undefined, delta('call-2', '{"x":1}', 'a2ui'))
-  store.flushStreamNotifications()
-  definition.update({ state }, { event: { type: 'tool/result', data: { message: { source: { callId: 'call-2' } } } } })
-  store.flushStreamNotifications()
-  assert.equal(store.streamTextFor('call-2'), undefined)
-  store.resetStreams()
+test('only named A2UI calls are picked up and the same call id is isolated across Sessions', () => {
+  const a = sessionEvents()
+  const b = sessionEvents()
+  const first = watchStream(a, 'shared-call-id')
+  const second = watchStream(b, 'shared-call-id')
+  const off = [first.subscribe(() => {}), second.subscribe(() => {})]
+  try {
+    a.append(toolDelta(1, 'shared-call-id', 'foreign tool text', { name: 'shell' }), toolDelta(2, 'shared-call-id', 'unnamed'))
+    assert.equal(first.getSnapshot(), undefined)
+    b.append(toolDelta(1, 'shared-call-id', 'B', { name: 'a2ui' }))
+    a.append(toolDelta(3, 'shared-call-id', 'A', { name: 'a2ui' }), toolDelta(4, 'shared-call-id', '1'))
+    assert.equal(first.getSnapshot(), 'A1')
+    assert.equal(second.getSnapshot(), 'B')
+    b.settle('attempt')
+    assert.equal(second.getSnapshot(), undefined)
+    assert.equal(first.getSnapshot(), 'A1')
+  } finally {
+    off.forEach((dispose) => dispose())
+  }
 })
 
-test('the observer Definition declares no view target', () => {
-  const definition = store.createStreamDefinition()
-  assert.equal(definition.target, undefined, 'a view target would add a transcript node')
-  assert.equal(definition.kind, 'a2ui-stream')
-  assert.equal(definition.match(delta('call-9', '{"a"', 'a2ui').event).role, 'start')
-  assert.equal(definition.match({ event: { type: 'assistant/live-chunk', data: { chunk: { type: 'text-delta', index: 0, text: 'hi' } } } }), null)
-  assert.equal(definition.match(settle('call-9').event).role, 'update')
-  assert.equal(definition.match({ event: { type: 'turn/end', data: {} } }), null)
-  assert.equal(definition.publication(delta('call-9', 'x')), 'animation-frame')
+test('a late-mounted card rebuilds from the current window and releases its subscription on unmount', () => {
+  const feed = sessionEvents()
+  feed.append(toolDelta(1, 'open', 'first', { name: 'a2ui' }), toolDelta(2, 'open', ' second'))
+  const stream = watchStream(feed, 'open')
+  assert.equal(feed.subscriberCount(), 0)
+  assert.equal(stream.getSnapshot(), undefined)
+  const off = stream.subscribe(() => {})
+  assert.equal(stream.getSnapshot(), 'first second')
+  off()
+  assert.equal(feed.subscriberCount(), 0)
+  assert.equal(stream.getSnapshot(), undefined)
+  feed.settle('attempt')
+  const restart = stream.subscribe(() => {})
+  try {
+    assert.equal(stream.getSnapshot(), undefined)
+  } finally {
+    restart()
+  }
 })
 
-/* ------------------------------------------------------------------ */
-/* Registration through the plugin entry                                */
-/* ------------------------------------------------------------------ */
-
-/**
- * A registry shaped like `ConversationEventRegistry`: `register` is a method
- * that reads `this`. Calling it detached throws, which is exactly the bug this
- * test exists for.
- */
-function fakeRegistry() {
-  const definitions = new Map()
-  return {
-    definitions,
-    calls: 0,
-    register(definition) {
-      return this.registerDefinition(definition)
-    },
-    registerDefinition(definition) {
-      this.calls += 1
-      definitions.set(definition.kind, definition)
-      return () => definitions.delete(definition.kind)
-    },
-  }
-}
-
-function fakeContext(registry, options = {}) {
-  const cleanups = []
-  const warnings = []
-  const scoped = {
-    effect(factory) {
-      const cleanup = factory()
-      if (typeof cleanup === 'function') cleanups.push(cleanup)
-    },
-    uiConversation: registry === undefined ? undefined : { events: registry },
-  }
-  const ctx = {
-    effect(factory) {
-      const cleanup = factory()
-      if (typeof cleanup === 'function') cleanups.push(cleanup)
-    },
-    inject(deps, callback) {
-      assert.deepEqual(deps, ['uiConversation'])
-      callback(scoped)
-      return { dispose() {} }
-    },
-    slots: { inject() {}, register: () => () => {} },
-    locale: { register: () => () => {}, bind: () => (key) => key, getLocale: () => ({ id: 'en-US' }) },
-    sessions: { scope: () => undefined },
-    logger: { warn: (message) => warnings.push(message) },
-    ...options,
-  }
-  return {
-    ctx,
-    warnings,
-    unload() {
-      // Reverse order, like a Cordis effect teardown.
-      for (const cleanup of cleanups.reverse()) cleanup()
-      cleanups.length = 0
-    },
-  }
-}
-
-test('apply() registers the observer through the registry method', () => {
-  store.resetStreams()
-  const registry = fakeRegistry()
-  // The fake is faithful: taking the method out of the registry and calling it as
-  // a plain function throws, which is exactly what the previous implementation did.
-  assert.throws(() => {
-    const detached = registry.register
-    detached({ kind: 'detached' })
-  }, TypeError)
-  const { ctx, unload, warnings } = fakeContext(registry)
-  plugin.apply(ctx)
-
-  assert.equal(registry.definitions.size, 1, 'the registry holds exactly one observer')
-  const definition = registry.definitions.get('a2ui-stream')
-  assert.ok(definition, 'the registry received the a2ui-stream Definition')
-  assert.equal(registry.calls, 1)
-  assert.deepEqual(warnings, [], 'registration must not have thrown')
-
-  // The registered Definition drives the real preview: two fragments, then the
-  // card the tool view draws from them.
-  let state = definition.start(undefined, delta('call-live', '{"title":"Live","messages":[{"version":"1.0","createSurface":{"surfaceId":"s","catalogId":"dsh-a2ui/catalog/v1","components":[{"id":"root","component":"Text","text":"Arrived"}]}}]}', 'a2ui'))
-  definition.update({ state }, delta('call-live', ''))
-  store.flushStreamNotifications()
-
-  const html = sharedVisible(store.streamTextFor('call-live'))
-  assert.match(html, /Arrived/u, 'the bundled renderer draws the streamed component')
-
-  // Unloading releases both the registration and the cache.
-  unload()
-  assert.equal(registry.definitions.size, 0)
-  assert.equal(store.streamTextFor('call-live'), undefined)
-
-  // Re-mounting registers once more, not twice.
-  const again = fakeContext(registry)
-  plugin.apply(again.ctx)
-  assert.equal(registry.definitions.size, 1)
-  assert.equal(registry.calls, 2)
-  again.unload()
-  void state
+test('a message with an unsupported version cannot modify a valid earlier Surface', () => {
+  const { surfaceId, components } = SURFACE.createSurface
+  const update = { version: '0.8', updateComponents: { surfaceId, components: [{ id: 'title', component: 'Text', text: 'wrong' }] } }
+  const preview = foldStreaming(JSON.stringify({ messages: [SURFACE, update] }))
+  assert.equal(preview.surfaces[0].components.get('title').text, components.find(({ id }) => id === 'title').text)
+  assert.equal(preview.truncated, true)
 })
 
-test('apply() survives a host without the conversation service', () => {
-  store.resetStreams()
-  const { ctx, warnings } = fakeContext(undefined)
-  ctx.inject = (deps, callback) => {
-    callback({ effect() {}, uiConversation: undefined })
-    return { dispose() {} }
+test('live readers share bounded storage per preview and in total', () => {
+  const off = []
+  const make = (text) => {
+    const feed = sessionEvents()
+    feed.append(toolDelta(1, 'bounded', text, { name: 'a2ui' }))
+    const stream = watchStream(feed, 'bounded')
+    off.push(stream.subscribe(() => {}))
+    return stream
   }
-  plugin.apply(ctx)
-  assert.deepEqual(warnings, [], 'a missing optional service is not an error')
+  try {
+    const small = Array.from({ length: MAX_STREAM_ENTRIES + 1 }, () => make('small'))
+    assert.equal(small[0].getSnapshot(), undefined, 'reader count is capped')
+    assert.equal(small.at(-1).getSnapshot(), 'small')
+    const big = 'x'.repeat(MAX_STREAM_CHARS + 1)
+    const count = Math.floor(MAX_STREAM_TOTAL_CHARS / MAX_STREAM_CHARS)
+    const large = Array.from({ length: count + 1 }, () => make(big))
+    assert.equal(large[0].getSnapshot(), undefined, 'total characters are capped')
+    assert.equal(large.at(-1).getSnapshot().length, MAX_STREAM_CHARS)
+  } finally {
+    off.forEach((dispose) => dispose())
+  }
 })
-
-/** Render the fold through the bundled client renderer, as static text. */
-function sharedVisible(text) {
-  const folded = foldStreaming(text ?? '')
-  assert.equal(folded.surfaces.length, 1, 'the streamed payload folds into one surface')
-  const state = folded.surfaces[0]
-  const view = {
-    surfaceId: state.surfaceId,
-    callId: 'call-live',
-    state,
-    model: state.dataModel,
-    locale: 'en-US',
-    now: 0,
-    interaction: { state: 'idle' },
-    t: (key) => key,
-    setValue() {},
-    submit() {},
-    runLocal() {},
-    streaming: true,
-  }
-  return renderText(client.surface.A2UISurface({ view }))
-}
-
-/**
- * Flatten a React element tree to its text, without a DOM.
- *
- * Function components are invoked the way React would; this test only walks
- * hook-free renderers (`Column`, `ComponentNode`, `Text`), so calling them
- * directly is safe and keeps the assertion about visible text.
- */
-function renderText(node) {
-  if (node === null || node === undefined || typeof node === 'boolean') return ''
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(renderText).join(' ')
-  const type = node.type
-  if (typeof type === 'function') {
-    if (typeof type.prototype?.render === 'function') return '' // a class component
-    return renderText(type(node.props))
-  }
-  return renderText(node.props?.children)
-}

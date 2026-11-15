@@ -4,16 +4,14 @@
  * The finished-call path is strict — `validateToolArguments` decides, and a
  * single violation turns the whole card into a readable error. That is right for
  * settled data and useless for data still arriving, so this module is the
- * deliberately different sibling used *only* while a call is being prepared. It
- * still refuses everything the settled path refuses; it only relaxes the parts
- * that *cannot* be decided yet:
+ * sibling used only while a call is being prepared:
  *
  * - Graph completeness is not required: a component whose children have not been
  *   written renders a placeholder. That is expected in a stream, not a defect.
  * - Everything decidable for a *closed* component is decided — shape, catalog and
  *   every property, plus the aliases the official examples use — through the same
  *   validator functions the settled path calls. A component that is complete but
- *   illegal is dropped, so a preview can never draw what the real result rejects.
+ *   illegal is dropped.
  * - A surface without its `root`, or whose root was dropped, is not drawn at all.
  * - The render budget is applied per surface *and* per call, in the same units and
  *   against the same `LIMITS` the settled path uses, before any element exists.
@@ -53,13 +51,11 @@ export interface StreamingFold {
 const EMPTY: StreamingFold = { surfaces: [], components: 0, streaming: false, stopped: false, truncated: false }
 
 function usableId(value: unknown): value is string {
-  return typeof value === 'string' && value !== '' && value.length <= LIMITS.maxIdLength
+  return typeof value === 'string' && value.length <= LIMITS.maxIdLength && /^[A-Za-z0-9._:-]+$/u.test(value)
 }
 
 interface SanitisedComponents {
   components: A2UIComponent[]
-  /** A legal `root` is present. */
-  root: boolean
   /** At least one component was refused. */
   dropped: boolean
   /** More components than one message may carry: the message is not drawable. */
@@ -73,15 +69,14 @@ interface SanitisedComponents {
  * @param catalogId the catalog the enclosing surface declares.
  */
 function sanitiseComponents(value: unknown, catalogId: string): SanitisedComponents {
-  if (!Array.isArray(value)) return { components: [], root: false, dropped: true, overLimit: false }
+  if (!Array.isArray(value)) return { components: [], dropped: value !== undefined, overLimit: false }
   if (value.length > LIMITS.maxComponentsPerMessage) {
     // The settled path rejects the whole call at this point, so drawing a
     // truncated version would show something that can never be real.
-    return { components: [], root: false, dropped: true, overLimit: true }
+    return { components: [], dropped: true, overLimit: true }
   }
   const components: A2UIComponent[] = []
   const seen = new Set<string>()
-  let root = false
   let dropped = false
   for (const entry of value) {
     const checked = checkComponentAlone(entry, catalogId)
@@ -93,15 +88,13 @@ function sanitiseComponents(value: unknown, catalogId: string): SanitisedCompone
       continue
     }
     seen.add(component.id)
-    if (component.id === 'root') root = true
     components.push(component)
   }
-  return { components, root, dropped, overLimit: false }
+  return { components, dropped, overLimit: false }
 }
 
 interface SanitisedMessage {
   message?: AgentToRendererMessage
-  root: boolean
   dropped: boolean
 }
 
@@ -110,15 +103,20 @@ interface SanitisedMessage {
  *
  * @param value the recovered message.
  * @param catalogs catalog ids learned earlier in this same fold, by surface id.
+ * @param partial whether more properties can still arrive in this message.
  */
-function sanitiseMessage(value: unknown, catalogs: ReadonlyMap<string, string>): SanitisedMessage {
-  const skip: SanitisedMessage = { root: false, dropped: true }
+function sanitiseMessage(value: unknown, catalogs: ReadonlyMap<string, string>, partial: boolean): SanitisedMessage {
+  const skip: SanitisedMessage = { dropped: true }
   if (!isPlainObject(value)) return skip
+  // A version written last is still unknown while this message is open. A
+  // complete, explicit version must match, even if the message is still open.
+  if (value.version !== PROTOCOL_VERSION && (!partial || Object.hasOwn(value, 'version'))) return skip
+  if (Object.keys(value).filter((key) => key !== 'version').length !== 1) return skip
   const create = value.createSurface
   if (isPlainObject(create)) {
-    if (!usableId(create.surfaceId)) return skip
-    const declared = typeof create.catalogId === 'string' && create.catalogId !== '' ? create.catalogId : undefined
-    const catalogId = resolveCatalogId(declared, undefined)
+    if (!usableId(create.surfaceId) || catalogs.has(create.surfaceId)) return skip
+    if (create.catalogId !== undefined && typeof create.catalogId !== 'string') return skip
+    const catalogId = resolveCatalogId(typeof create.catalogId === 'string' ? create.catalogId : undefined, undefined)
     if (catalogId === undefined) return skip
     const components = sanitiseComponents(create.components, catalogId)
     if (components.overLimit) return skip
@@ -133,29 +131,24 @@ function sanitiseMessage(value: unknown, catalogs: ReadonlyMap<string, string>):
           components: components.components,
         },
       },
-      root: components.root,
       dropped: components.dropped,
     }
   }
   const update = value.updateComponents
   if (isPlainObject(update)) {
     if (!usableId(update.surfaceId)) return skip
-    // An update inherits the catalog of the surface it addresses; without a
-    // create in this fold the default catalog is the only assumption available,
-    // and it is the one the settled path starts from too.
-    const catalogId = catalogs.get(update.surfaceId) ?? resolveCatalogId(undefined, undefined)
+    const catalogId = catalogs.get(update.surfaceId)
     if (catalogId === undefined) return skip
     const components = sanitiseComponents(update.components, catalogId)
     if (components.overLimit) return skip
     return {
       message: { version: PROTOCOL_VERSION, updateComponents: { surfaceId: update.surfaceId, components: components.components } },
-      root: false,
       dropped: components.dropped,
     }
   }
   const data = value.updateDataModel
   if (isPlainObject(data)) {
-    if (!usableId(data.surfaceId)) return skip
+    if (!usableId(data.surfaceId) || !catalogs.has(data.surfaceId)) return skip
     if (!Object.prototype.hasOwnProperty.call(data, 'value')) return skip
     const path = data.path
     if (path !== undefined && typeof path !== 'string') return skip
@@ -164,14 +157,13 @@ function sanitiseMessage(value: unknown, catalogs: ReadonlyMap<string, string>):
         version: PROTOCOL_VERSION,
         updateDataModel: { surfaceId: data.surfaceId, ...(typeof path === 'string' ? { path } : {}), value: data.value as JsonValue },
       },
-      root: false,
       dropped: false,
     }
   }
   const drop = value.deleteSurface
   if (isPlainObject(drop)) {
     if (!usableId(drop.surfaceId)) return skip
-    return { message: { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } }, root: false, dropped: false }
+    return { message: { version: PROTOCOL_VERSION, deleteSurface: { surfaceId: drop.surfaceId } }, dropped: false }
   }
   return skip
 }
@@ -188,8 +180,8 @@ export function foldStreaming(text: string): StreamingFold {
   let truncated = recovered.messages.length > LIMITS.maxMessages
   const catalogs = new Map<string, string>()
   const messages: AgentToRendererMessage[] = []
-  for (const value of recovered.messages.slice(0, LIMITS.maxMessages)) {
-    const sanitised = sanitiseMessage(value, catalogs)
+  for (const [index, value] of recovered.messages.slice(0, LIMITS.maxMessages).entries()) {
+    const sanitised = sanitiseMessage(value, catalogs, index === recovered.partialMessage)
     if (sanitised.dropped) truncated = true
     const message = sanitised.message
     if (message === undefined) continue
@@ -199,11 +191,8 @@ export function foldStreaming(text: string): StreamingFold {
       // Remember the catalog so a later `updateComponents` in the same fold is
       // checked against the catalog its surface actually declares.
       if (catalogId !== undefined) catalogs.set(surfaceId, catalogId)
-      if (!sanitised.root) {
-        // Declared without a usable root: nothing to draw *yet*. Skip the create
-        // so the fold cannot promote an unrelated later update into a card.
-        continue
-      }
+    } else if ('deleteSurface' in message) {
+      catalogs.delete(message.deleteSurface.surfaceId)
     }
     messages.push(message)
   }
@@ -215,7 +204,7 @@ export function foldStreaming(text: string): StreamingFold {
   let dataUnits = 0
   let created = 0
   for (const touch of folded.touches) {
-    if (touch.deleted) continue
+    if (touch.deleted || !touch.created) continue
     const state = folded.surfaces.get(touch.surfaceId)
     if (state === undefined) continue
     // Without a declared root there is nothing to place: an empty card would
@@ -227,12 +216,10 @@ export function foldStreaming(text: string): StreamingFold {
       truncated = true
       continue
     }
-    if (touch.created) {
-      created += 1
-      if (created > LIMITS.maxSurfacesPerCall) {
-        truncated = true
-        continue
-      }
+    created += 1
+    if (created > LIMITS.maxSurfacesPerCall) {
+      truncated = true
+      continue
     }
     const estimate = estimateExpansion(state)
     if (estimate.reason !== undefined) {

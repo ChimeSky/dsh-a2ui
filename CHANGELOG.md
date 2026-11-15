@@ -16,11 +16,9 @@ arguments, instead of appearing all at once when the arguments finish.
   rebuilt. Components that are referenced but have not arrived render as skeleton placeholders
   rather than "missing child" errors, and nothing is drawn before `root` exists (no empty card
   flash).
-- **Out-of-band fragment observation.** The plugin registers a Conversation Definition with **no
-  view target** (`kind: a2ui-stream`) that copies `tool-call-delta` text from
-  `assistant/live-chunk` events per call id. A target-less Definition materialises no Node, so the
-  transcript, the process window and history replay are untouched; the copy is released as soon as
-  the call settles.
+- **Session-scoped fragment observation.** A preparing card reads its own tool
+  fragments from the event window of the already-open Session. It responds to
+  window replacement and cancellation even when no tool result follows.
 - **`src/shared/partial-json.ts`** — a recovery scanner that only ever returns values whose own
   slice `JSON.parse` accepts, with a nesting bound (128), a scan cap (512 KiB) and an explicit
   `invalid` answer for a prefix it cannot follow.
@@ -34,47 +32,32 @@ arguments, instead of appearing all at once when the arguments finish.
 - Nothing about authority changed: `validateToolArguments` still decides what may render and
   reports the precise error. A preview that hits malformed syntax or the render budget stops and
   falls back to the skeleton.
-- Bounds: 256 KiB of fragment text per call (truncated beyond that), 120 s retention after the last
-  fragment, 512 KiB scanned per frame, recovered nesting depth 128.
+- Bounds: 262,144 UTF-16 code units per preview and 32 cache entries totaling
+  up to 1,048,576 UTF-16 code units. The recovery scanner remains bounded.
 
 ### Tests
 
-- 26 cases in `tests/streaming.test.mjs`: recovery of a truncated payload,
-  monotonic growth over every prefix of a real payload, escape decoding,
-  malformed/depth refusal, create+update merging, structural skipping, a
-  closed-but-illegal component (the review's `Tabs` payload and a bad `Table`),
-  per-surface and per-call budget stops, cache bounding (per call, entries,
-  total characters), replay idempotence, tool-name filtering, concurrent calls,
-  release on settle, and the `apply()`-level registration test whose fake
-  registry reads `this` (calling it detached throws there too).
-- 5 real-React render cases driven through the shipped `client.js`: a preparing
-  card draws the components that arrived, drops the half-written one, keeps the
-  skeleton when nothing is usable, refuses the illegal `Tabs`, and the settled
-  path still reports that same payload as invalid.
-- 1 jsdom case: the preview body is inert and a synthetic click queues nothing,
-  and the same call settled is a normal interactive card again.
-- 3 bundle invariants (the observer, the fragment reader, the recovery bound).
+- 26 cases in `tests/streaming.test.mjs` cover partial recovery, component and
+  message validation, the official incremental payload, per-Surface and per-call
+  budgets, window replacement, cancellation, cache bounds, and Session isolation.
+- 6 real-React render cases cover preparing and final results, including previewing
+  all four rows of the official incremental sample.
+- A DOM case delivers two nonempty fragments through the Session binding, verifies
+  cancellation and replacement, then checks the same mounted card as it becomes
+  interactive.
+- 3 bundle invariants cover transient withdrawal, fragment reading, and the
+  recovery bound.
 
 ### Fixed (review pass)
 
-- **The observer never registered.** `events.register` was taken out of the
-  registry object and called as a plain function, so `this` was lost and the
-  call threw inside the guard — the preview silently stayed at the skeleton in
-  every real session. It is now invoked on the registry, and a regression test
-  goes through `apply()` with a registry whose `register` reads `this` (calling
-  it detached throws there too, so the test fails if the bug returns).
-- **Replaying a window duplicated the prefix.** The cache was a global log that
-  `start`/`update` appended to unconditionally, so a second replay of the same
-  events produced `{"messages":[{{"messages":[{`. The text now lives in the
-  Definition state, which the engine rebuilds from the earliest match, and the
-  cache is a replacement of that state: replay is idempotent.
-- **Foreign tools were collected.** Every `tool-call-delta` was kept, including
-  another tool's arguments. Only calls the host names `a2ui` are tracked now, and
-  a name-less fragment is appended only to a call that is already identified.
-- **The cache had no lifecycle.** Entries were released only when a mounted card
-  settled, and only bounded per call. `tool/call` and `tool/result` now release
-  the entry, the plugin's own teardown clears the cache, and the cache is bounded
-  in entries (32) and total characters (1 MiB) as well as per call.
+- **Cancelled or replaced windows kept stale previews.** A Session's event
+  window now drives its preview. Equal event sequence numbers are ignored,
+  replaced windows rebuild the prefix, and attempt settlement clears it.
+- **Different Sessions could overwrite the same call ID.** Each preview follows
+  its own Session binding and call. Foreign tools' fragments are skipped.
+- **Incremental Surfaces lost their initial data.** A valid create is retained
+  even if the root arrives later. Confirmed unsupported message versions are
+  skipped during preview.
 - **A closed component was not validated.** `{"id":"root","component":"Tabs",
   "tabs":[null]}` was accepted by the preview and threw while rendering. Closed
   components now go through the settled path's own property validation

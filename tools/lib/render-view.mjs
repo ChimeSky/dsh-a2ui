@@ -38,6 +38,51 @@ function documentShim() {
   }
 }
 
+/** A read-only Session event source as exposed on a DSH SessionBinding. */
+export function sessionEvents() {
+  const listeners = new Set()
+  let snapshot = { entries: [], revision: 0, change: { kind: 'replace', entries: [] } }
+  function publish(entries, change, revision = snapshot.revision + 1) {
+    snapshot = { entries, revision, change }
+    for (const listener of listeners) listener()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    subscriberCount: () => listeners.size,
+    replace(entries) {
+      publish(entries, { kind: 'replace', entries })
+    },
+    append(...entries) {
+      publish([...snapshot.entries, ...entries], { kind: 'append', entries })
+    },
+    prepend(...entries) {
+      publish([...entries, ...snapshot.entries], { kind: 'prepend', entries })
+    },
+    skipRevision(entries, latest) {
+      publish(entries, { kind: 'append', entries: latest }, snapshot.revision + 2)
+    },
+    settle(attemptId) {
+      const entries = snapshot.entries.filter(({ type, event }) => type !== 'transient' || event.data.attemptId !== attemptId)
+      publish(entries, { kind: 'settle-assistant', attemptId })
+    },
+  }
+}
+
+export function toolDelta(seq, id, argumentsDelta, { name, attemptId = 'attempt' } = {}) {
+  return {
+    type: 'transient',
+    event: {
+      type: 'assistant/live-chunk',
+      seq,
+      data: { attemptId, chunk: { type: 'tool-call-delta', id, argumentsDelta, ...(name === undefined ? {} : {name}) } },
+    },
+  }
+}
+
 /**
  * Load the bundle and register its slots.
  * @param options.bundlePath override the bundle location.
@@ -45,6 +90,7 @@ function documentShim() {
  * @param options.onSend conversation `send` implementation the action path calls;
  *   receives the exact queued text. Defaults to rejecting ("no open session").
  * @param options.openSessions session ids whose scope resolves; defaults to all.
+ * @param options.eventSource lookup of an already open Session's event source.
  */
 export function loadView(options = {}) {
   const bundlePath = options.bundlePath ?? path.join(ROOT, 'client.js')
@@ -98,6 +144,10 @@ export function loadView(options = {}) {
       getLocale: () => ({ id: options.locale ?? 'zh-CN' }),
     },
     sessions: {
+      binding(sessionId) {
+        const eventSource = options.eventSource?.(sessionId)
+        return eventSource === undefined ? undefined : { eventSource }
+      },
       scope: (sessionId) => {
         // The plugin's own `sendPrompt` looks the Conversation service up through
         // the session scope, so the harness models exactly that.

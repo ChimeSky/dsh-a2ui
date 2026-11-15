@@ -41,14 +41,16 @@ defineGlobal('Event', window.Event)
 
 const { createRoot } = await import('react-dom/client')
 const { act } = await import('react-dom/test-utils')
-const { loadView, React, ROOT } = await import('../tools/lib/render-view.mjs')
+const { loadView, React, ROOT, sessionEvents, toolDelta } = await import('../tools/lib/render-view.mjs')
 
 /** Messages the plugin would queue, in order. */
 let sent = []
 /** When set, the next queued send rejects with this message. */
 let sendFailure = null
 
-const { View, Tail, module: bundle } = loadView({
+const feeds = new Map()
+const { View, Tail } = loadView({
+  eventSource: (sessionId) => feeds.get(sessionId),
   locale: 'en-US',
   // The plugin attaches the modal's Escape/Tab handling to `document`, so the
   // bundle must see the same document the test dispatches into.
@@ -134,6 +136,7 @@ function mount(element) {
   act(() => root.render(element))
   return {
     container,
+    render: (next) => act(() => root.render(next)),
     unmount: () => act(() => root.unmount()),
   }
 }
@@ -413,8 +416,10 @@ test('a modal traps focus, closes on Escape and returns focus to its trigger', (
  * button queues nothing, and the same call once settled is a normal card again.
  */
 test('the generating preview body is inert and hands over to an interactive card', () => {
-  bundle.__resetStreams()
+  const sessionId = 'session-stream-dom'
   const callId = 'call_stream_dom'
+  const feed = sessionEvents()
+  feeds.set(sessionId, feed)
   const components = [
     { id: 'root', component: 'Tabs', tabs: [{ title: 'One', child: 'panel' }] },
     { id: 'panel', component: 'Column', children: ['text', 'button'] },
@@ -423,19 +428,25 @@ test('the generating preview body is inert and hands over to an interactive card
     { id: 'label', component: 'Text', text: 'Send it' },
   ]
   const messages = [{ version: '1.0', createSurface: { surfaceId: 'live', catalogId: 'dsh-a2ui/catalog/v1', components } }]
-  bundle.__appendStreamedArguments(callId, JSON.stringify({ messages }))
-  bundle.__flushStreamNotifications()
+  const text = JSON.stringify({ messages })
+  const cut = text.indexOf('streamed text')
 
   sent = []
   const preparing = mount(
     React.createElement(View, {
       callId,
       toolName: 'a2ui',
-      sessionId: 'session-stream-dom',
+      sessionId,
       phase: 'preparing',
       block: { phase: 'preparing', callId, name: 'a2ui', subCalls: [] },
     }),
   )
+  assert.equal(feed.subscriberCount(), 1)
+  assert.ok(preparing.container.querySelector('.a2ui-skel'))
+  act(() => feed.append(toolDelta(1, callId, text.slice(0, cut), { name: 'a2ui' })))
+  assert.doesNotMatch(preparing.container.textContent, /streamed text/u)
+  act(() => feed.append(toolDelta(2, callId, text.slice(cut))))
+  assert.match(preparing.container.textContent, /streamed text/u)
   const body = query(preparing.container, '.a2ui-card-streaming .a2ui-card-body')
   assert.equal(body.getAttribute('inert'), '', 'the preview body carries the inert attribute')
   assert.equal(preparing.container.querySelectorAll('.a2ui-card-streaming').length, 1)
@@ -448,11 +459,17 @@ test('the generating preview body is inert and hands over to an interactive card
   // nothing (this is the guard that does not depend on `inert`).
   click(query(preparing.container, '.a2ui-btn'))
   assert.deepEqual(sent, [], 'a preview click must not send an action')
-  preparing.unmount()
+  act(() => feed.settle('attempt'))
+  assert.doesNotMatch(preparing.container.textContent, /streamed text/u)
+  act(() => feed.replace([toolDelta(3, callId, text, { name: 'a2ui', attemptId: 'retry' })]))
+  assert.match(preparing.container.textContent, /streamed text/u)
+  act(() => feed.replace([]))
+  assert.doesNotMatch(preparing.container.textContent, /streamed text/u)
 
-  // Same call, settled: a normal interactive card with no inert body.
-  bundle.__resetStreams()
-  const settled = mount(React.createElement(View, viewProps({ callId, block: surfaceBlock(messages) })))
+  // The same mounted card hands off to the normal interactive result.
+  preparing.render(React.createElement(View, viewProps({ callId, sessionId, block: surfaceBlock(messages) })))
+  assert.equal(feed.subscriberCount(), 0)
+  const settled = preparing
   assert.equal(settled.container.querySelector('.a2ui-card-streaming'), null)
   const settledBody = query(settled.container, '.a2ui-card-body')
   assert.equal(settledBody.hasAttribute('inert'), false, 'the settled card is not inert')
@@ -461,5 +478,5 @@ test('the generating preview body is inert and hands over to an interactive card
   click(query(settled.container, '.a2ui-btn'))
   assert.equal(sent.length, 1, 'the settled card still sends its action')
   settled.unmount()
-  bundle.__resetStreams()
+  feeds.delete(sessionId)
 })
