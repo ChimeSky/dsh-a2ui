@@ -1,6 +1,7 @@
 # dsh-a2ui — Answer-first A2UI for DeepSeek Harness
 
 > **让 AI 的数据型回答，更直观、更易理解。**
+> 
 > *Make data-heavy AI answers easier to understand with inline, on-demand A2UI visualizations.*
 
 [![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./CHANGELOG.md)
