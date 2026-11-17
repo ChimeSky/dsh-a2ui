@@ -240,6 +240,29 @@ test('a hidden call never renders at the turn tail', () => {
   tail.unmount()
 })
 
+test('a failed call leaves one trace line, no card and no turn-tail copy', () => {
+  const failedBlock = {
+    kind: 'tool-result',
+    callId: 'call_dom',
+    name: 'a2ui',
+    call: { name: 'a2ui', argsRaw: '{"messages":[]}' },
+    content: [{ type: 'text', text: 'A2UI payload rejected (1 problem): /messages/0/createSurface: bad' }],
+    isError: true,
+  }
+  const row = mount(React.createElement(View, viewProps({ block: failedBlock })))
+  assert.equal(row.container.querySelector('.a2ui-notice-error'), null, 'no red error card in the process row')
+  assert.equal(row.container.querySelector('.a2ui-card'), null, 'no card at all')
+  assert.equal(row.container.querySelectorAll('button').length, 0, 'nothing operable')
+  assert.match(row.container.textContent, /A2UI payload rejected/u, 'the reason stays readable')
+  assert.match(row.container.textContent, /Call failed/u)
+  row.unmount()
+
+  const nodes = new Map([['call:failed', nodeFor(failedBlock, 6)]])
+  const tail = mount(React.createElement(Tail, tailProps('session-failed', nodes, 6)))
+  assert.equal(tail.container.innerHTML, '', 'the turn tail must not draw the error')
+  tail.unmount()
+})
+
 test('a renamed tool still renders at the turn tail through its result meta', () => {
   const renamed = surfaceBlock(formMessages())
   renamed.name = 'myui'

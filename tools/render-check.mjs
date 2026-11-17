@@ -335,8 +335,10 @@ renderCase('settled path still rejects the same illegal payload', View, { ...bas
   'failed validation',
 ])
 
+// A rejected call is a tool error, not an interface: the conversation must not
+// receive a card for it. The process row keeps a single neutral trace line.
 renderCase(
-  'host rejection is readable',
+  'host rejection leaves a trace line, not a card',
   View,
   {
     ...baseProps,
@@ -351,7 +353,41 @@ renderCase(
       meta: undefined,
     },
   },
-  ['payload rejected', '/messages/0'],
+  ['A2UI payload rejected', 'Call failed'],
+  ['failed validation', 'a2ui-card'],
+)
+
+const failedTailNodes = new Map([
+  [
+    'call:failed',
+    {
+      kind: 'tool-call',
+      visibility: 'visible',
+      location: { kind: 'step', turn: { turn: 1 } },
+      data: {
+        root: {
+          kind: 'tool-result',
+          callId: 'c',
+          name: 'a2ui',
+          call: { name: 'a2ui', argsRaw: '{}' },
+          content: [{ type: 'text', text: 'A2UI payload rejected (1 problem)' }],
+          isError: true,
+        },
+      },
+    },
+  ],
+])
+renderCase(
+  'turn tail draws no card for a failed call',
+  Tail,
+  {
+    turn: { turn: 1, status: 'closed' },
+    seq: 98,
+    sessionId: 'session-failed',
+    useChat: (selector) => selector({ order: ['call:failed'], nodes: failedTailNodes }),
+  },
+  [],
+  ['payload rejected', 'failed validation'],
 )
 
 renderCase(

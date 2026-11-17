@@ -148,6 +148,32 @@ test('the tool executes a valid payload and renders a compact summary', async ()
   assert.equal(meta.messagesOmitted, undefined)
 })
 
+test('a titleless call produces lossless-JSON meta (no undefined title)', async () => {
+  const ctx = mount({})
+  const tool = ctx.tools_().get('a2ui')
+  const args = {
+    messages: [{ version: '1.0', createSurface: { surfaceId: 'plain', components: [{ id: 'root', component: 'Text', text: 'hi' }] } }],
+  }
+  const value = await tool.execute(args, { signal: new AbortController().signal })
+  const meta = tool.output.presentationMeta(args, value)
+  assert.equal(Object.hasOwn(meta, 'title'), false, 'an absent title must not be a key holding undefined')
+  assert.deepEqual(Object.keys(meta).sort(), ['kind', 'messages', 'surfaces'])
+  // The Harness round-trips the meta through lossless JSON, so an `undefined`
+  // value would fail the whole tool result.
+  assert.deepEqual(JSON.parse(JSON.stringify(meta)), meta)
+})
+
+test('a delete-only call also produces lossless-JSON meta', async () => {
+  const ctx = mount({})
+  const tool = ctx.tools_().get('a2ui')
+  const args = { messages: [{ version: '1.0', deleteSurface: { surfaceId: 'gone' } }] }
+  const value = await tool.execute(args, { signal: new AbortController().signal })
+  assert.deepEqual(value.surfaces.map((surface) => [surface.surfaceId, surface.deleted]), [['gone', true]])
+  const meta = tool.output.presentationMeta(args, value)
+  assert.deepEqual(Object.keys(meta).sort(), ['kind', 'messages', 'surfaces'])
+  assert.deepEqual(JSON.parse(JSON.stringify(meta)), meta)
+})
+
 test('the tool rejects an invalid payload with path-qualified reasons', async () => {
   const ctx = mount({})
   const tool = ctx.tools_().get('a2ui')

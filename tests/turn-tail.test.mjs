@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 const { client } = await import('../build/shared.mjs')
-const { collectA2uiRoots, toolPhaseOf, blockToolName, nodeTurn, rootsFromToolData } = client.surfaces
+const { collectA2uiRoots, toolPhaseOf, blockToolName, nodeTurn, rootsFromToolData, rootsFromTurnNodes, isFailedResult } = client.surfaces
 
 function node(kind, turn, root, extra = {}) {
   return { kind, anchorSeq: extra.anchorSeq ?? 1, visibility: extra.visibility ?? 'visible', location: { kind: 'step', turn: { turn } }, data: { root } }
@@ -103,4 +103,36 @@ test('missing or malformed turn data yields no roots', () => {
   assert.deepEqual(rootsFromToolData(undefined), [])
   assert.deepEqual(rootsFromToolData([]), [])
   assert.deepEqual(rootsFromToolData([null, 5, {}, { root: {} }]), [{ key: 'tool-3', root: {}, phase: 'start' }].slice(0, 0))
+})
+
+/* ------------------------------------------------------------------ */
+/* Failed calls: the error stays a tool result, never a conversation card */
+/* ------------------------------------------------------------------ */
+
+const failed = {
+  kind: 'tool-result',
+  callId: 'c',
+  name: 'a2ui',
+  call: { name: 'a2ui', argsRaw: '{"messages":[]}' },
+  content: [{ type: 'text', text: 'A2UI payload rejected (1 problem)' }],
+  isError: true,
+}
+
+test('a failed call is recognised and never collected as a card root', () => {
+  assert.equal(isFailedResult(failed), true)
+  assert.equal(isFailedResult({ kind: 'tool-result', isError: false }), false)
+  assert.equal(isFailedResult({ phase: 'start', name: 'a2ui' }), false)
+
+  const nodes = new Map([['k', node('tool-call', 1, failed)]])
+  assert.deepEqual(collectA2uiRoots(['k'], nodes, 1), [])
+  assert.deepEqual(rootsFromTurnNodes(1, ['k'], nodes), [])
+  assert.deepEqual(rootsFromToolData([{ root: failed }]), [])
+})
+
+test('a failed call does not hide a valid card of the same turn', () => {
+  const nodes = new Map([
+    ['bad', node('tool-call', 1, failed)],
+    ['good', node('tool-call', 1, result('a2ui', { kind: 'a2ui', messages: [] }))],
+  ])
+  assert.deepEqual(collectA2uiRoots(['bad', 'good'], nodes, 1).map((entry) => entry.key), ['good'])
 })

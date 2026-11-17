@@ -141,11 +141,16 @@ function buildTool(toolName: string, proactive: boolean, catalogTool = true): To
         // starts after the original `tool/call` event still shows the surface.
         const incoming = (args ?? {}) as { messages?: unknown; title?: unknown }
         const result = value as ToolResultValue
+        // Every value here must survive a lossless JSON round trip: the Harness
+        // rejects the whole tool result otherwise. An absent title must therefore
+        // be an absent key, never `title: undefined` — that alone failed every
+        // call without a title with "output.presentationMeta returned non-lossless
+        // JSON".
         const meta: Record<string, unknown> = {
           kind: 'a2ui',
-          title: typeof incoming.title === 'string' ? incoming.title : undefined,
           surfaces: result.surfaces,
         }
+        if (typeof incoming.title === 'string') meta.title = incoming.title
         const serializedMessages = safeStringify(incoming.messages)
         if (serializedMessages !== undefined && serializedMessages.length <= META_LIMIT) {
           meta.messages = incoming.messages as JsonValue

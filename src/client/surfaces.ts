@@ -49,6 +49,19 @@ export function toolPhaseOf(root: ToolBlockLike | undefined): ToolPhase {
   return root.phase === 'preparing' ? 'preparing' : 'start'
 }
 
+/**
+ * Whether a settled call ended in an error.
+ *
+ * The Host throws on a rejected payload, so the transcript node is a
+ * `tool-result` with `isError: true` and no replay `meta`. Such a call has no
+ * interface to show and is deliberately not drawn as a card: the error is still
+ * the tool result the agent sees and retries from, but the conversation gets no
+ * red "this call failed" card.
+ */
+export function isFailedResult(root: ToolBlockLike | undefined): boolean {
+  return root?.kind === 'tool-result' && root.isError === true
+}
+
 /** The wire tool name of a block, whichever stage it is in. */
 export function blockToolName(root: ToolBlockLike | undefined): string | undefined {
   if (root === undefined) return undefined
@@ -107,6 +120,7 @@ export function rootsFromToolData(entries: readonly unknown[] | undefined, toolN
     if (!isPlainObject(entry)) continue
     const root = (entry as { root?: ToolBlockLike }).root
     if (!isA2uiRoot(root, toolName)) continue
+    if (isFailedResult(root)) continue
     out.push({ key: root?.callId ?? `tool-${index}`, root: root as ToolBlockLike, phase: toolPhaseOf(root) })
   }
   return out
@@ -138,6 +152,7 @@ export function rootsFromTurnNodes(
     if (node.visibility === 'hidden') continue
     const root = node.data?.root
     if (!isA2uiRoot(root, toolName)) continue
+    if (isFailedResult(root)) continue
     out.push({ key, root: root as ToolBlockLike, phase: toolPhaseOf(root) })
   }
   return out
@@ -164,6 +179,7 @@ export function collectA2uiRoots(
     if (nodeTurn(node) !== turnNumber) continue
     const root = node.data?.root
     if (!isA2uiRoot(root, toolName)) continue
+    if (isFailedResult(root)) continue
     entries.push({ key, root: root as ToolBlockLike, phase: toolPhaseOf(root) })
   }
   return entries

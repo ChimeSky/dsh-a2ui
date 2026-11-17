@@ -72,6 +72,7 @@ interface Payload {
   readError?: string
 }
 
+/** Concatenated text blocks of a tool result (the Host's error message). */
 function textOfContent(content: unknown): string {
   if (!Array.isArray(content)) return ''
   const parts: string[] = []
@@ -382,8 +383,11 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
 
   // The tail copy claims the call; the row copy steps aside only while that
   // claim is held, and automatically restores the card when the tail unmounts.
+  // A failed call draws nothing (see below), so it must never claim: an
+  // unclaimed id lets the row keep its own behaviour.
+  const isErrorResult = props.phase === 'result' && props.block?.isError === true
   const claimedElsewhere = useCopyClaimed(sessionId, props.callId)
-  useClaimCopy(sessionId, props.callId, mode === 'tail')
+  useClaimCopy(sessionId, props.callId, mode === 'tail' && !isErrorResult)
   const compact = props.compact ?? (mode === 'row' && claimedElsewhere && props.phase === 'result')
 
   // Edits and action state live in a store keyed by session + call + surface, so
@@ -394,7 +398,7 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
   const keyFor = React.useCallback((surfaceId: string) => stateKey(sessionId, props.callId, surfaceId), [sessionId, props.callId])
 
   const locale = runtime.locale()
-  const isErrorResult = props.phase === 'result' && props.block?.isError === true
+  /** The Host's error message, kept for the process row's one-line trace. */
   const errorText = isErrorResult ? textOfContent(props.block?.content) : ''
 
   const setValue = React.useCallback(
@@ -523,13 +527,27 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
     h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')),
   )
 
-  // A failed call never renders operable content: without this, an error result
-  // with empty content would fall through and rebuild the surfaces from `meta`.
+  // A failed call has no interface to show. The turn tail drops it entirely, so
+  // the conversation never gains a red "this call failed" card; the process row
+  // keeps one neutral line instead of vanishing without a trace, so the
+  // transcript still records that the call happened and why it failed. The
+  // error itself remains the tool result the agent reads and retries from.
   if (isErrorResult) {
+    if (mode === 'tail') return null
+    const reason = errorText
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line !== '') ?? ''
     return h(
       'div',
       { className: 'a2ui-root' },
-      h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText === '' ? t('failedGeneric') : errorText, error: true }))),
+      h(
+        'div',
+        { className: 'a2ui-pointer', title: errorText === '' ? undefined : errorText },
+        sparkle('a2ui-pointer-icon'),
+        h('span', { className: 'a2ui-pointer-text' }, reason === '' ? payload.title ?? t('title') : reason),
+        h('span', { className: 'a2ui-pointer-meta' }, t('failedCompact')),
+      ),
     )
   }
 
