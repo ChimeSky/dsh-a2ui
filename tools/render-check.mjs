@@ -258,6 +258,19 @@ renderCase('pie percentages include grouped categories', View, { ...baseProps, p
   'Categories grouped as Other: 1',
 ])
 
+// A valid expression over an impossible domain used to blame the expression,
+// which sent the model off editing something that was never wrong.
+const badRange = [{ version: '1.0', createSurface: { surfaceId: 'plot', catalogId: 'dsh-a2ui/catalog/v1', components: [{
+  id: 'root',
+  component: 'Plot',
+  plots: [{ expression: 'x*x' }],
+  xMin: 5,
+  xMax: 5,
+}] } }]
+renderCase('a degenerate plot range names the range, not the expression', View, { ...baseProps, phase: 'result', block: block(badRange, 'Range') }, [
+  'Plot range is invalid',
+], ['Invalid function expression'])
+
 // The upstream example is the contract test for template scope: every row's
 // `Text` resolves a *relative* path, so a dropped item scope renders 4 empty
 // rows with 4 "Book now" buttons.

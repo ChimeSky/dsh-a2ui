@@ -352,7 +352,7 @@ const EXTENSION_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'Table',
     origin: 'extension',
-    summary: 'A data table. Columns are declared once; rows are a list of records keyed by column key.',
+    summary: `A data table. Columns are declared once; rows are a list of records keyed by column key (at most ${LIMITS.maxTableRows} rows).`,
     properties: {
       columns: arr(
         obj(
@@ -382,7 +382,7 @@ const EXTENSION_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'BarChart',
     origin: 'extension',
-    summary: 'A categorical bar chart drawn as inline SVG.',
+    summary: 'A categorical bar chart drawn as inline SVG. Every series needs exactly one value per category.',
     properties: { ...chartCommon, horizontal: bool, stacked: bool },
     required: ['categories', 'series'],
     childStyle: 'none',
@@ -390,7 +390,7 @@ const EXTENSION_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'LineChart',
     origin: 'extension',
-    summary: 'A line or area chart with optional point markers.',
+    summary: 'A line or area chart with optional point markers. Every series needs exactly one value per category.',
     properties: {
       ...chartCommon,
       area: bool,

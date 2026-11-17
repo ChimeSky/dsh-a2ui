@@ -112,7 +112,7 @@ export const CSS = `
 .a2ui-player{display:flex;flex-direction:column;gap:8px;min-width:0}
 .a2ui-player-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .a2ui-player-note{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-left:auto;font-variant-numeric:tabular-nums}
-.a2ui-bars{display:flex;align-items:flex-end;gap:6px;min-height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
+.a2ui-bars{display:flex;align-items:flex-end;gap:6px;height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
 .a2ui-bar{flex:1;min-width:6px;border-radius:4px 4px 0 0;background:var(--dsw-alias-state-idle-primary);transition:height .16s ease,background .16s ease;position:relative}
 .a2ui-bar.a2ui-state-active{background:var(--dsw-alias-brand-primary)}
 .a2ui-bar.a2ui-state-compare{background:var(--dsw-alias-state-warn-primary)}

@@ -80,6 +80,8 @@ export function renderFramePlayer(scope: Scope, component: A2UIComponent): Retur
         {
           key: `b${itemIndex}`,
           className: `a2ui-bar a2ui-state-${item.state}`,
+          // `.a2ui-bars` must keep a *definite* height: a percentage against an
+          // auto-height box resolves to auto, which collapses every bar to 0px.
           style: { height: `${Math.max(3, (Math.abs(item.value) / globalMax) * 100)}%` },
           title: `${item.label}: ${item.value}`,
         },

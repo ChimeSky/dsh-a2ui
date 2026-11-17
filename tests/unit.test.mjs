@@ -309,3 +309,58 @@ test('the full reference documents weight, justify spellings and a Table example
   assert.match(full, /usageHint/u)
   assert.ok(full.length < 8_000, 'the added guidance must keep the reference small')
 })
+
+test('a Table above the row cap is rejected instead of silently cut', () => {
+  const table = (count) => ({
+    messages: [
+      {
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'table',
+          catalogId: EXTENSION_CATALOG_ID,
+          components: [
+            {
+              id: 'root',
+              component: 'Table',
+              columns: [{ key: 'n', label: 'N' }],
+              rows: Array.from({ length: count }, (_, index) => ({ n: index })),
+            },
+          ],
+        },
+      },
+    ],
+  })
+  const allowed = validateToolArguments(table(500))
+  assert.equal(allowed.ok, true, JSON.stringify(allowed.errors))
+  const rejected = validateToolArguments(table(501))
+  assert.equal(rejected.ok, false, 'rows past the cap must not be dropped in silence')
+  assert.equal(rejected.errors.length, 1, JSON.stringify(rejected.errors))
+  assert.equal(rejected.errors[0].path, '/messages/0/createSurface/components/0/rows')
+  assert.match(rejected.errors[0].message, /table rows exceeds the A2UI limit of 500 \(got 501\)/u)
+})
+
+test('a chart series must supply exactly one value per category', () => {
+  const chart = (categories, values, component = 'BarChart') => ({
+    messages: [
+      {
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'chart',
+          catalogId: EXTENSION_CATALOG_ID,
+          components: [{ id: 'root', component, categories, series: [{ label: 's', values }] }],
+        },
+      },
+    ],
+  })
+  const aligned = validateToolArguments(chart(['a', 'b', 'c'], [1, 2, 3]))
+  assert.equal(aligned.ok, true, JSON.stringify(aligned.errors))
+  for (const values of [[1, 2], [1, 2, 3, 4]]) {
+    const rejected = validateToolArguments(chart(['a', 'b', 'c'], values))
+    assert.equal(rejected.ok, false, `values ${JSON.stringify(values)} must not be repaired at render time`)
+    assert.equal(rejected.errors.length, 1, JSON.stringify(rejected.errors))
+    assert.equal(rejected.errors[0].path, '/messages/0/createSurface/components/0/series/0/values')
+    assert.match(rejected.errors[0].message, /must hold one value per category/u)
+  }
+  const line = validateToolArguments(chart(['a', 'b'], [1], 'LineChart'))
+  assert.equal(line.ok, false)
+})

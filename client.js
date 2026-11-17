@@ -60,6 +60,7 @@ const zh = {
     tableEmpty: '暂无数据',
     chartEmpty: '没有可绘制的数据',
     plotInvalid: '函数表达式无效',
+    plotDomain: '绘图范围无效：xMin 必须小于 xMax',
     play: '播放',
     pause: '暂停',
     step: '单步',
@@ -113,6 +114,7 @@ const en = {
     tableEmpty: 'No data',
     chartEmpty: 'Nothing to plot',
     plotInvalid: 'Invalid function expression',
+    plotDomain: 'Plot range is invalid: xMin must be less than xMax',
     play: 'Play',
     pause: 'Pause',
     step: 'Step',
@@ -260,7 +262,7 @@ const CSS = `
 .a2ui-player{display:flex;flex-direction:column;gap:8px;min-width:0}
 .a2ui-player-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .a2ui-player-note{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-left:auto;font-variant-numeric:tabular-nums}
-.a2ui-bars{display:flex;align-items:flex-end;gap:6px;min-height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
+.a2ui-bars{display:flex;align-items:flex-end;gap:6px;height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
 .a2ui-bar{flex:1;min-width:6px;border-radius:4px 4px 0 0;background:var(--dsw-alias-state-idle-primary);transition:height .16s ease,background .16s ease;position:relative}
 .a2ui-bar.a2ui-state-active{background:var(--dsw-alias-brand-primary)}
 .a2ui-bar.a2ui-state-compare{background:var(--dsw-alias-state-warn-primary)}
@@ -2687,7 +2689,7 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'Table',
         origin: 'extension',
-        summary: 'A data table. Columns are declared once; rows are a list of records keyed by column key.',
+        summary: `A data table. Columns are declared once; rows are a list of records keyed by column key (at most ${LIMITS.maxTableRows} rows).`,
         properties: {
             columns: arr(obj({
                 key: str({ minLength: 1 }),
@@ -2711,7 +2713,7 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'BarChart',
         origin: 'extension',
-        summary: 'A categorical bar chart drawn as inline SVG.',
+        summary: 'A categorical bar chart drawn as inline SVG. Every series needs exactly one value per category.',
         properties: { ...chartCommon, horizontal: bool, stacked: bool },
         required: ['categories', 'series'],
         childStyle: 'none',
@@ -2719,7 +2721,7 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'LineChart',
         origin: 'extension',
-        summary: 'A line or area chart with optional point markers.',
+        summary: 'A line or area chart with optional point markers. Every series needs exactly one value per category.',
         properties: {
             ...chartCommon,
             area: bool,
@@ -3158,8 +3160,42 @@ function checkComponentProperties(component, catalogId, path, out, isExtensionCa
             continue;
         validator(value, `${path}/${key}`, out);
     }
+    checkComponentData(component, path, out);
     if (isExtensionCatalog && spec.origin === 'basic')
         return;
+}
+/**
+ * Cross-property data checks the per-property table cannot express: how many
+ * rows a Table carries, and whether every chart series supplies one value per
+ * category.
+ *
+ * Both used to be repaired silently at render time — the table dropped rows
+ * past its cap, and a short series had its missing values drawn as `0` — which
+ * made a malformed payload look correct. A binding (`{"@path": ...}`) is not
+ * countable here and is left to the renderer.
+ */
+function checkComponentData(component, path, out) {
+    if (component.component === 'Table') {
+        const rows = component.rows;
+        if (Array.isArray(rows) && rows.length > LIMITS.maxTableRows) {
+            fail(out, `${path}/rows`, limitMessage('table rows', LIMITS.maxTableRows, rows.length));
+        }
+        return;
+    }
+    if (component.component !== 'BarChart' && component.component !== 'LineChart')
+        return;
+    const categories = component.categories;
+    const series = component.series;
+    if (!Array.isArray(categories) || !Array.isArray(series))
+        return;
+    for (const [index, entry] of series.entries()) {
+        if (!isPlainObject(entry))
+            continue;
+        const values = entry.values;
+        if (!Array.isArray(values) || values.length === categories.length)
+            continue;
+        fail(out, `${path}/series/${index}/values`, `must hold one value per category: ${values.length} values for ${categories.length} categories`);
+    }
 }
 /**
  * Child references are collected by `graph.ts`, which the render budget also
@@ -6121,7 +6157,7 @@ function renderPlot(scope, component) {
     const xMin = numberValue(scope, component.xMin) ?? -10;
     const xMax = numberValue(scope, component.xMax) ?? 10;
     if (!(xMax > xMin))
-        return emptyChart(scope, component, view.t('plotInvalid'));
+        return emptyChart(scope, component, view.t('plotDomain'));
     const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240));
     const variablesRaw = component.variables;
     const variables = {};
@@ -6322,6 +6358,8 @@ function renderFramePlayer(scope, component) {
     const bars = h('div', { className: 'a2ui-bars', role: 'img', 'aria-label': frame.items.map((item) => `${item.label}: ${item.value}`).join(', ') }, ...frame.items.map((item, itemIndex) => h('div', {
         key: `b${itemIndex}`,
         className: `a2ui-bar a2ui-state-${item.state}`,
+        // `.a2ui-bars` must keep a *definite* height: a percentage against an
+        // auto-height box resolves to auto, which collapses every bar to 0px.
         style: { height: `${Math.max(3, (Math.abs(item.value) / globalMax) * 100)}%` },
         title: `${item.label}: ${item.value}`,
     }, h('span', { className: 'a2ui-bar-value' }, String(item.value)))));

@@ -503,3 +503,54 @@ test('the generating preview body is inert and hands over to an interactive card
   settled.unmount()
   feeds.delete(sessionId)
 })
+
+test('a FramePlayer bar keeps a container height its percentage can resolve against', () => {
+  // jsdom has no layout, so the collapse cannot be observed directly: it is
+  // pinned at the CSS contract instead. A percentage height against an
+  // auto-height box resolves to `auto`, which turned every bar into a 0px sliver
+  // with only its absolutely positioned value label left visible.
+  const css = window.document.querySelector('style[data-plugin-css]')?.textContent ?? ''
+  assert.match(css, /\.a2ui-bars\{[^}]*height:120px/u, 'the bars box must declare a definite height')
+  assert.doesNotMatch(css, /\.a2ui-bars\{[^}]*min-height/u, 'min-height alone does not resolve a percentage child')
+
+  const messages = [
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'bars',
+        catalogId: 'dsh-a2ui/catalog/v1',
+        components: [
+          {
+            id: 'root',
+            component: 'FramePlayer',
+            mode: 'bars',
+            frames: [{ items: [{ label: 'a', value: 4 }, { label: 'b', value: 2 }] }],
+          },
+        ],
+      },
+    },
+  ]
+  const view = mount(React.createElement(View, viewProps({ callId: 'call_bars', block: surfaceBlock(messages) })))
+  const bars = view.container.querySelectorAll('.a2ui-bar')
+  assert.equal(bars.length, 2)
+  assert.equal(bars[0].style.height, '100%', 'the tallest item keeps a percentage height')
+  assert.equal(bars[1].style.height, '50%')
+  view.unmount()
+})
+
+test('a degenerate Plot range says the range is wrong, not the expression', () => {
+  const messages = [
+    {
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'plot',
+        catalogId: 'dsh-a2ui/catalog/v1',
+        components: [{ id: 'root', component: 'Plot', plots: [{ expression: 'x' }], xMin: 10, xMax: -10 }],
+      },
+    },
+  ]
+  const view = mount(React.createElement(View, viewProps({ callId: 'call_plot', block: surfaceBlock(messages) })))
+  assert.match(view.container.textContent, /Plot range is invalid/u)
+  assert.doesNotMatch(view.container.textContent, /Invalid function expression/u)
+  view.unmount()
+})

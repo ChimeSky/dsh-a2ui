@@ -20,11 +20,21 @@ All notable changes to this plugin. Version numbers follow [SemVer](https://semv
   `caption` as caption) as an alias of `variant`; a disagreement between the two is one conflict error.
 - `Row`/`Column` `justify` accepts the CSS kebab-case spellings (`space-between`, `space-around`,
   `space-evenly`) as well as the camelCase ones.
+- **`FramePlayer` bars are visible again.** `.a2ui-bars` declares `height: 120px` instead of only
+  `min-height`, so the percentage height of each bar resolves instead of collapsing to `0px`; the
+  animation used to render as a baseline with floating value labels.
+- **A degenerate `Plot` range says so.** `xMin >= xMax` reports "Plot range is invalid: xMin must be
+  less than xMax" instead of reusing "Invalid function expression" for a perfectly valid expression.
+- **Oversized or misaligned data is rejected, not repaired.** A `Table` with more than 500 rows is
+  rejected with a limit message (it used to be truncated silently at render time), and every
+  `BarChart`/`LineChart` series must hold exactly one value per category (a short series used to have
+  its missing values drawn as `0`, indistinguishable from a real zero).
 
 ### Documentation
 
 - `a2ui_catalog` documents `weight`, the full `justify` value set, and minimal `Table`, `Text` and
-  weighted-`Row` examples (a Table row is a record keyed by column key, not an array).
+  weighted-`Row` examples (a Table row is a record keyed by column key, not an array). Table and chart
+  summaries state the row cap and the one-value-per-category rule.
 ## 0.3.0 — 2026-11-15
 
 Progressive streaming release. The card is now drawn **while** the model is still writing the tool

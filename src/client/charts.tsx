@@ -842,7 +842,7 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
   const view = scope.view
   const xMin = numberValue(scope, component.xMin) ?? -10
   const xMax = numberValue(scope, component.xMax) ?? 10
-  if (!(xMax > xMin)) return emptyChart(scope, component, view.t('plotInvalid'))
+  if (!(xMax > xMin)) return emptyChart(scope, component, view.t('plotDomain'))
   const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240))
   const variablesRaw = component.variables
   const variables: Record<string, number> = {}
