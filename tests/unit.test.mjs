@@ -228,3 +228,84 @@ test('every catalog function is registered as known', () => {
   for (const name of BASIC_FUNCTION_NAMES) assert.ok(knownFunctions.has(name), name)
   assert.equal(COMPONENTS.length, 26)
 })
+
+test('the official catalog spellings are accepted, not only this renderer’s', () => {
+  const result = validateToolArguments({
+    messages: [
+      {
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'spelling',
+          components: [
+            { id: 'root', component: 'Column', justify: 'space-between', children: ['head', 'cap'] },
+            { id: 'head', component: 'Text', text: 'Title', usageHint: 'h2' },
+            { id: 'cap', component: 'Text', text: 'Note', usageHint: 'caption', weight: 2 },
+          ],
+        },
+      },
+    ],
+  })
+  assert.equal(result.ok, true, JSON.stringify(result.errors))
+  const components = result.messages[0].createSurface.components
+  assert.equal(components[1].variant, 'body', 'a heading level renders as body text')
+  assert.equal(components[2].variant, 'caption')
+  assert.equal(components[1].usageHint, undefined, 'the alias never reaches the renderer')
+  assert.equal(components[0].justify, 'space-between', 'the kebab-case spelling is kept as written')
+})
+
+test('a usageHint that disagrees with variant is a conflict, not silent precedence', () => {
+  const result = validateToolArguments({
+    messages: [
+      {
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'conflict',
+          components: [{ id: 'root', component: 'Text', text: 'x', usageHint: 'caption', variant: 'body' }],
+        },
+      },
+    ],
+  })
+  assert.equal(result.ok, false)
+  assert.equal(result.errors.length, 1, 'one clear message, not a follow-up "is not a property"')
+  assert.ok(
+    result.errors.some((error) => error.message.includes('conflicts with "variant"')),
+    JSON.stringify(result.errors),
+  )
+})
+
+test('one call reports every independent violation, not just the first batch', () => {
+  const result = validateToolArguments({
+    messages: [
+      {
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'batch',
+          components: [
+            { id: 'root', component: 'Column', children: ['a', 'b', 'c', 'd', 'e'], bogus: 1 },
+            { id: 'a', component: 'Text', variant: 'huge' },
+            { id: 'b', component: 'Text', text: 'x', color: 'red' },
+            { id: 'c', component: 'Nope' },
+            { id: 'd', component: 'Text', text: 'y', weight: -2 },
+            { id: 'e', component: 'Stat', label: 'L', value: 1, grow: 1 },
+          ],
+        },
+      },
+    ],
+  })
+  assert.equal(result.ok, false)
+  const paths = result.errors.map((error) => error.path)
+  assert.ok(result.errors.length >= 6, `reported ${result.errors.length} of 7 violations`)
+  for (const path of ['bogus', 'variant', 'color', 'component', 'weight', 'grow']) {
+    assert.ok(paths.some((entry) => entry.endsWith(`/${path}`)), `missing diagnostic for ${path}: ${paths.join(', ')}`)
+  }
+})
+
+test('the full reference documents weight, justify spellings and a Table example', () => {
+  const full = describeCatalog('full')
+  assert.match(full, /Every component accepts "weight", but it only lays out as a share of a Row/u)
+  assert.match(full, /space-between/u)
+  assert.match(full, /"component":"Table","columns"/u)
+  assert.match(full, /record keyed by column key/u)
+  assert.match(full, /usageHint/u)
+  assert.ok(full.length < 8_000, 'the added guidance must keep the reference small')
+})

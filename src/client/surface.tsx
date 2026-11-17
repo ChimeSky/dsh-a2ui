@@ -42,6 +42,10 @@ const JUSTIFY: Record<string, string> = {
   spaceAround: 'space-around',
   spaceBetween: 'space-between',
   spaceEvenly: 'space-evenly',
+  // The published catalog examples also use the CSS kebab-case spelling.
+  'space-around': 'space-around',
+  'space-between': 'space-between',
+  'space-evenly': 'space-evenly',
 }
 
 const ALIGN: Record<string, string> = {

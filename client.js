@@ -81,6 +81,7 @@ const zh = {
     sortHint: '点击排序（仅本地）',
     sendsMessage: '点击后会向 AI 发送一条消息',
     failedGeneric: '这次调用失败了，没有可显示的界面。',
+    failedCompact: '调用失败',
     otherSlices: '其他',
     groupedSlices: '归入「其他」的类别数',
 };
@@ -133,6 +134,7 @@ const en = {
     sortHint: 'Click to sort (local only)',
     sendsMessage: 'Clicking sends a message to the agent',
     failedGeneric: 'This call failed, so there is no interface to show.',
+    failedCompact: 'Call failed',
     otherSlices: 'Other',
     groupedSlices: 'Categories grouped as Other',
 };
@@ -2421,7 +2423,19 @@ const accessibilityValidator = obj({
 /** `metadata` block shared by every component. */
 const metadataValidator = obj({ extensions: obj({}, { strict: false }) });
 const checks = arr(obj({ condition: bindingOrCall, message: str() }, { required: ['condition'] }), { max: LIMITS.maxChecks });
-const justifyEnum = ['start', 'center', 'end', 'stretch', 'spaceAround', 'spaceBetween', 'spaceEvenly'];
+const justifyEnum = [
+    'start',
+    'center',
+    'end',
+    'stretch',
+    'spaceAround',
+    'spaceBetween',
+    'spaceEvenly',
+    // The published catalog examples also spell these in CSS kebab-case.
+    'space-around',
+    'space-between',
+    'space-evenly',
+];
 const alignEnum = ['start', 'center', 'end', 'stretch'];
 /* ------------------------------------------------------------------ */
 /* Official basic catalog                                              */
@@ -2430,7 +2444,7 @@ const BASIC_COMPONENTS = [
     {
         name: 'Text',
         origin: 'basic',
-        summary: 'A paragraph or caption. Supports **bold**, *italic* and `code` inline Markdown.',
+        summary: 'A paragraph or caption. Supports **bold**, *italic* and `code` inline Markdown. Accepts the official `usageHint` (h1–h5/body render as body text, caption as caption) as an alias of `variant`.',
         properties: {
             text: dynStr,
             variant: str({ enum: ['caption', 'body'] }),
@@ -2899,6 +2913,13 @@ function describeCatalog(detail = 'full') {
         lines.push(`Functions: ${BASIC_FUNCTION_NAMES.join(', ')}.`);
         lines.push('Child references: Card/Button take "child"; Row/Column/List take "children" (array of ids, or {"componentId","path"} for a data-model list); Tabs take "tabs":[{"title","child"}]; Modal takes "trigger" and "content".');
         lines.push('Actions: {"event":{"name":"submit","userMessage":"...","context":{"field":{"@path":"/field"}}}} sends an action to you; {"functionCall":{...}} runs locally.');
+        lines.push('Every component accepts "weight", but it only lays out as a share of a Row (or a horizontal List); elsewhere it is inert.');
+        lines.push(`Row/Column "justify" accepts ${justifyEnum.join('|')}.`);
+        lines.push('Aliases: Text also takes the official "usageHint" (h1–h5 and body render as body text, caption as caption) in place of "variant".');
+        lines.push('Minimal examples:');
+        lines.push('  Table: {"id":"t","component":"Table","columns":[{"key":"name","label":"Name"},{"key":"count","label":"Count","format":"number","align":"end"}],"rows":[{"name":"alpha","count":3},{"name":"beta","count":5}]} — each row is a record keyed by column key, not an array.');
+        lines.push('  Text: {"id":"tx","component":"Text","text":"hello","usageHint":"body"} (official spelling; "variant":"caption" also works).');
+        lines.push('  Weighted row: {"id":"row","component":"Row","children":["left","right"]} with "weight":2 on the "left" component.');
     }
     return lines.join('\n');
 }
@@ -3016,17 +3037,48 @@ const PROPERTY_ALIASES = [
     ['@accessibility', 'accessibility'],
     ['@metadata', 'metadata'],
 ];
+/**
+ * Aliases that also translate the value.
+ *
+ * The official basic catalog spells text emphasis `usageHint` (`h1`…`h5`,
+ * `body`, `caption`) where this renderer's `Text` uses `variant`. Every heading
+ * level is admitted and renders as body text, so an official example never
+ * fails validation over a spelling difference.
+ */
+const VALUE_ALIASES = [
+    {
+        component: 'Text',
+        alias: 'usageHint',
+        name: 'variant',
+        translate: (value) => (value === 'caption' ? 'caption' : 'body'),
+    },
+];
 function normalizeAliases(component, path, out) {
     if (!isPlainObject(component))
         return component;
-    let normalized;
+    const renames = [];
     for (const [alias, name] of PROPERTY_ALIASES) {
         if (!Object.prototype.hasOwnProperty.call(component, alias))
             continue;
-        const value = component[alias];
+        renames.push([alias, name, component[alias]]);
+    }
+    const kind = typeof component.component === 'string' ? component.component : '';
+    for (const rule of VALUE_ALIASES) {
+        if (rule.component !== kind)
+            continue;
+        if (!Object.prototype.hasOwnProperty.call(component, rule.alias))
+            continue;
+        renames.push([rule.alias, rule.name, rule.translate(component[rule.alias])]);
+    }
+    let normalized;
+    for (const [alias, name, value] of renames) {
         if (Object.prototype.hasOwnProperty.call(component, name)) {
             if (JSON.stringify(component[name]) !== JSON.stringify(value)) {
                 fail(out, `${path}/${alias}`, `conflicts with "${name}"; keep one of them`);
+                // Drop the alias anyway: the conflict is already fatal, so a second
+                // "is not a property" complaint would only bury the real message.
+                normalized = normalized ?? { ...component };
+                delete normalized[alias];
                 continue;
             }
             normalized = normalized ?? { ...component };
@@ -6343,6 +6395,10 @@ const JUSTIFY = {
     spaceAround: 'space-around',
     spaceBetween: 'space-between',
     spaceEvenly: 'space-evenly',
+    // The published catalog examples also use the CSS kebab-case spelling.
+    'space-around': 'space-around',
+    'space-between': 'space-between',
+    'space-evenly': 'space-evenly',
 };
 const ALIGN = {
     start: 'flex-start',
@@ -7084,6 +7140,7 @@ const { A2UISurface } = require("./client/surface.js");
 const { useClaimCopy, useCopyClaimed } = require("./client/claims-react.js");
 const { resolveValue } = require("./shared/binding.js");
 const { buildAction } = require("./client/action.js");
+/** Concatenated text blocks of a tool result (the Host's error message). */
 function textOfContent(content) {
     if (!Array.isArray(content))
         return '';
@@ -7288,8 +7345,11 @@ function A2UIToolView(props) {
     const streamed = React.useMemo(() => (streamedText === undefined || streamedText === '' ? undefined : foldStreaming(streamedText)), [streamedText]);
     // The tail copy claims the call; the row copy steps aside only while that
     // claim is held, and automatically restores the card when the tail unmounts.
+    // A failed call draws nothing (see below), so it must never claim: an
+    // unclaimed id lets the row keep its own behaviour.
+    const isErrorResult = props.phase === 'result' && props.block?.isError === true;
     const claimedElsewhere = useCopyClaimed(sessionId, props.callId);
-    useClaimCopy(sessionId, props.callId, mode === 'tail');
+    useClaimCopy(sessionId, props.callId, mode === 'tail' && !isErrorResult);
     const compact = props.compact ?? (mode === 'row' && claimedElsewhere && props.phase === 'result');
     // Edits and action state live in a store keyed by session + call + surface, so
     // the row and the turn tail show the same values when the card changes hands.
@@ -7298,7 +7358,7 @@ function A2UIToolView(props) {
     const inFlight = React.useRef(new Set());
     const keyFor = React.useCallback((surfaceId) => stateKey(sessionId, props.callId, surfaceId), [sessionId, props.callId]);
     const locale = runtime.locale();
-    const isErrorResult = props.phase === 'result' && props.block?.isError === true;
+    /** The Host's error message, kept for the process row's one-line trace. */
     const errorText = isErrorResult ? textOfContent(props.block?.content) : '';
     const setValue = React.useCallback((surfaceId, pointer, value) => {
         writeModel(keyFor(surfaceId), pointer, value);
@@ -7398,10 +7458,19 @@ function A2UIToolView(props) {
         });
     }
     const header = h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')));
-    // A failed call never renders operable content: without this, an error result
-    // with empty content would fall through and rebuild the surfaces from `meta`.
+    // A failed call has no interface to show. The turn tail drops it entirely, so
+    // the conversation never gains a red "this call failed" card; the process row
+    // keeps one neutral line instead of vanishing without a trace, so the
+    // transcript still records that the call happened and why it failed. The
+    // error itself remains the tool result the agent reads and retries from.
     if (isErrorResult) {
-        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText === '' ? t('failedGeneric') : errorText, error: true }))));
+        if (mode === 'tail')
+            return null;
+        const reason = errorText
+            .split('\n')
+            .map((line) => line.trim())
+            .find((line) => line !== '') ?? '';
+        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-pointer', title: errorText === '' ? undefined : errorText }, sparkle('a2ui-pointer-icon'), h('span', { className: 'a2ui-pointer-text' }, reason === '' ? payload.title ?? t('title') : reason), h('span', { className: 'a2ui-pointer-meta' }, t('failedCompact'))));
     }
     if (!analysis.ok) {
         return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: `${t('invalidHint')}\n${formatViolations(analysis.errors)}`, error: true }))));
@@ -7469,6 +7538,18 @@ function toolPhaseOf(root) {
         return 'result';
     return root.phase === 'preparing' ? 'preparing' : 'start';
 }
+/**
+ * Whether a settled call ended in an error.
+ *
+ * The Host throws on a rejected payload, so the transcript node is a
+ * `tool-result` with `isError: true` and no replay `meta`. Such a call has no
+ * interface to show and is deliberately not drawn as a card: the error is still
+ * the tool result the agent sees and retries from, but the conversation gets no
+ * red "this call failed" card.
+ */
+function isFailedResult(root) {
+    return root?.kind === 'tool-result' && root.isError === true;
+}
 /** The wire tool name of a block, whichever stage it is in. */
 function blockToolName(root) {
     if (root === undefined)
@@ -7533,6 +7614,8 @@ function rootsFromToolData(entries, toolName = 'a2ui') {
         const root = entry.root;
         if (!isA2uiRoot(root, toolName))
             continue;
+        if (isFailedResult(root))
+            continue;
         out.push({ key: root?.callId ?? `tool-${index}`, root: root, phase: toolPhaseOf(root) });
     }
     return out;
@@ -7562,6 +7645,8 @@ function rootsFromTurnNodes(turnNumber, keys, nodes, toolName = 'a2ui') {
         const root = node.data?.root;
         if (!isA2uiRoot(root, toolName))
             continue;
+        if (isFailedResult(root))
+            continue;
         out.push({ key, root: root, phase: toolPhaseOf(root) });
     }
     return out;
@@ -7586,12 +7671,15 @@ function collectA2uiRoots(order, nodes, turnNumber, toolName = 'a2ui') {
         const root = node.data?.root;
         if (!isA2uiRoot(root, toolName))
             continue;
+        if (isFailedResult(root))
+            continue;
         entries.push({ key, root: root, phase: toolPhaseOf(root) });
     }
     return entries;
 }
 
 exports["toolPhaseOf"] = toolPhaseOf;
+exports["isFailedResult"] = isFailedResult;
 exports["blockToolName"] = blockToolName;
 exports["nodeTurn"] = nodeTurn;
 exports["isA2uiRoot"] = isA2uiRoot;

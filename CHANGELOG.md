@@ -3,6 +3,28 @@
 All notable changes to this plugin. Version numbers follow [SemVer](https://semver.org/); the
 `engines.dsh` range states which DeepSeek Harness releases a version was verified against.
 
+## Unreleased
+
+### Changed
+
+- **A failed call draws no card.** When the tool result is an error (the payload was rejected), the
+  conversation and the turn tail render nothing at all; the process row keeps one neutral trace line
+  (the first line of the error plus `Call failed` / `调用失败`) so the transcript still records the call.
+  The full error text stays in the tool result the agent reads and retries from.
+
+### Fixed
+
+- Calls without a `title` no longer fail with `output.presentationMeta returned non-lossless JSON`:
+  the host omits the key instead of storing `undefined`.
+- `Text` accepts the official `usageHint` spelling (`h1`–`h5` and `body` render as body text,
+  `caption` as caption) as an alias of `variant`; a disagreement between the two is one conflict error.
+- `Row`/`Column` `justify` accepts the CSS kebab-case spellings (`space-between`, `space-around`,
+  `space-evenly`) as well as the camelCase ones.
+
+### Documentation
+
+- `a2ui_catalog` documents `weight`, the full `justify` value set, and minimal `Table`, `Text` and
+  weighted-`Row` examples (a Table row is a record keyed by column key, not an array).
 ## 0.3.0 — 2026-11-15
 
 Progressive streaming release. The card is now drawn **while** the model is still writing the tool

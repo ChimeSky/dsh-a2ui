@@ -189,15 +189,50 @@ const PROPERTY_ALIASES: ReadonlyArray<readonly [string, string]> = [
   ['@metadata', 'metadata'],
 ]
 
+/**
+ * Aliases that also translate the value.
+ *
+ * The official basic catalog spells text emphasis `usageHint` (`h1`…`h5`,
+ * `body`, `caption`) where this renderer's `Text` uses `variant`. Every heading
+ * level is admitted and renders as body text, so an official example never
+ * fails validation over a spelling difference.
+ */
+const VALUE_ALIASES: ReadonlyArray<{
+  readonly component: string
+  readonly alias: string
+  readonly name: string
+  readonly translate: (value: unknown) => unknown
+}> = [
+  {
+    component: 'Text',
+    alias: 'usageHint',
+    name: 'variant',
+    translate: (value: unknown): unknown => (value === 'caption' ? 'caption' : 'body'),
+  },
+]
+
 function normalizeAliases(component: unknown, path: string, out: Violation[]): unknown {
   if (!isPlainObject(component)) return component
-  let normalized: Record<string, unknown> | undefined
+  const renames: Array<readonly [string, string, unknown]> = []
   for (const [alias, name] of PROPERTY_ALIASES) {
     if (!Object.prototype.hasOwnProperty.call(component, alias)) continue
-    const value = component[alias]
+    renames.push([alias, name, component[alias]])
+  }
+  const kind = typeof component.component === 'string' ? component.component : ''
+  for (const rule of VALUE_ALIASES) {
+    if (rule.component !== kind) continue
+    if (!Object.prototype.hasOwnProperty.call(component, rule.alias)) continue
+    renames.push([rule.alias, rule.name, rule.translate(component[rule.alias])])
+  }
+  let normalized: Record<string, unknown> | undefined
+  for (const [alias, name, value] of renames) {
     if (Object.prototype.hasOwnProperty.call(component, name)) {
       if (JSON.stringify(component[name]) !== JSON.stringify(value)) {
         fail(out, `${path}/${alias}`, `conflicts with "${name}"; keep one of them`)
+        // Drop the alias anyway: the conflict is already fatal, so a second
+        // "is not a property" complaint would only bury the real message.
+        normalized = normalized ?? { ...component }
+        delete normalized[alias]
         continue
       }
       normalized = normalized ?? { ...component }

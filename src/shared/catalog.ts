@@ -77,7 +77,19 @@ const checks = arr(
   { max: LIMITS.maxChecks },
 )
 
-const justifyEnum = ['start', 'center', 'end', 'stretch', 'spaceAround', 'spaceBetween', 'spaceEvenly'] as const
+const justifyEnum = [
+  'start',
+  'center',
+  'end',
+  'stretch',
+  'spaceAround',
+  'spaceBetween',
+  'spaceEvenly',
+  // The published catalog examples also spell these in CSS kebab-case.
+  'space-around',
+  'space-between',
+  'space-evenly',
+] as const
 const alignEnum = ['start', 'center', 'end', 'stretch'] as const
 
 /* ------------------------------------------------------------------ */
@@ -88,7 +100,8 @@ const BASIC_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'Text',
     origin: 'basic',
-    summary: 'A paragraph or caption. Supports **bold**, *italic* and `code` inline Markdown.',
+    summary:
+      'A paragraph or caption. Supports **bold**, *italic* and `code` inline Markdown. Accepts the official `usageHint` (h1–h5/body render as body text, caption as caption) as an alias of `variant`.',
     properties: {
       text: dynStr,
       variant: str({ enum: ['caption', 'body'] }),
@@ -603,6 +616,13 @@ export function describeCatalog(detail: 'brief' | 'full' = 'full'): string {
     lines.push(`Functions: ${BASIC_FUNCTION_NAMES.join(', ')}.`)
     lines.push('Child references: Card/Button take "child"; Row/Column/List take "children" (array of ids, or {"componentId","path"} for a data-model list); Tabs take "tabs":[{"title","child"}]; Modal takes "trigger" and "content".')
     lines.push('Actions: {"event":{"name":"submit","userMessage":"...","context":{"field":{"@path":"/field"}}}} sends an action to you; {"functionCall":{...}} runs locally.')
+    lines.push('Every component accepts "weight", but it only lays out as a share of a Row (or a horizontal List); elsewhere it is inert.')
+    lines.push(`Row/Column "justify" accepts ${justifyEnum.join('|')}.`)
+    lines.push('Aliases: Text also takes the official "usageHint" (h1–h5 and body render as body text, caption as caption) in place of "variant".')
+    lines.push('Minimal examples:')
+    lines.push('  Table: {"id":"t","component":"Table","columns":[{"key":"name","label":"Name"},{"key":"count","label":"Count","format":"number","align":"end"}],"rows":[{"name":"alpha","count":3},{"name":"beta","count":5}]} — each row is a record keyed by column key, not an array.')
+    lines.push('  Text: {"id":"tx","component":"Text","text":"hello","usageHint":"body"} (official spelling; "variant":"caption" also works).')
+    lines.push('  Weighted row: {"id":"row","component":"Row","children":["left","right"]} with "weight":2 on the "left" component.')
   }
   return lines.join('\n')
 }
