@@ -92,8 +92,10 @@ export function A2uiTurnTail(props: TurnTailProps): ReturnType<typeof h> | null 
 
   const entries: A2uiRootEntry[] = React.useMemo(() => {
     void turnToolData
-    if (turnKeys !== undefined) return rootsFromTurnNodes(turnNumber, turnKeys, nodes, 'a2ui')
-    return collectA2uiRoots(order, nodes, turnNumber, 'a2ui')
+    const roots = turnKeys === undefined
+      ? collectA2uiRoots(order, nodes, turnNumber, 'a2ui')
+      : rootsFromTurnNodes(turnNumber, turnKeys, nodes, 'a2ui')
+    return roots.filter(({ phase, root }) => phase !== 'result' || root.isError !== true)
   }, [turnKeys, turnToolData, order, nodes, turnNumber])
 
   if (entries.length === 0) return null

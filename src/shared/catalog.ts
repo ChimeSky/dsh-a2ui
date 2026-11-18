@@ -339,7 +339,7 @@ const EXTENSION_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'Table',
     origin: 'extension',
-    summary: 'A data table. Columns are declared once; rows are a list of records keyed by column key.',
+    summary: `A data table with rows keyed by column key. Up to the first ${LIMITS.maxTableRows} rows can be viewed.`,
     properties: {
       columns: arr(
         obj(
@@ -369,7 +369,7 @@ const EXTENSION_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'BarChart',
     origin: 'extension',
-    summary: 'A categorical bar chart drawn as inline SVG.',
+    summary: 'A categorical bar chart. Provide one value per category in order.',
     properties: { ...chartCommon, horizontal: bool, stacked: bool },
     required: ['categories', 'series'],
     childStyle: 'none',
@@ -377,7 +377,7 @@ const EXTENSION_COMPONENTS: readonly ComponentSpec[] = [
   {
     name: 'LineChart',
     origin: 'extension',
-    summary: 'A line or area chart with optional point markers.',
+    summary: 'A line or area chart. Provide one value per category in order.',
     properties: {
       ...chartCommon,
       area: bool,
@@ -603,6 +603,14 @@ export function describeCatalog(detail: 'brief' | 'full' = 'full'): string {
     lines.push(`Functions: ${BASIC_FUNCTION_NAMES.join(', ')}.`)
     lines.push('Child references: Card/Button take "child"; Row/Column/List take "children" (array of ids, or {"componentId","path"} for a data-model list); Tabs take "tabs":[{"title","child"}]; Modal takes "trigger" and "content".')
     lines.push('Actions: {"event":{"name":"submit","userMessage":"...","context":{"field":{"@path":"/field"}}}} sends an action to you; {"functionCall":{...}} runs locally.')
+    lines.push('Layout: positive "weight" lets siblings share available space along their parent flex layout. Use it for widths in Row or horizontal List, and for heights in Column or vertical List.')
+    lines.push(`Row/Column "justify" values: ${justifyEnum.join(', ')}. The CSS spellings space-around, space-between and space-evenly are accepted as aliases.`)
+    lines.push(`Table rows are objects keyed by column key. The table makes only the first ${LIMITS.maxTableRows} rows available when there are more.`)
+    lines.push('BarChart/LineChart: provide one value per category in the same order. Use zero only when the value is actually zero.')
+    lines.push('Minimal component examples:')
+    lines.push('  Text: {"id":"root","component":"Text","text":"Summary","variant":"body"}')
+    lines.push('  Table: {"id":"root","component":"Table","columns":[{"key":"name","label":"Name"}],"rows":[{"name":"Alpha"}]}')
+    lines.push('  Weighted Row: [{"id":"root","component":"Row","children":["left","right"]},{"id":"left","component":"Text","text":"Wide","weight":2},{"id":"right","component":"Text","text":"Narrow","weight":1}]')
   }
   return lines.join('\n')
 }

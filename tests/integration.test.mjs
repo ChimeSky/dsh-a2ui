@@ -148,6 +148,24 @@ test('the tool executes a valid payload and renders a compact summary', async ()
   assert.equal(meta.messagesOmitted, undefined)
 })
 
+test('valid calls with no title return lossless presentation metadata', async () => {
+  const tool = mount({}).tools_().get('a2ui')
+  const create = {
+    version: '1.0',
+    createSurface: { surfaceId: 's', components: [{ id: 'root', component: 'Text', text: 'Hello' }] },
+  }
+  const remove = (surfaceId) => ({ version: '1.0', deleteSurface: { surfaceId } })
+  for (const messages of [[create], [remove('s')], [remove('s'), remove('other')]]) {
+    const args = { messages }
+    const value = await tool.execute(args, { signal: new AbortController().signal })
+    assert.equal(value.ok, true)
+    const meta = tool.output.presentationMeta(args, value)
+    assert.equal(Object.hasOwn(meta, 'title'), false)
+    assert.deepEqual(meta, JSON.parse(JSON.stringify(meta)))
+    assert.deepEqual(meta.messages, messages)
+  }
+})
+
 test('the tool rejects an invalid payload with path-qualified reasons', async () => {
   const ctx = mount({})
   const tool = ctx.tools_().get('a2ui')

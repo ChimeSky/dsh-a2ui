@@ -324,6 +324,150 @@ for (const [mode, options, anchor, expectedLeft, expectedTop] of [
   })
 }
 
+test('bar charts leave missing categories blank without shifting later bound values', () => {
+  for (const options of [{}, { stacked: true }, { horizontal: true }]) {
+    const render = (values) => {
+      const messages = [{
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'bar-gaps',
+          dataModel: { points: [2, null, '0', 4, 999] },
+          components: [{
+            id: 'root',
+            component: 'BarChart',
+            categories: ['Alpha', 'Beta', 'Gamma', 'Delta'],
+            series: [{ label: 'Series', values }],
+            ...options,
+          }],
+        },
+      }]
+      const view = mount(React.createElement(View, viewProps({ block: surfaceBlock(messages) })))
+      try {
+        const svg = query(view.container, '.a2ui-bar-plot svg')
+        const bars = [...svg.querySelectorAll('rect[rx="2"]')]
+        const position = options.horizontal ? 'y' : 'x'
+        const size = options.horizontal ? 'width' : 'height'
+        return {
+          positions: bars.map((bar) => bar.getAttribute(position)),
+          sizes: bars.map((bar) => bar.getAttribute(size)),
+          summary: svg.getAttribute('aria-label'),
+        }
+      } finally {
+        view.unmount()
+      }
+    }
+    const full = render([2, 3, 0, 4])
+    assert.equal(full.positions.length, 4)
+    const short = render([2, 3])
+    assert.deepEqual(short.positions, full.positions.slice(0, 2))
+    const bound = render({ '@path': '/points' })
+    assert.deepEqual(bound.positions, [full.positions[0], full.positions[2], full.positions[3]])
+    assert.equal(bound.sizes[1], '0.5', 'an actual zero still has its baseline mark')
+    assert.match(bound.summary, /Total 6 \(min 0, max 4\)/u)
+  }
+})
+
+test('line charts preserve category positions, gaps and zero in bound data', () => {
+  const categories = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+  for (const curve of ['linear', 'smooth']) {
+    const messages = [{
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'line-gaps',
+        dataModel: { points: [null, 1, 2, 3, null, '0', 4, null] },
+        components: [{
+          id: 'root',
+          component: 'LineChart',
+          categories,
+          series: [{ label: 'Series', values: { '@path': '/points' } }],
+          area: true,
+          curve,
+        }],
+      },
+    }]
+    const view = mount(React.createElement(View, viewProps({ block: surfaceBlock(messages) })))
+    try {
+      const svg = query(view.container, '.a2ui-axis')
+      const labels = [...svg.querySelectorAll('text[text-anchor="middle"]')]
+      assert.deepEqual(labels.map((label) => label.textContent), categories)
+      const positions = labels.map((label) => Number(label.getAttribute('x')))
+      const points = [...svg.querySelectorAll('circle')]
+      assert.deepEqual(points.map((point) => Number(point.getAttribute('cx'))), [1, 2, 3, 5, 6].map((index) => positions[index]))
+
+      const lines = [...svg.querySelectorAll('path[stroke-width="2"]')].map((path) => path.getAttribute('d'))
+      const areas = [...svg.querySelectorAll('path[opacity="0.14"]')].map((path) => path.getAttribute('d'))
+      assert.equal(lines.length, 2)
+      assert.equal(areas.length, 2)
+      assert.ok(lines[0].startsWith(`M${positions[1].toFixed(2)},`))
+      assert.ok(lines[1].startsWith(`M${positions[5].toFixed(2)},`))
+      assert.equal(lines[0].includes(' C'), curve === 'smooth')
+      assert.ok(areas.every((path, index) => path.startsWith(lines[index]) && path.endsWith(' Z')))
+
+      const bands = svg.querySelectorAll('rect[fill="transparent"]')
+      act(() => bands[4].dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
+      assert.equal(svg.querySelector('.a2ui-tip'), null)
+      act(() => bands[4].dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true })))
+      act(() => bands[5].dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
+      assert.deepEqual([...query(svg, '.a2ui-tip').querySelectorAll('text')].map((label) => label.textContent), ['F', 'Series: 0'])
+    } finally {
+      view.unmount()
+    }
+  }
+})
+
+test('a table discloses truncation for both literal and bound rows and still expands', () => {
+  const rows = Array.from({ length: 501 }, (_, index) => ({ id: index + 1 }))
+  for (const values of [rows, { '@path': '/rows' }, rows.slice(0, 500)]) {
+    const messages = [{
+      version: '1.0',
+      createSurface: {
+        surfaceId: 'table-limit',
+        dataModel: { rows },
+        components: [{ id: 'root', component: 'Table', columns: [{ key: 'id', label: 'ID' }], rows: values }],
+      },
+    }]
+    const view = mount(React.createElement(View, viewProps({ block: surfaceBlock(messages) })))
+    try {
+      const limited = values === rows || !Array.isArray(values)
+      assert.equal(view.container.querySelectorAll('tbody tr').length, 40)
+      assert.equal(view.container.textContent.includes('Only the first 500 of 501 rows'), limited)
+      assert.match(query(view.container, '.a2ui-btn-borderless').textContent, limited ? /Show available rows \(500\)/u : /Show all \(500\)/u)
+      click(query(view.container, '.a2ui-btn-borderless'))
+      assert.equal(view.container.querySelectorAll('tbody tr').length, 500)
+      assert.equal(query(view.container, 'tbody tr:last-child').textContent, '500')
+    } finally {
+      view.unmount()
+    }
+  }
+})
+
+test('FramePlayer bars scale proportionally without stretching across the card', () => {
+  const messages = [{
+    version: '1.0',
+    createSurface: {
+      surfaceId: 'player-height',
+      components: [{
+        id: 'root', component: 'FramePlayer', mode: 'bars',
+        frames: [{ items: [{ label: 'One', value: 1 }, { label: 'Two', value: 2 }] }],
+      }],
+    },
+  }]
+  const view = mount(React.createElement(View, viewProps({ block: surfaceBlock(messages) })))
+  try {
+    const bars = query(view.container, '.a2ui-bars')
+    const marks = [...bars.querySelectorAll('.a2ui-bar')]
+    assert.equal(window.getComputedStyle(bars).height, '120px')
+    assert.equal(window.getComputedStyle(bars).justifyContent, 'safe center')
+    assert.ok(marks.every((bar) => window.getComputedStyle(bar).maxWidth === '64px'))
+    assert.deepEqual(marks.map((bar) => bar.style.height), ['50%', '100%'])
+    const css = query(window.document, 'style[data-plugin="dsh-a2ui"]').textContent
+    const baseBar = css.match(/\.a2ui-bar\{[^}]+\}/u)?.[0] ?? ''
+    assert.match(baseBar, /background:color-mix\(in srgb,var\(--dsw-alias-brand-primary/u)
+  } finally {
+    view.unmount()
+  }
+})
+
 test('arrow keys move the selected tab and keep focus in the tab strip', () => {
   const messages = [
     {
@@ -415,6 +559,70 @@ test('a modal traps focus, closes on Escape and returns focus to its trigger', (
  * clicks); the behavioural half is asserted separately: a click on a preview
  * button queues nothing, and the same call once settled is a normal card again.
  */
+test('a failed call keeps expandable diagnostics in its process row', () => {
+  const block = {
+    ...surfaceBlock(formMessages()),
+    isError: true,
+    content: [{ type: 'text', text: '\nRejected input\r\n- /messages/0: invalid' }],
+  }
+  const props = viewProps({ block })
+  const view = mount(React.createElement(View, props))
+  try {
+    const disclosure = query(view.container, 'details')
+    const summary = query(disclosure, 'summary')
+    assert.match(summary.textContent, /Rejected input.*Call failed/u)
+    assert.doesNotMatch(summary.textContent, /\/messages\/0/u)
+    assert.equal(disclosure.open, false)
+    assert.equal(view.container.querySelector('.a2ui-notice-error'), null)
+    assert.equal(view.container.querySelector('input'), null, 'failed results never revive their replay payload')
+    click(summary)
+    assert.equal(disclosure.open, true)
+    assert.match(query(disclosure, 'pre').textContent, /\/messages\/0: invalid/u)
+
+    view.render(React.createElement(View, { ...props, block: { ...block, content: [] } }))
+    assert.match(query(view.container, 'pre').textContent, /This call failed/u)
+  } finally {
+    view.unmount()
+  }
+})
+
+test('the turn tail keeps successful cards and omits failed-only containers', () => {
+  const messages = [{
+    version: '1.0',
+    createSurface: {
+      surfaceId: 'successful',
+      components: [{ id: 'root', component: 'Text', text: 'Successful retry' }],
+    },
+  }]
+  const success = surfaceBlock(messages)
+  const failed = {
+    ...surfaceBlock(formMessages()),
+    callId: 'failed-call',
+    isError: true,
+    content: [{ type: 'text', text: 'Rejected input' }],
+  }
+  const failedNodes = new Map([['failed', nodeFor(failed, 1)]])
+  const mixedNodes = new Map([...failedNodes, ['success', nodeFor(success, 1)]])
+  for (const withLocations of [true, false]) {
+    const props = (nodes) => {
+      const result = tailProps('session-failure-tail', nodes, 1)
+      if (!withLocations) result.useChat = (select) => select({ order: [...nodes.keys()], nodes })
+      return result
+    }
+    const view = mount(React.createElement(Tail, props(mixedNodes)))
+    try {
+      assert.equal(view.container.querySelectorAll('.a2ui-card').length, 1)
+      assert.match(view.container.textContent, /Successful retry/u)
+      assert.doesNotMatch(view.container.textContent, /Rejected input|Call failed/u)
+
+      view.render(React.createElement(Tail, props(failedNodes)))
+      assert.equal(view.container.querySelector('.a2ui-tail'), null)
+    } finally {
+      view.unmount()
+    }
+  }
+})
+
 test('the generating preview body is inert and hands over to an interactive card', () => {
   const sessionId = 'session-stream-dom'
   const callId = 'call_stream_dom'

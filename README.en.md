@@ -3,10 +3,10 @@
 > **Make data-heavy AI answers easier to understand.**
 > *Let the agent answer with an inline, on-demand A2UI surface when a picture explains better than a paragraph.*
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](./CHANGELOG.md)
 [![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
-[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
-[![React Tests](https://img.shields.io/badge/react%20tests-17%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-171%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![React Tests](https://img.shields.io/badge/react%20tests-19%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
 
 [简体中文](./README.md) | [Changelog](./CHANGELOG.md) | [Architecture](./docs/ARCHITECTURE.md) | [Test report](./docs/TEST-REPORT.md)
@@ -35,8 +35,8 @@ Its goal is **not** to build a persistent dashboard or an app workbench. It is t
 
 The plugin ships as a bundle (`dsh.bundle` + `dsh.client`): the repository root is the installable package, and the build artifacts are committed, so installing does not compile anything.
 
-- **From GitHub (recommended)**: `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.0`
-- **Frozen tarball**: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.0.tgz`, or run `tools/install.ps1`
+- **From GitHub (recommended)**: `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
+- **Frozen tarball**: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.1.tgz`, or run `tools/install.ps1`
 - **DSH plugin manager**: `plugin_manager action=install_bundle target=<absolute path or tarball>`
 
 Replace `desktop` with the target profile (usually `web` for the web build). Replacing an installed package requires a DSH restart to load the new JavaScript module generation.
@@ -234,7 +234,7 @@ npm run pack:vendor              # regenerate vendor/dsh-a2ui-<version>.tgz
 npm run all                      # all of the above
 ```
 
-Current scale: 160 automated cases (10 jsdom DOM cases, 26 streaming cases, 43 official examples), 17 real-React render cases and 32 bundle invariants. Details and the split between "verified in a real DSH" and "verified headlessly only" are in [docs/TEST-REPORT.md](docs/TEST-REPORT.md); per-version changes are in [CHANGELOG.md](CHANGELOG.md).
+Current scale: 171 automated cases (18 jsdom DOM cases, 27 streaming cases, 43 official examples), 19 real-React render cases and 32 bundle invariants. Details and the split between "verified in a real DSH" and "verified headlessly only" are in [docs/TEST-REPORT.md](docs/TEST-REPORT.md); per-version changes are in [CHANGELOG.md](CHANGELOG.md).
 
 `index.js`, `lib/**` and `client.js` are build artifacts committed to the repository so that `dsh plugin add github:` works without a build step; rerun `npm run build` and commit after changing `src/`. The build never deletes a file and does not use esbuild (the sandbox refuses its native service pipes).
 

@@ -327,6 +327,38 @@ test('official incremental messages prepare and update the model before the root
   assert.deepEqual(preview.surfaces[0].dataModel, settled.states.get(preview.surfaces[0].surfaceId).dataModel)
 })
 
+test('a data model update waits for the complete message before replacing any data', () => {
+  const initial = { name: 'Ada', details: { city: 'London', country: 'UK' } }
+  const create = {
+    version: '1.0',
+    createSurface: {
+      surfaceId: 'model',
+      dataModel: initial,
+      components: [{ id: 'root', component: 'Text', text: { '@path': '/name' } }],
+    },
+  }
+  for (const [updateDataModel, pendingField, expected] of [
+    [{ surfaceId: 'model', value: 'Bob', path: '/name' }, ',"path":', { ...initial, name: 'Bob' }],
+    [
+      { surfaceId: 'model', path: '/details', value: { city: 'Paris', country: 'France' } },
+      ',"country":"France"',
+      { ...initial, details: { city: 'Paris', country: 'France' } },
+    ],
+    [{ surfaceId: 'model', value: { name: 'Bob' } }, undefined, { name: 'Bob' }],
+  ]) {
+    const args = JSON.stringify({ messages: [create, { version: '1.0', updateDataModel }] })
+    const cut = pendingField === undefined ? args.length - 3 : args.indexOf(pendingField)
+    const pending = foldStreaming(args.slice(0, cut))
+    assert.equal(pending.streaming, true)
+    assert.equal(pending.truncated, false)
+    assert.deepEqual(pending.surfaces[0].dataModel, initial)
+
+    const closedMessage = foldStreaming(args.slice(0, -2))
+    assert.equal(closedMessage.streaming, true, 'a closed message takes effect before the call closes')
+    assert.deepEqual(closedMessage.surfaces[0].dataModel, expected)
+  }
+})
+
 test('explicitly unsupported versions and closed messages without a version do not render', () => {
   const { version, ...rest } = SURFACE
   const backwards = { ...rest, version }

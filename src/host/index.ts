@@ -143,7 +143,7 @@ function buildTool(toolName: string, proactive: boolean, catalogTool = true): To
         const result = value as ToolResultValue
         const meta: Record<string, unknown> = {
           kind: 'a2ui',
-          title: typeof incoming.title === 'string' ? incoming.title : undefined,
+          ...(typeof incoming.title === 'string' ? { title: incoming.title } : {}),
           surfaces: result.surfaces,
         }
         const serializedMessages = safeStringify(incoming.messages)

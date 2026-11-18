@@ -362,7 +362,7 @@ function openExternal(url: string): void {
  * Cross-call updates therefore arrive as a later card (see README, "Known
  * limitations").
  */
-export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
+export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> | null {
   const { runtime, sessionId } = props
   const mode = props.mode ?? 'row'
   const t = runtime.t
@@ -382,8 +382,9 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
 
   // The tail copy claims the call; the row copy steps aside only while that
   // claim is held, and automatically restores the card when the tail unmounts.
+  const isErrorResult = props.phase === 'result' && props.block?.isError === true
   const claimedElsewhere = useCopyClaimed(sessionId, props.callId)
-  useClaimCopy(sessionId, props.callId, mode === 'tail')
+  useClaimCopy(sessionId, props.callId, mode === 'tail' && !isErrorResult)
   const compact = props.compact ?? (mode === 'row' && claimedElsewhere && props.phase === 'result')
 
   // Edits and action state live in a store keyed by session + call + surface, so
@@ -394,8 +395,6 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
   const keyFor = React.useCallback((surfaceId: string) => stateKey(sessionId, props.callId, surfaceId), [sessionId, props.callId])
 
   const locale = runtime.locale()
-  const isErrorResult = props.phase === 'result' && props.block?.isError === true
-  const errorText = isErrorResult ? textOfContent(props.block?.content) : ''
 
   const setValue = React.useCallback(
     (surfaceId: string, pointer: string, value: JsonValue) => {
@@ -523,13 +522,24 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> {
     h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')),
   )
 
-  // A failed call never renders operable content: without this, an error result
-  // with empty content would fall through and rebuild the surfaces from `meta`.
   if (isErrorResult) {
+    if (mode === 'tail') return null
+    const errorText = textOfContent(props.block?.content).trim()
+    const reason = errorText.split(/\r?\n/u, 1)[0] || payload.title || t('title')
     return h(
       'div',
       { className: 'a2ui-root' },
-      h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText === '' ? t('failedGeneric') : errorText, error: true }))),
+      h(
+        'details',
+        { className: 'a2ui-failure' },
+        h(
+          'summary',
+          { className: 'a2ui-pointer' },
+          h('span', { className: 'a2ui-pointer-text' }, reason),
+          h('span', { className: 'a2ui-pointer-meta' }, t('failedCompact')),
+        ),
+        h('pre', { className: 'a2ui-notice-body a2ui-failure-details' }, errorText || t('failedGeneric')),
+      ),
     )
   }
 

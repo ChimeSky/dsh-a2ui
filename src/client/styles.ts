@@ -112,8 +112,8 @@ export const CSS = `
 .a2ui-player{display:flex;flex-direction:column;gap:8px;min-width:0}
 .a2ui-player-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .a2ui-player-note{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-left:auto;font-variant-numeric:tabular-nums}
-.a2ui-bars{display:flex;align-items:flex-end;gap:6px;min-height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
-.a2ui-bar{flex:1;min-width:6px;border-radius:4px 4px 0 0;background:var(--dsw-alias-state-idle-primary);transition:height .16s ease,background .16s ease;position:relative}
+.a2ui-bars{display:flex;align-items:flex-end;justify-content:safe center;gap:6px;height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
+.a2ui-bar{flex:1;min-width:6px;max-width:64px;border-radius:4px 4px 0 0;background:var(--a2ui-c1);background:color-mix(in srgb,var(--dsw-alias-brand-primary,var(--a2ui-c1)) 64%,transparent);transition:height .16s ease,background .16s ease;position:relative}
 .a2ui-bar.a2ui-state-active{background:var(--dsw-alias-brand-primary)}
 .a2ui-bar.a2ui-state-compare{background:var(--dsw-alias-state-warn-primary)}
 .a2ui-bar.a2ui-state-sorted,.a2ui-bar.a2ui-state-done{background:var(--dsw-alias-state-success-primary)}
@@ -132,6 +132,10 @@ export const CSS = `
 .a2ui-pointer-icon svg{width:100%;height:100%}
 .a2ui-pointer-text{color:var(--dsw-alias-label-primary);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .a2ui-pointer-meta{margin-left:auto;flex:none;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.a2ui-failure>summary{cursor:pointer;list-style:none}
+.a2ui-failure>summary::before{content:'▸';flex:none}
+.a2ui-failure[open]>summary::before{content:'▾'}
+.a2ui-failure-details{margin:4px 0 0;padding:8px 11px}
 .a2ui-tail{display:flex;flex-direction:column;gap:10px;min-width:0;margin:6px 0 2px}
 .a2ui-card-streaming{border-style:dashed}
 .a2ui-card-state{margin-left:auto;flex:none;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-brand-primary);opacity:.85}

@@ -272,6 +272,19 @@ renderCase('official 00_incremental renders every row', View, { ...baseProps, ph
   'Book now',
 ])
 
+for (const [xMin, xMax] of [[2, 2], [3, 1]]) {
+  const messages = [{
+    version: '1.0',
+    createSurface: {
+      surfaceId: 'plot-range',
+      components: [{ id: 'root', component: 'Plot', xMin, xMax, plots: [{ label: 'Square', expression: 'x*x' }] }],
+    },
+  }]
+  renderCase(`plot reports an invalid range (${xMin}, ${xMax})`, View,
+    { ...baseProps, phase: 'result', block: block(messages, 'Plot range') },
+    ['The plot range requires xMin to be less than xMax.'], ['Invalid function expression'])
+}
+
 renderCase('preparing shows a skeleton', View, { ...baseProps, phase: 'preparing', block: { phase: 'preparing', callId: 'call_p', name: 'a2ui', subCalls: [] } }, ['Building interface'])
 
 /* Render preparing against the same Session binding used by the browser. */
@@ -336,7 +349,7 @@ renderCase('settled path still rejects the same illegal payload', View, { ...bas
 ])
 
 renderCase(
-  'host rejection is readable',
+  'host rejection has a compact row with expandable diagnostics',
   View,
   {
     ...baseProps,
@@ -351,7 +364,8 @@ renderCase(
       meta: undefined,
     },
   },
-  ['payload rejected', '/messages/0'],
+  ['Call failed', '<details', 'payload rejected', '/messages/0'],
+  ['a2ui-notice-error'],
 )
 
 renderCase(

@@ -58,8 +58,11 @@ const zh = {
     chooseMultiple: '可选择多项',
     noOptions: '没有可选项',
     tableEmpty: '暂无数据',
+    tableRowLimit: '共 {total} 行，仅保留前 {limit} 行供查看。',
+    tableShowAvailable: '显示可查看的行',
     chartEmpty: '没有可绘制的数据',
     plotInvalid: '函数表达式无效',
+    plotInvalidRange: '绘图范围无效，xMin 必须小于 xMax。',
     play: '播放',
     pause: '暂停',
     step: '单步',
@@ -81,6 +84,7 @@ const zh = {
     sortHint: '点击排序（仅本地）',
     sendsMessage: '点击后会向 AI 发送一条消息',
     failedGeneric: '这次调用失败了，没有可显示的界面。',
+    failedCompact: '调用失败',
     otherSlices: '其他',
     groupedSlices: '归入「其他」的类别数',
 };
@@ -110,8 +114,11 @@ const en = {
     chooseMultiple: 'Choose any',
     noOptions: 'No options',
     tableEmpty: 'No data',
+    tableRowLimit: 'Only the first {limit} of {total} rows are available in this table.',
+    tableShowAvailable: 'Show available rows',
     chartEmpty: 'Nothing to plot',
     plotInvalid: 'Invalid function expression',
+    plotInvalidRange: 'The plot range requires xMin to be less than xMax.',
     play: 'Play',
     pause: 'Pause',
     step: 'Step',
@@ -133,6 +140,7 @@ const en = {
     sortHint: 'Click to sort (local only)',
     sendsMessage: 'Clicking sends a message to the agent',
     failedGeneric: 'This call failed, so there is no interface to show.',
+    failedCompact: 'Call failed',
     otherSlices: 'Other',
     groupedSlices: 'Categories grouped as Other',
 };
@@ -258,8 +266,8 @@ const CSS = `
 .a2ui-player{display:flex;flex-direction:column;gap:8px;min-width:0}
 .a2ui-player-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .a2ui-player-note{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-left:auto;font-variant-numeric:tabular-nums}
-.a2ui-bars{display:flex;align-items:flex-end;gap:6px;min-height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
-.a2ui-bar{flex:1;min-width:6px;border-radius:4px 4px 0 0;background:var(--dsw-alias-state-idle-primary);transition:height .16s ease,background .16s ease;position:relative}
+.a2ui-bars{display:flex;align-items:flex-end;justify-content:safe center;gap:6px;height:120px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 2px 0}
+.a2ui-bar{flex:1;min-width:6px;max-width:64px;border-radius:4px 4px 0 0;background:var(--a2ui-c1);background:color-mix(in srgb,var(--dsw-alias-brand-primary,var(--a2ui-c1)) 64%,transparent);transition:height .16s ease,background .16s ease;position:relative}
 .a2ui-bar.a2ui-state-active{background:var(--dsw-alias-brand-primary)}
 .a2ui-bar.a2ui-state-compare{background:var(--dsw-alias-state-warn-primary)}
 .a2ui-bar.a2ui-state-sorted,.a2ui-bar.a2ui-state-done{background:var(--dsw-alias-state-success-primary)}
@@ -278,6 +286,10 @@ const CSS = `
 .a2ui-pointer-icon svg{width:100%;height:100%}
 .a2ui-pointer-text{color:var(--dsw-alias-label-primary);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .a2ui-pointer-meta{margin-left:auto;flex:none;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.a2ui-failure>summary{cursor:pointer;list-style:none}
+.a2ui-failure>summary::before{content:'▸';flex:none}
+.a2ui-failure[open]>summary::before{content:'▾'}
+.a2ui-failure-details{margin:4px 0 0;padding:8px 11px}
 .a2ui-tail{display:flex;flex-direction:column;gap:10px;min-width:0;margin:6px 0 2px}
 .a2ui-card-streaming{border-style:dashed}
 .a2ui-card-state{margin-left:auto;flex:none;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-brand-primary);opacity:.85}
@@ -2673,7 +2685,7 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'Table',
         origin: 'extension',
-        summary: 'A data table. Columns are declared once; rows are a list of records keyed by column key.',
+        summary: `A data table with rows keyed by column key. Up to the first ${LIMITS.maxTableRows} rows can be viewed.`,
         properties: {
             columns: arr(obj({
                 key: str({ minLength: 1 }),
@@ -2697,7 +2709,7 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'BarChart',
         origin: 'extension',
-        summary: 'A categorical bar chart drawn as inline SVG.',
+        summary: 'A categorical bar chart. Provide one value per category in order.',
         properties: { ...chartCommon, horizontal: bool, stacked: bool },
         required: ['categories', 'series'],
         childStyle: 'none',
@@ -2705,7 +2717,7 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'LineChart',
         origin: 'extension',
-        summary: 'A line or area chart with optional point markers.',
+        summary: 'A line or area chart. Provide one value per category in order.',
         properties: {
             ...chartCommon,
             area: bool,
@@ -2899,6 +2911,14 @@ function describeCatalog(detail = 'full') {
         lines.push(`Functions: ${BASIC_FUNCTION_NAMES.join(', ')}.`);
         lines.push('Child references: Card/Button take "child"; Row/Column/List take "children" (array of ids, or {"componentId","path"} for a data-model list); Tabs take "tabs":[{"title","child"}]; Modal takes "trigger" and "content".');
         lines.push('Actions: {"event":{"name":"submit","userMessage":"...","context":{"field":{"@path":"/field"}}}} sends an action to you; {"functionCall":{...}} runs locally.');
+        lines.push('Layout: positive "weight" lets siblings share available space along their parent flex layout. Use it for widths in Row or horizontal List, and for heights in Column or vertical List.');
+        lines.push(`Row/Column "justify" values: ${justifyEnum.join(', ')}. The CSS spellings space-around, space-between and space-evenly are accepted as aliases.`);
+        lines.push(`Table rows are objects keyed by column key. The table makes only the first ${LIMITS.maxTableRows} rows available when there are more.`);
+        lines.push('BarChart/LineChart: provide one value per category in the same order. Use zero only when the value is actually zero.');
+        lines.push('Minimal component examples:');
+        lines.push('  Text: {"id":"root","component":"Text","text":"Summary","variant":"body"}');
+        lines.push('  Table: {"id":"root","component":"Table","columns":[{"key":"name","label":"Name"}],"rows":[{"name":"Alpha"}]}');
+        lines.push('  Weighted Row: [{"id":"root","component":"Row","children":["left","right"]},{"id":"left","component":"Text","text":"Wide","weight":2},{"id":"right","component":"Text","text":"Narrow","weight":1}]');
     }
     return lines.join('\n');
 }
@@ -3016,6 +3036,11 @@ const PROPERTY_ALIASES = [
     ['@accessibility', 'accessibility'],
     ['@metadata', 'metadata'],
 ];
+const CSS_JUSTIFY_ALIASES = new Map([
+    ['space-around', 'spaceAround'],
+    ['space-between', 'spaceBetween'],
+    ['space-evenly', 'spaceEvenly'],
+]);
 function normalizeAliases(component, path, out) {
     if (!isPlainObject(component))
         return component;
@@ -3036,6 +3061,13 @@ function normalizeAliases(component, path, out) {
         normalized = normalized ?? { ...component };
         delete normalized[alias];
         normalized[name] = value;
+    }
+    if ((component.component === 'Row' || component.component === 'Column') && typeof component.justify === 'string') {
+        const justify = CSS_JUSTIFY_ALIASES.get(component.justify);
+        if (justify !== undefined) {
+            normalized = normalized ?? { ...component };
+            normalized.justify = justify;
+        }
     }
     return normalized ?? component;
 }
@@ -3084,7 +3116,10 @@ function checkComponentProperties(component, catalogId, path, out, isExtensionCa
         if (common.has(key))
             continue;
         if (!Object.prototype.hasOwnProperty.call(spec.properties, key)) {
-            fail(out, `${path}/${key}`, `is not a property of ${spec.name}`);
+            const message = spec.name === 'Text' && key === 'usageHint'
+                ? 'is not a property of Text in A2UI 1.0. Use "variant" with "body" or "caption".'
+                : `is not a property of ${spec.name}`;
+            fail(out, `${path}/${key}`, message);
         }
     }
     if (component.accessibility !== undefined)
@@ -4132,6 +4167,10 @@ function sanitiseMessage(value, catalogs, partial) {
     }
     const data = value.updateDataModel;
     if (isPlainObject(data)) {
+        // An open message may still add a path or finish writing a container value.
+        // Keep the previous model until the entire write can be applied atomically.
+        if (partial)
+            return { dropped: false };
         if (!usableId(data.surfaceId) || !catalogs.has(data.surfaceId))
             return skip;
         if (!Object.prototype.hasOwnProperty.call(data, 'value'))
@@ -4471,7 +4510,7 @@ __registry["./client/context.js"] = function(module, exports, require) {
  * single-file client bundle deterministic and cycle-free.
  */
 const { h } = require("./client/h.js");
-const { expandTemplate, resolveBoolean, resolveNumber, resolveNumberList, resolveString, resolveStringList, resolveValue } = require("./shared/binding.js");
+const { expandTemplate, resolveBoolean, resolveNumber, resolveString, resolveStringList, resolveValue } = require("./shared/binding.js");
 const { LIMITS } = require("./shared/limits.js");
 function resolveContext(scope) {
     return {
@@ -4493,9 +4532,6 @@ function booleanValue(scope, value) {
 }
 function stringList(scope, value) {
     return resolveStringList(value, resolveContext(scope));
-}
-function numberList(scope, value) {
-    return resolveNumberList(value, resolveContext(scope));
 }
 function anyValue(scope, value) {
     return resolveValue(value, resolveContext(scope));
@@ -4566,7 +4602,6 @@ exports["text"] = text;
 exports["numberValue"] = numberValue;
 exports["booleanValue"] = booleanValue;
 exports["stringList"] = stringList;
-exports["numberList"] = numberList;
 exports["anyValue"] = anyValue;
 exports["templateItems"] = templateItems;
 exports["accessibilityAttributes"] = accessibilityAttributes;
@@ -5432,7 +5467,7 @@ __registry["./client/charts.js"] = function(module, exports, require) {
 const React = require("react");
 const { h } = require("./client/h.js");
 const { compileExpression } = require("./shared/expression.js");
-const { anyValue, numberList, numberValue, text } = require("./client/context.js");
+const { anyValue, numberValue, text } = require("./client/context.js");
 const { isDataBinding, isFunctionCall } = require("./shared/schema.js");
 const VIEW_WIDTH = 640;
 const PAD = { top: 18, right: 16, bottom: 30, left: 46 };
@@ -5487,15 +5522,29 @@ function niceScale(values, forcedMin, forcedMax, tickCount = 4) {
         ticks.push(Number(tick.toFixed(10)));
     return { min: niceMin, max: niceMax, ticks };
 }
-function readSeries(scope, component) {
+function readSeries(scope, component, categoryCount) {
     const raw = Array.isArray(component.series) ? component.series.slice(0, 8) : [];
     return raw.map((entry, index) => {
         const record = (entry ?? {});
         return {
             label: record.label === undefined ? `${scope.view.t('series')} ${index + 1}` : text(scope, record.label),
-            values: numberList(scope, record.values),
+            values: resolveSeriesValues(scope, record.values, categoryCount),
             color: seriesColor(index, record.color),
         };
+    });
+}
+/**
+ * Keep one slot per category, including missing entries in bound data. A
+ * missing entry in the middle must not shift later values to another label.
+ */
+function resolveSeriesValues(scope, value, categoryCount) {
+    const resolved = anyValue(scope, value);
+    if (!Array.isArray(resolved))
+        return typeof resolved === 'number' && Number.isFinite(resolved) ? [resolved] : [];
+    const values = categoryCount === undefined ? resolved : resolved.slice(0, categoryCount);
+    return values.map((entry) => {
+        const number = typeof entry === 'string' && entry.trim() !== '' ? Number(entry) : entry;
+        return typeof number === 'number' && Number.isFinite(number) ? number : undefined;
     });
 }
 function legend(props) {
@@ -5529,9 +5578,12 @@ function chartHeight(component, fallback) {
 }
 function axisSummary(scope, categories, series) {
     const parts = series.map((entry) => {
-        const min = entry.values.length > 0 ? Math.min(...entry.values) : 0;
-        const max = entry.values.length > 0 ? Math.max(...entry.values) : 0;
-        return `${entry.label}: ${scope.view.t('total')} ${trim(entry.values.reduce((sum, value) => sum + value, 0))} (min ${trim(min)}, max ${trim(max)})`;
+        const values = entry.values.filter((value) => value !== undefined);
+        if (values.length === 0)
+            return `${entry.label}: ${scope.view.t('chartEmpty')}`;
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        return `${entry.label}: ${scope.view.t('total')} ${trim(values.reduce((sum, value) => sum + value, 0))} (min ${trim(min)}, max ${trim(max)})`;
     });
     return `${categories.join(', ')}. ${parts.join('. ')}`;
 }
@@ -5635,14 +5687,14 @@ function BarTooltip({ bar, lines }) {
 function renderBarChart(scope, component) {
     const view = scope.view;
     const categories = Array.isArray(component.categories) ? component.categories.map((entry) => text(scope, entry)) : [];
-    const allSeries = readSeries(scope, component);
+    const allSeries = readSeries(scope, component, categories.length);
     const [hidden, setHidden] = React.useState(() => new Set());
     const [hover, setHover] = React.useState(null);
     const series = allSeries.filter((_, index) => !hidden.has(index));
     const horizontal = component.horizontal === true;
     const stacked = component.stacked === true;
     const suffix = component.valueSuffix === undefined ? '' : text(scope, component.valueSuffix);
-    const all = series.flatMap((entry) => entry.values);
+    const all = series.flatMap((entry) => entry.values.filter((value) => value !== undefined));
     if (categories.length === 0 || series.length === 0 || all.length === 0)
         return emptyChart(scope, component, view.t('chartEmpty'));
     const toggle = (index) => {
@@ -5671,7 +5723,9 @@ function renderBarChart(scope, component) {
             let up = 0;
             let down = 0;
             for (const entry of series) {
-                const value = entry.values[index] ?? 0;
+                const value = entry.values[index];
+                if (value === undefined)
+                    continue;
                 if (value >= 0)
                     up += value;
                 else
@@ -5706,7 +5760,9 @@ function renderBarChart(scope, component) {
             let up = 0;
             let down = 0;
             series.forEach((entry, seriesIndex) => {
-                const value = entry.values[categoryIndex] ?? 0;
+                const value = entry.values[categoryIndex];
+                if (value === undefined)
+                    return;
                 const base = value >= 0 ? up : down;
                 const top = base + value;
                 const yBase = valueToY(base);
@@ -5733,7 +5789,9 @@ function renderBarChart(scope, component) {
         else if (horizontal) {
             const baseline = valueToX(0);
             series.forEach((entry, seriesIndex) => {
-                const value = entry.values[categoryIndex] ?? 0;
+                const value = entry.values[categoryIndex];
+                if (value === undefined)
+                    return;
                 const end = valueToX(value);
                 const isHover = hover?.category === categoryIndex;
                 bars.push(h('rect', {
@@ -5752,7 +5810,9 @@ function renderBarChart(scope, component) {
         }
         else {
             series.forEach((entry, seriesIndex) => {
-                const value = entry.values[categoryIndex] ?? 0;
+                const value = entry.values[categoryIndex];
+                if (value === undefined)
+                    return;
                 const zero = valueToY(0);
                 const y = valueToY(value);
                 const isHover = hover !== null && hover.category === categoryIndex && hover.series === seriesIndex;
@@ -5815,8 +5875,8 @@ function renderLineChart(scope, component) {
     const area = component.area === true;
     const smooth = component.curve === 'smooth';
     const showPoints = component.showPoints !== false;
-    const all = series.flatMap((entry) => entry.values);
-    if (series.length === 0 || all.length === 0)
+    const all = series.flatMap((entry) => entry.values).filter((value) => value !== undefined);
+    if (all.length === 0)
         return emptyChart(scope, component, view.t('chartEmpty'));
     const height = chartHeight(component, 240);
     const plotWidth = VIEW_WIDTH - PAD.left - PAD.right;
@@ -5835,22 +5895,16 @@ function renderLineChart(scope, component) {
             return next.size >= allSeries.length ? new Set() : next;
         });
     };
-    const pathFor = (values) => {
-        if (values.length === 0)
-            return '';
-        if (!smooth || values.length < 3) {
-            return values.map((value, index) => `${index === 0 ? 'M' : 'L'}${xAt(index).toFixed(2)},${yAt(value).toFixed(2)}`).join(' ');
+    const pathFor = (points) => {
+        if (!smooth || points.length < 3) {
+            return points.map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
         }
-        let path = `M${xAt(0).toFixed(2)},${yAt(values[0]).toFixed(2)}`;
-        for (let index = 0; index < values.length - 1; index += 1) {
-            const x0 = xAt(Math.max(0, index - 1));
-            const y0 = yAt(values[Math.max(0, index - 1)]);
-            const x1 = xAt(index);
-            const y1 = yAt(values[index]);
-            const x2 = xAt(index + 1);
-            const y2 = yAt(values[index + 1]);
-            const x3 = xAt(Math.min(values.length - 1, index + 2));
-            const y3 = yAt(values[Math.min(values.length - 1, index + 2)]);
+        let path = `M${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`;
+        for (let index = 0; index < points.length - 1; index += 1) {
+            const { x: x0, y: y0 } = points[Math.max(0, index - 1)];
+            const { x: x1, y: y1 } = points[index];
+            const { x: x2, y: y2 } = points[index + 1];
+            const { x: x3, y: y3 } = points[Math.min(points.length - 1, index + 2)];
             const c1x = x1 + (x2 - x0) / 6;
             const c1y = y1 + (y2 - y0) / 6;
             const c2x = x2 - (x3 - x1) / 6;
@@ -5862,24 +5916,30 @@ function renderLineChart(scope, component) {
     const grid = h('g', { className: 'a2ui-grid' }, ...scale.ticks.map((tick, index) => h('g', { key: `g${index}` }, h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(tick), y2: yAt(tick) }), h('text', { x: PAD.left - 6, y: yAt(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, formatTick(tick)))));
     const marks = [];
     series.forEach((entry, seriesIndex) => {
-        const line = pathFor(entry.values);
-        if (area) {
-            const base = yAt(scale.min);
-            marks.push(h('path', {
-                key: `a${seriesIndex}`,
-                d: `${line} L${xAt(entry.values.length - 1).toFixed(2)},${base} L${xAt(0).toFixed(2)},${base} Z`,
-                fill: entry.color,
-                opacity: 0.14,
-            }));
-        }
-        marks.push(h('path', { key: `p${seriesIndex}`, d: line, fill: 'none', stroke: entry.color, strokeWidth: 2, strokeLinejoin: 'round', strokeLinecap: 'round' }));
+        const points = entry.values.map((value, index) => ({ x: xAt(index), y: value === undefined ? Number.NaN : yAt(value) }));
+        const segments = splitPlotSegments(points, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY);
+        segments.forEach((segment, segmentIndex) => {
+            const line = pathFor(segment);
+            if (area && segment.length > 1) {
+                const base = yAt(scale.min);
+                marks.push(h('path', {
+                    key: `a${seriesIndex}-${segmentIndex}`,
+                    d: `${line} L${segment[segment.length - 1].x.toFixed(2)},${base} L${segment[0].x.toFixed(2)},${base} Z`,
+                    fill: entry.color,
+                    opacity: 0.14,
+                }));
+            }
+            marks.push(h('path', { key: `p${seriesIndex}-${segmentIndex}`, d: line, fill: 'none', stroke: entry.color, strokeWidth: 2, strokeLinejoin: 'round', strokeLinecap: 'round' }));
+        });
         if (showPoints) {
-            entry.values.forEach((value, index) => {
+            points.forEach(({ x, y }, index) => {
+                if (!Number.isFinite(y))
+                    return;
                 const active = hoverIndex === index;
                 marks.push(h('circle', {
                     key: `c${seriesIndex}-${index}`,
-                    cx: xAt(index),
-                    cy: yAt(value),
+                    cx: x,
+                    cy: y,
                     r: active ? 4.2 : 2.6,
                     fill: entry.color,
                     stroke: active ? 'var(--dsw-alias-bg-layer-2)' : 'none',
@@ -6069,7 +6129,7 @@ function renderPlot(scope, component) {
     const xMin = numberValue(scope, component.xMin) ?? -10;
     const xMax = numberValue(scope, component.xMax) ?? 10;
     if (!(xMax > xMin))
-        return emptyChart(scope, component, view.t('plotInvalid'));
+        return emptyChart(scope, component, view.t('plotInvalidRange'));
     const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240));
     const variablesRaw = component.variables;
     const variables = {};
@@ -6779,7 +6839,9 @@ function renderTable(scope, component) {
     const view = scope.view;
     const columns = (Array.isArray(component.columns) ? component.columns : []).slice(0, 24);
     const rowsValue = anyValue(scope, component.rows);
+    const totalRows = Array.isArray(rowsValue) ? rowsValue.length : 0;
     const rows = Array.isArray(rowsValue) ? rowsValue.slice(0, LIMITS.maxTableRows) : [];
+    const truncated = totalRows > rows.length;
     const [expanded, setExpanded] = React.useState(false);
     const [sort, setSort] = React.useState(null);
     // Sorting is local: it reorders the rows already in the data model and never
@@ -6807,11 +6869,14 @@ function renderTable(scope, component) {
         });
     };
     const visible = expanded ? sortedRows : sortedRows.slice(0, 40);
+    const showRows = view.t(truncated ? 'tableShowAvailable' : 'showAll');
     const caption = component.caption === undefined ? null : h('p', { className: 'a2ui-caption' }, text(scope, component.caption));
     if (rows.length === 0) {
         return h('div', { className: 'a2ui-stack' }, caption, h('p', { className: 'a2ui-caption' }, view.t('tableEmpty')));
     }
-    return h('div', { className: 'a2ui-stack' }, caption, h('div', { className: 'a2ui-table-wrap', style: typeof component.height === 'number' ? { maxHeight: `${component.height}px` } : undefined }, h('table', { className: 'a2ui-table' }, h('thead', null, h('tr', null, ...columns.map((column, index) => {
+    return h('div', { className: 'a2ui-stack' }, caption, truncated
+        ? h('p', { className: 'a2ui-caption' }, view.t('tableRowLimit').replace('{limit}', String(rows.length)).replace('{total}', String(totalRows)))
+        : null, h('div', { className: 'a2ui-table-wrap', style: typeof component.height === 'number' ? { maxHeight: `${component.height}px` } : undefined }, h('table', { className: 'a2ui-table' }, h('thead', null, h('tr', null, ...columns.map((column, index) => {
         const key = typeof column.key === 'string' ? column.key : '';
         const active = sort?.key === key ? sort.dir : undefined;
         return h('th', {
@@ -6837,7 +6902,7 @@ function renderTable(scope, component) {
             return h('td', { key: `c${columnIndex}`, className: isNumeric ? 'a2ui-num' : undefined, style: { textAlign: column.align === 'end' ? 'right' : column.align === 'center' ? 'center' : 'left' } }, formatCell(value, column, view.locale));
         }));
     })))), rows.length > 40
-        ? h('button', { type: 'button', className: 'a2ui-btn a2ui-btn-borderless', onClick: () => setExpanded(!expanded) }, expanded ? view.t('showLess') : `${view.t('showAll')} (${rows.length})`)
+        ? h('button', { type: 'button', className: 'a2ui-btn a2ui-btn-borderless', onClick: () => setExpanded(!expanded) }, expanded ? view.t('showLess') : `${showRows} (${rows.length})`)
         : null);
 }
 function renderStat(scope, component) {
@@ -7288,8 +7353,9 @@ function A2UIToolView(props) {
     const streamed = React.useMemo(() => (streamedText === undefined || streamedText === '' ? undefined : foldStreaming(streamedText)), [streamedText]);
     // The tail copy claims the call; the row copy steps aside only while that
     // claim is held, and automatically restores the card when the tail unmounts.
+    const isErrorResult = props.phase === 'result' && props.block?.isError === true;
     const claimedElsewhere = useCopyClaimed(sessionId, props.callId);
-    useClaimCopy(sessionId, props.callId, mode === 'tail');
+    useClaimCopy(sessionId, props.callId, mode === 'tail' && !isErrorResult);
     const compact = props.compact ?? (mode === 'row' && claimedElsewhere && props.phase === 'result');
     // Edits and action state live in a store keyed by session + call + surface, so
     // the row and the turn tail show the same values when the card changes hands.
@@ -7298,8 +7364,6 @@ function A2UIToolView(props) {
     const inFlight = React.useRef(new Set());
     const keyFor = React.useCallback((surfaceId) => stateKey(sessionId, props.callId, surfaceId), [sessionId, props.callId]);
     const locale = runtime.locale();
-    const isErrorResult = props.phase === 'result' && props.block?.isError === true;
-    const errorText = isErrorResult ? textOfContent(props.block?.content) : '';
     const setValue = React.useCallback((surfaceId, pointer, value) => {
         writeModel(keyFor(surfaceId), pointer, value);
     }, [keyFor]);
@@ -7398,10 +7462,12 @@ function A2UIToolView(props) {
         });
     }
     const header = h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, payload.title ?? t('title')));
-    // A failed call never renders operable content: without this, an error result
-    // with empty content would fall through and rebuild the surfaces from `meta`.
     if (isErrorResult) {
-        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: errorText === '' ? t('failedGeneric') : errorText, error: true }))));
+        if (mode === 'tail')
+            return null;
+        const errorText = textOfContent(props.block?.content).trim();
+        const reason = errorText.split(/\r?\n/u, 1)[0] || payload.title || t('title');
+        return h('div', { className: 'a2ui-root' }, h('details', { className: 'a2ui-failure' }, h('summary', { className: 'a2ui-pointer' }, h('span', { className: 'a2ui-pointer-text' }, reason), h('span', { className: 'a2ui-pointer-meta' }, t('failedCompact'))), h('pre', { className: 'a2ui-notice-body a2ui-failure-details' }, errorText || t('failedGeneric'))));
     }
     if (!analysis.ok) {
         return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, Notice({ title: t('invalid'), body: `${t('invalidHint')}\n${formatViolations(analysis.errors)}`, error: true }))));
@@ -7656,9 +7722,10 @@ function A2uiTurnTail(props) {
     const nodes = store;
     const entries = React.useMemo(() => {
         void turnToolData;
-        if (turnKeys !== undefined)
-            return rootsFromTurnNodes(turnNumber, turnKeys, nodes, 'a2ui');
-        return collectA2uiRoots(order, nodes, turnNumber, 'a2ui');
+        const roots = turnKeys === undefined
+            ? collectA2uiRoots(order, nodes, turnNumber, 'a2ui')
+            : rootsFromTurnNodes(turnNumber, turnKeys, nodes, 'a2ui');
+        return roots.filter(({ phase, root }) => phase !== 'result' || root.isError !== true);
     }, [turnKeys, turnToolData, order, nodes, turnNumber]);
     if (entries.length === 0)
         return null;

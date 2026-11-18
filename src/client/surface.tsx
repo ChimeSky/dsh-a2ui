@@ -537,7 +537,9 @@ function renderTable(scope: Scope, component: A2UIComponent): ReturnType<typeof 
   const view = scope.view
   const columns = (Array.isArray(component.columns) ? component.columns : []).slice(0, 24) as Array<Record<string, unknown>>
   const rowsValue = anyValue(scope, component.rows)
+  const totalRows = Array.isArray(rowsValue) ? rowsValue.length : 0
   const rows = Array.isArray(rowsValue) ? rowsValue.slice(0, LIMITS.maxTableRows) : []
+  const truncated = totalRows > rows.length
   const [expanded, setExpanded] = React.useState(false)
   const [sort, setSort] = React.useState<{ key: string; dir: 1 | -1 } | null>(null)
   // Sorting is local: it reorders the rows already in the data model and never
@@ -562,6 +564,7 @@ function renderTable(scope: Scope, component: A2UIComponent): ReturnType<typeof 
     })
   }
   const visible = expanded ? sortedRows : sortedRows.slice(0, 40)
+  const showRows = view.t(truncated ? 'tableShowAvailable' : 'showAll')
   const caption = component.caption === undefined ? null : h('p', { className: 'a2ui-caption' }, text(scope, component.caption))
   if (rows.length === 0) {
     return h('div', { className: 'a2ui-stack' }, caption, h('p', { className: 'a2ui-caption' }, view.t('tableEmpty')))
@@ -570,6 +573,9 @@ function renderTable(scope: Scope, component: A2UIComponent): ReturnType<typeof 
     'div',
     { className: 'a2ui-stack' },
     caption,
+    truncated
+      ? h('p', { className: 'a2ui-caption' }, view.t('tableRowLimit').replace('{limit}', String(rows.length)).replace('{total}', String(totalRows)))
+      : null,
     h(
       'div',
       { className: 'a2ui-table-wrap', style: typeof component.height === 'number' ? { maxHeight: `${component.height}px` } : undefined },
@@ -635,7 +641,7 @@ function renderTable(scope: Scope, component: A2UIComponent): ReturnType<typeof 
       ),
     ),
     rows.length > 40
-      ? h('button', { type: 'button', className: 'a2ui-btn a2ui-btn-borderless', onClick: () => setExpanded(!expanded) }, expanded ? view.t('showLess') : `${view.t('showAll')} (${rows.length})`)
+      ? h('button', { type: 'button', className: 'a2ui-btn a2ui-btn-borderless', onClick: () => setExpanded(!expanded) }, expanded ? view.t('showLess') : `${showRows} (${rows.length})`)
       : null,
   )
 }

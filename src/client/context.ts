@@ -7,7 +7,7 @@
  */
 import { h, type React } from './h.js'
 import type { A2UIComponent, SurfaceState } from '../shared/validate.js'
-import { expandTemplate, resolveBoolean, resolveNumber, resolveNumberList, resolveString, resolveStringList, resolveValue, type ResolveContext, type TemplateItem } from '../shared/binding.js'
+import { expandTemplate, resolveBoolean, resolveNumber, resolveString, resolveStringList, resolveValue, type ResolveContext, type TemplateItem } from '../shared/binding.js'
 import { LIMITS } from '../shared/limits.js'
 import type { JsonValue } from '../shared/json.js'
 
@@ -75,10 +75,6 @@ export function booleanValue(scope: Scope, value: unknown): boolean {
 
 export function stringList(scope: Scope, value: unknown): string[] {
   return resolveStringList(value, resolveContext(scope))
-}
-
-export function numberList(scope: Scope, value: unknown): number[] {
-  return resolveNumberList(value, resolveContext(scope))
 }
 
 export function anyValue(scope: Scope, value: unknown): unknown {

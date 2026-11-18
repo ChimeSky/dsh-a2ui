@@ -14,7 +14,7 @@ import * as React from 'react'
 import { h } from './h.js'
 import type { A2UIComponent } from '../shared/validate.js'
 import { compileExpression, type CompiledExpression } from '../shared/expression.js'
-import { anyValue, numberList, numberValue, text, type Scope } from './context.js'
+import { anyValue, numberValue, text, type Scope } from './context.js'
 import { isDataBinding, isFunctionCall } from '../shared/schema.js'
 
 const VIEW_WIDTH = 640
@@ -74,19 +74,33 @@ function niceScale(values: number[], forcedMin?: number, forcedMax?: number, tic
 
 interface SeriesData {
   label: string
-  values: number[]
+  values: Array<number | undefined>
   color: string
 }
 
-function readSeries(scope: Scope, component: A2UIComponent): SeriesData[] {
+function readSeries(scope: Scope, component: A2UIComponent, categoryCount?: number): SeriesData[] {
   const raw = Array.isArray(component.series) ? component.series.slice(0, 8) : []
   return raw.map((entry, index) => {
     const record = (entry ?? {}) as Record<string, unknown>
     return {
       label: record.label === undefined ? `${scope.view.t('series')} ${index + 1}` : text(scope, record.label),
-      values: numberList(scope, record.values),
+      values: resolveSeriesValues(scope, record.values, categoryCount),
       color: seriesColor(index, record.color),
     }
+  })
+}
+
+/**
+ * Keep one slot per category, including missing entries in bound data. A
+ * missing entry in the middle must not shift later values to another label.
+ */
+function resolveSeriesValues(scope: Scope, value: unknown, categoryCount?: number): Array<number | undefined> {
+  const resolved = anyValue(scope, value)
+  if (!Array.isArray(resolved)) return typeof resolved === 'number' && Number.isFinite(resolved) ? [resolved] : []
+  const values = categoryCount === undefined ? resolved : resolved.slice(0, categoryCount)
+  return values.map((entry) => {
+    const number = typeof entry === 'string' && entry.trim() !== '' ? Number(entry) : entry
+    return typeof number === 'number' && Number.isFinite(number) ? number : undefined
   })
 }
 
@@ -141,9 +155,11 @@ function chartHeight(component: A2UIComponent, fallback: number): number {
 
 function axisSummary(scope: Scope, categories: string[], series: SeriesData[]): string {
   const parts = series.map((entry) => {
-    const min = entry.values.length > 0 ? Math.min(...entry.values) : 0
-    const max = entry.values.length > 0 ? Math.max(...entry.values) : 0
-    return `${entry.label}: ${scope.view.t('total')} ${trim(entry.values.reduce((sum, value) => sum + value, 0))} (min ${trim(min)}, max ${trim(max)})`
+    const values = entry.values.filter((value) => value !== undefined)
+    if (values.length === 0) return `${entry.label}: ${scope.view.t('chartEmpty')}`
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    return `${entry.label}: ${scope.view.t('total')} ${trim(values.reduce((sum, value) => sum + value, 0))} (min ${trim(min)}, max ${trim(max)})`
   })
   return `${categories.join(', ')}. ${parts.join('. ')}`
 }
@@ -280,14 +296,14 @@ function BarTooltip({ bar, lines }: { bar: SVGRectElement; lines: string[] }): R
 export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
   const view = scope.view
   const categories = Array.isArray(component.categories) ? (component.categories as unknown[]).map((entry) => text(scope, entry)) : []
-  const allSeries = readSeries(scope, component)
+  const allSeries = readSeries(scope, component, categories.length)
   const [hidden, setHidden] = React.useState<Set<number>>(() => new Set())
   const [hover, setHover] = React.useState<BarHover | null>(null)
   const series = allSeries.filter((_, index) => !hidden.has(index))
   const horizontal = component.horizontal === true
   const stacked = component.stacked === true
   const suffix = component.valueSuffix === undefined ? '' : text(scope, component.valueSuffix)
-  const all = series.flatMap((entry) => entry.values)
+  const all = series.flatMap((entry) => entry.values.filter((value) => value !== undefined))
   if (categories.length === 0 || series.length === 0 || all.length === 0) return emptyChart(scope, component, view.t('chartEmpty'))
 
   const toggle = (index: number): void => {
@@ -316,7 +332,8 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
       let up = 0
       let down = 0
       for (const entry of series) {
-        const value = entry.values[index] ?? 0
+        const value = entry.values[index]
+        if (value === undefined) continue
         if (value >= 0) up += value
         else down += value
       }
@@ -366,7 +383,8 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
       let up = 0
       let down = 0
       series.forEach((entry, seriesIndex) => {
-        const value = entry.values[categoryIndex] ?? 0
+        const value = entry.values[categoryIndex]
+        if (value === undefined) return
         const base = value >= 0 ? up : down
         const top = base + value
         const yBase = valueToY(base)
@@ -392,7 +410,8 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     } else if (horizontal) {
       const baseline = valueToX(0)
       series.forEach((entry, seriesIndex) => {
-        const value = entry.values[categoryIndex] ?? 0
+        const value = entry.values[categoryIndex]
+        if (value === undefined) return
         const end = valueToX(value)
         const isHover = hover?.category === categoryIndex
         bars.push(
@@ -412,7 +431,8 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
       })
     } else {
       series.forEach((entry, seriesIndex) => {
-        const value = entry.values[categoryIndex] ?? 0
+        const value = entry.values[categoryIndex]
+        if (value === undefined) return
         const zero = valueToY(0)
         const y = valueToY(value)
         const isHover = hover !== null && hover.category === categoryIndex && hover.series === seriesIndex
@@ -503,8 +523,8 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
   const area = component.area === true
   const smooth = component.curve === 'smooth'
   const showPoints = component.showPoints !== false
-  const all = series.flatMap((entry) => entry.values)
-  if (series.length === 0 || all.length === 0) return emptyChart(scope, component, view.t('chartEmpty'))
+  const all = series.flatMap((entry) => entry.values).filter((value) => value !== undefined)
+  if (all.length === 0) return emptyChart(scope, component, view.t('chartEmpty'))
   const height = chartHeight(component, 240)
   const plotWidth = VIEW_WIDTH - PAD.left - PAD.right
   const plotHeight = height - PAD.top - PAD.bottom
@@ -522,21 +542,16 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
     })
   }
 
-  const pathFor = (values: number[]): string => {
-    if (values.length === 0) return ''
-    if (!smooth || values.length < 3) {
-      return values.map((value, index) => `${index === 0 ? 'M' : 'L'}${xAt(index).toFixed(2)},${yAt(value).toFixed(2)}`).join(' ')
+  const pathFor = (points: Array<{ x: number; y: number }>): string => {
+    if (!smooth || points.length < 3) {
+      return points.map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
     }
-    let path = `M${xAt(0).toFixed(2)},${yAt(values[0] as number).toFixed(2)}`
-    for (let index = 0; index < values.length - 1; index += 1) {
-      const x0 = xAt(Math.max(0, index - 1))
-      const y0 = yAt(values[Math.max(0, index - 1)] as number)
-      const x1 = xAt(index)
-      const y1 = yAt(values[index] as number)
-      const x2 = xAt(index + 1)
-      const y2 = yAt(values[index + 1] as number)
-      const x3 = xAt(Math.min(values.length - 1, index + 2))
-      const y3 = yAt(values[Math.min(values.length - 1, index + 2)] as number)
+    let path = `M${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const { x: x0, y: y0 } = points[Math.max(0, index - 1)]
+      const { x: x1, y: y1 } = points[index]
+      const { x: x2, y: y2 } = points[index + 1]
+      const { x: x3, y: y3 } = points[Math.min(points.length - 1, index + 2)]
       const c1x = x1 + (x2 - x0) / 6
       const c1y = y1 + (y2 - y0) / 6
       const c2x = x2 - (x3 - x1) / 6
@@ -561,27 +576,32 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
 
   const marks: Array<ReturnType<typeof h>> = []
   series.forEach((entry, seriesIndex) => {
-    const line = pathFor(entry.values)
-    if (area) {
-      const base = yAt(scale.min)
-      marks.push(
-        h('path', {
-          key: `a${seriesIndex}`,
-          d: `${line} L${xAt(entry.values.length - 1).toFixed(2)},${base} L${xAt(0).toFixed(2)},${base} Z`,
-          fill: entry.color,
-          opacity: 0.14,
-        }),
-      )
-    }
-    marks.push(h('path', { key: `p${seriesIndex}`, d: line, fill: 'none', stroke: entry.color, strokeWidth: 2, strokeLinejoin: 'round', strokeLinecap: 'round' }))
+    const points = entry.values.map((value, index) => ({ x: xAt(index), y: value === undefined ? Number.NaN : yAt(value) }))
+    const segments = splitPlotSegments(points, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY)
+    segments.forEach((segment, segmentIndex) => {
+      const line = pathFor(segment)
+      if (area && segment.length > 1) {
+        const base = yAt(scale.min)
+        marks.push(
+          h('path', {
+            key: `a${seriesIndex}-${segmentIndex}`,
+            d: `${line} L${segment[segment.length - 1].x.toFixed(2)},${base} L${segment[0].x.toFixed(2)},${base} Z`,
+            fill: entry.color,
+            opacity: 0.14,
+          }),
+        )
+      }
+      marks.push(h('path', { key: `p${seriesIndex}-${segmentIndex}`, d: line, fill: 'none', stroke: entry.color, strokeWidth: 2, strokeLinejoin: 'round', strokeLinecap: 'round' }))
+    })
     if (showPoints) {
-      entry.values.forEach((value, index) => {
+      points.forEach(({ x, y }, index) => {
+        if (!Number.isFinite(y)) return
         const active = hoverIndex === index
         marks.push(
           h('circle', {
             key: `c${seriesIndex}-${index}`,
-            cx: xAt(index),
-            cy: yAt(value),
+            cx: x,
+            cy: y,
             r: active ? 4.2 : 2.6,
             fill: entry.color,
             stroke: active ? 'var(--dsw-alias-bg-layer-2)' : 'none',
@@ -842,7 +862,7 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
   const view = scope.view
   const xMin = numberValue(scope, component.xMin) ?? -10
   const xMax = numberValue(scope, component.xMax) ?? 10
-  if (!(xMax > xMin)) return emptyChart(scope, component, view.t('plotInvalid'))
+  if (!(xMax > xMin)) return emptyChart(scope, component, view.t('plotInvalidRange'))
   const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240))
   const variablesRaw = component.variables
   const variables: Record<string, number> = {}

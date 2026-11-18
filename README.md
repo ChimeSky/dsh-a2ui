@@ -4,10 +4,10 @@
 > 
 > *Make data-heavy AI answers easier to understand with inline, on-demand A2UI visualizations.*
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](./CHANGELOG.md)
 [![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
-[![Tests](https://img.shields.io/badge/tests-160%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
-[![React Tests](https://img.shields.io/badge/react%20tests-17%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-171%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![React Tests](https://img.shields.io/badge/react%20tests-19%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
 
 [English](./README.en.md) | [更新日志](./CHANGELOG.md) | [架构设计](./docs/ARCHITECTURE.md) | [测试报告](./docs/TEST-REPORT.md)
@@ -36,8 +36,8 @@
 
 插件以 bundle 形式打包（`dsh.bundle` + `dsh.client`），仓库根目录就是可安装的包，构建产物已随仓库提交，安装时不需要现场编译。
 
-- **从 GitHub 安装（推荐）**：`dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.0`
-- **冻结 tarball**：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.3.0.tgz`，或运行 `tools/install.ps1`
+- **从 GitHub 安装（推荐）**：`dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
+- **冻结 tarball**：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.3.1.tgz`，或运行 `tools/install.ps1`
 - **插件管理器**：`plugin_manager action=install_bundle target=<绝对路径或 tarball 路径>`
 
 把 `desktop` 换成目标 profile（Web 端通常为 `web`）。替换已安装的包之后，需要重启 DSH 才能加载新的 JavaScript 模块。
@@ -235,7 +235,7 @@ npm run pack:vendor              # 重新生成 vendor/dsh-a2ui-<version>.tgz
 npm run all                      # 以上全部
 ```
 
-当前验证规模：160 个自动化用例（含 10 个 jsdom DOM 用例、26 个流式用例、43 个官方样例）、17 个真实 React 渲染用例、32 项 bundle 不变量。详细结果与「真实 DSH 中验证 / 仅无头验证」的分界见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)，逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前验证规模：171 个自动化用例（含 18 个 jsdom DOM 用例、27 个流式用例、43 个官方样例）、19 个真实 React 渲染用例、32 项 bundle 不变量。详细结果与「真实 DSH 中验证 / 仅无头验证」的分界见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)，逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 `index.js`、`lib/**`、`client.js` 是构建产物，随仓库提交，便于 `dsh plugin add github:` 直接安装；改源码后重新执行 `npm run build` 再提交。构建不会删除任何文件，也不会使用 esbuild（受限沙箱禁止其原生服务所需的管道）。
 

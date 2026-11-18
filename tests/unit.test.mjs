@@ -27,6 +27,7 @@ const {
   BASIC_FUNCTION_NAMES,
   knownFunctions,
   validateToolArguments,
+  foldStreaming,
   BASIC_CATALOG_ID,
   EXTENSION_CATALOG_ID,
 } = shared
@@ -222,6 +223,66 @@ test('the model-facing catalog reference lists every component and function', ()
   for (const name of BASIC_FUNCTION_NAMES) assert.ok(full.includes(name), `function ${name}`)
   assert.ok(full.length > brief.length)
   assert.ok(full.length < 8_000, 'the reference must stay small enough to be worth a round trip')
+})
+
+test('Row and Column normalize the CSS justify spellings for final and streamed cards', () => {
+  const spellings = [
+    ['space-around', 'spaceAround'],
+    ['space-between', 'spaceBetween'],
+    ['space-evenly', 'spaceEvenly'],
+  ]
+  for (const component of ['Row', 'Column']) {
+    for (const [alias, canonical] of spellings) {
+      const args = { messages: [{
+        version: '1.0',
+        createSurface: {
+          surfaceId: 'layout',
+          catalogId: BASIC_CATALOG_ID,
+          components: [
+            { id: 'root', component, children: ['text'], justify: alias },
+            { id: 'text', component: 'Text', text: 'Example' },
+          ],
+        },
+      }] }
+      const result = validateToolArguments(args)
+      assert.equal(result.ok, true, JSON.stringify(result.errors))
+      assert.equal(result.states.get('layout').components.get('root').justify, canonical)
+      assert.equal(args.messages[0].createSurface.components[0].justify, alias)
+      const streamed = foldStreaming(JSON.stringify(args).slice(0, -1))
+      assert.equal(streamed.surfaces[0].components.get('root').justify, canonical)
+    }
+  }
+})
+
+test('obsolete Text usage hints remain invalid and explain the replacement', () => {
+  const result = validateToolArguments({ messages: [{
+    version: '1.0',
+    createSurface: {
+      surfaceId: 'text',
+      components: [{ id: 'root', component: 'Text', text: 'Example', usageHint: 'h2' }],
+    },
+  }] })
+  assert.equal(result.ok, false)
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0].path, /\/usageHint$/u)
+  assert.match(result.errors[0].message, /Use "variant" with "body" or "caption"/u)
+})
+
+test('the catalog examples validate and the reference explains renderer limits', () => {
+  const full = describeCatalog('full')
+  const brief = describeCatalog('brief')
+  assert.match(full, /"weight" lets siblings share available space/u)
+  assert.match(full, /spaceBetween/u)
+  assert.match(brief, /first 500 rows/u)
+  assert.match(brief, /one value per category/u)
+  for (const name of ['Text', 'Table', 'Weighted Row']) {
+    const line = full.split('\n').find((line) => line.startsWith(`  ${name}: `))
+    assert.ok(line, `${name} example is listed`)
+    const example = JSON.parse(line.slice(line.indexOf(': ') + 2))
+    const components = Array.isArray(example) ? example : [example]
+    const result = validateToolArguments({ messages: [{ version: '1.0', createSurface: { surfaceId: 'example', components } }] })
+    assert.equal(result.ok, true, JSON.stringify(result.errors))
+  }
 })
 
 test('every catalog function is registered as known', () => {

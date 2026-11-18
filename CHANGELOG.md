@@ -3,6 +3,24 @@
 All notable changes to this plugin. Version numbers follow [SemVer](https://semver.org/); the
 `engines.dsh` range states which DeepSeek Harness releases a version was verified against.
 
+## 0.3.1 — 2026-11-18
+
+### Fixed
+
+- Streaming previews now wait for a complete `updateDataModel` message before applying writes, preventing brief empty content when paths or container values are still arriving.
+- Line charts preserve category alignment for missing values and real zeros, breaking line and area segments at gaps instead of shifting or bridging values.
+- Calls without a title now return lossless presentation metadata.
+- FramePlayer gives bars a definite plot height, caps their width, and uses a theme-tinted default color.
+- Plot reports an invalid x-axis range when `xMin` is greater than or equal to `xMax`.
+- Tables disclose when the display limit omits rows from the supplied data.
+- Bar charts leave gaps for missing values while preserving category alignment and real zeros.
+- Failed calls appear once in the process row with expandable diagnostics. The turn tail still shows successful cards and omits an empty container.
+- `Row` and `Column` accept the CSS spellings of `justify`. Using `Text.usageHint` now produces guidance to use the A2UI 1.0 `variant` field.
+
+### Documentation
+
+- `a2ui_catalog` explains layout weights, table display limits, and chart value alignment, with minimal Table, Text, and weighted Row examples.
+
 ## 0.3.0 — 2026-11-15
 
 Progressive streaming release. The card is now drawn **while** the model is still writing the tool

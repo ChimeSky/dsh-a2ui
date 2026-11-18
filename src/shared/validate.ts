@@ -189,6 +189,12 @@ const PROPERTY_ALIASES: ReadonlyArray<readonly [string, string]> = [
   ['@metadata', 'metadata'],
 ]
 
+const CSS_JUSTIFY_ALIASES = new Map([
+  ['space-around', 'spaceAround'],
+  ['space-between', 'spaceBetween'],
+  ['space-evenly', 'spaceEvenly'],
+])
+
 function normalizeAliases(component: unknown, path: string, out: Violation[]): unknown {
   if (!isPlainObject(component)) return component
   let normalized: Record<string, unknown> | undefined
@@ -207,6 +213,13 @@ function normalizeAliases(component: unknown, path: string, out: Violation[]): u
     normalized = normalized ?? { ...component }
     delete normalized[alias]
     normalized[name] = value
+  }
+  if ((component.component === 'Row' || component.component === 'Column') && typeof component.justify === 'string') {
+    const justify = CSS_JUSTIFY_ALIASES.get(component.justify)
+    if (justify !== undefined) {
+      normalized = normalized ?? { ...component }
+      normalized.justify = justify
+    }
   }
   return normalized ?? component
 }
@@ -266,7 +279,10 @@ function checkComponentProperties(
   for (const key of Object.keys(component)) {
     if (common.has(key)) continue
     if (!Object.prototype.hasOwnProperty.call(spec.properties, key)) {
-      fail(out, `${path}/${key}`, `is not a property of ${spec.name}`)
+      const message = spec.name === 'Text' && key === 'usageHint'
+        ? 'is not a property of Text in A2UI 1.0. Use "variant" with "body" or "caption".'
+        : `is not a property of ${spec.name}`
+      fail(out, `${path}/${key}`, message)
     }
   }
   if (component.accessibility !== undefined) accessibilityValidator(component.accessibility, `${path}/accessibility`, out)
