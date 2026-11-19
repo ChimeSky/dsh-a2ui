@@ -29,6 +29,32 @@ Its goal is **not** to build a persistent dashboard or an app workbench. It is t
 
 ---
 
+## Demo
+
+[Watch the dsh-a2ui introduction on Bilibili](https://www.bilibili.com/video/BV1SNsb6fERN/)
+
+### Subscription dashboard
+
+Review subscription metrics and switch between revenue trends and channel breakdowns in a single card. The screenshots use sample data.
+
+![Subscription dashboard with three metrics and a July to December revenue chart](./docs/images/subscription-revenue-trend.png)
+
+![Revenue by channel with a hover detail showing the selected channel's revenue and share](./docs/images/subscription-channel-breakdown.png)
+
+### Interactive quadratic plot
+
+Drag the sliders to change the quadratic coefficient and constant. The plot updates immediately in the card.
+
+![Two sliders adjust the opening and vertical position of a quadratic curve](./docs/images/interactive-quadratic.png)
+
+### Bar chart layouts
+
+Grouped, stacked, and horizontal bar charts in one tab.
+
+![Grouped, stacked, and horizontal bar chart examples](./docs/images/bar-chart-variants.png)
+
+---
+
 ## Quick start
 
 ### 1. Install

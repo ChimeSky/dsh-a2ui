@@ -30,6 +30,32 @@
 
 ---
 
+## 效果演示
+
+[在 B 站观看 dsh-a2ui 介绍视频](https://www.bilibili.com/video/BV1SNsb6fERN/)
+
+### 订阅业务月报
+
+用同一张卡片查看订阅指标，在收入趋势与渠道构成之间切换。图中使用模拟数据。
+
+![订阅业务月报的收入趋势，展示三项指标和 7 至 12 月收入](./docs/images/subscription-revenue-trend.png)
+
+![订阅业务月报的渠道构成，悬停显示渠道收入与占比](./docs/images/subscription-channel-breakdown.png)
+
+### 二次函数实验台
+
+拖动滑块改变二次项系数和常数项，曲线在卡片内即时更新。
+
+![两个滑块控制二次函数曲线的开口和高度](./docs/images/interactive-quadratic.png)
+
+### 柱状图样式
+
+在同一标签页里展示分组、堆叠和横向柱状图。
+
+![依次展示分组柱状图、堆叠柱状图和横向柱状图](./docs/images/bar-chart-variants.png)
+
+---
+
 ## 快速开始
 
 ### 1. 安装插件
