@@ -62,8 +62,9 @@
 
 插件以 bundle 形式打包（`dsh.bundle` + `dsh.client`），仓库根目录就是可安装的包，构建产物已随仓库提交，安装时不需要现场编译。
 
-- **从 GitHub 安装（推荐）**：`dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
-- **冻结 tarball**：`dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.3.1.tgz`，或运行 `tools/install.ps1`
+- **在 DSH 内安装（推荐）** — 打开「插件」→「添加插件」，输入 `dsh-a2ui` 并点击安装。默认使用所选安装源的 `latest` 标签，如需固定版本可输入 `dsh-a2ui@0.3.1`。 [npm 包页面](https://www.npmjs.com/package/dsh-a2ui)
+- **从 GitHub 安装** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
+- **离线安装** — 运行 `npm pack dsh-a2ui` 下载 `.tgz`，再把文件的绝对路径填入「添加插件」。仓库中的固定版本也可用 `dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.3.1.tgz` 或 `tools/install.ps1` 安装。
 - **插件管理器**：`plugin_manager action=install_bundle target=<绝对路径或 tarball 路径>`
 
 把 `desktop` 换成目标 profile（Web 端通常为 `web`）。替换已安装的包之后，需要重启 DSH 才能加载新的 JavaScript 模块。

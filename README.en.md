@@ -61,8 +61,9 @@ Grouped, stacked, and horizontal bar charts in one tab.
 
 The plugin ships as a bundle (`dsh.bundle` + `dsh.client`): the repository root is the installable package, and the build artifacts are committed, so installing does not compile anything.
 
-- **From GitHub (recommended)**: `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
-- **Frozen tarball**: `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.1.tgz`, or run `tools/install.ps1`
+- **In DSH (recommended)** — Open Plugins → Add plugin, enter `dsh-a2ui`, and click Install. DSH uses the selected registry's `latest` tag by default. Enter `dsh-a2ui@0.3.1` to request a specific version. [npm package](https://www.npmjs.com/package/dsh-a2ui)
+- **From GitHub** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
+- **Offline install** — Run `npm pack dsh-a2ui` to download the `.tgz`, then enter its absolute path in Add plugin. To install the frozen tarball from this repository, use `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.1.tgz` or run `tools/install.ps1`.
 - **DSH plugin manager**: `plugin_manager action=install_bundle target=<absolute path or tarball>`
 
 Replace `desktop` with the target profile (usually `web` for the web build). Replacing an installed package requires a DSH restart to load the new JavaScript module generation.
