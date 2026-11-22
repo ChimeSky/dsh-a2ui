@@ -57,9 +57,9 @@ Grouped, stacked, and horizontal bar charts in one tab.
 
 ## Download trends
 
-![Cumulative downloads from npm and GitHub Release assets](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
+![Cumulative npm downloads, GitHub release asset downloads, and repository clones](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
 
-Updated daily. The npm series covers the whole package, and the GitHub series counts the plugin's `.tgz` assets across releases. [Source data](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
+npm covers the whole package, GitHub Release counts the plugin's `.tgz` assets, and GitHub Clones counts repository clones. The chart shows the latest date for each source. [Source data](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
 
 ---
 

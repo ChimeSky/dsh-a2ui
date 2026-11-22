@@ -58,9 +58,9 @@
 
 ## 下载趋势
 
-![npm 包下载量和 GitHub Release 附件下载量的累计趋势](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
+![npm 包下载量、GitHub Release 附件下载量和 GitHub Clones 的累计趋势](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
 
-每日更新。npm 统计整个包，GitHub 统计所有 Release 中的插件 `.tgz` 附件。 [原始数据](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
+npm 统计整个包，GitHub Release 统计插件 `.tgz` 附件，GitHub Clones 统计仓库克隆次数。图中标有各数据源的最新统计日期。 [原始数据](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
 
 ---
 

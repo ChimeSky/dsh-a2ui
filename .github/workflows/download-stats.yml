@@ -38,6 +38,8 @@ jobs:
       - name: Fetch download counts and render chart
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # A fine-grained token restricted to this repo with Administration read access.
+          DOWNLOAD_STATS_TRAFFIC_TOKEN: ${{ secrets.DOWNLOAD_STATS_TRAFFIC_TOKEN }}
         run: python source/tools/download-stats.py stats
       - name: Save history and chart
         working-directory: stats
