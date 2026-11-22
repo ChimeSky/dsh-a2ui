@@ -55,6 +55,14 @@ Grouped, stacked, and horizontal bar charts in one tab.
 
 ---
 
+## Download trends
+
+![Cumulative downloads from npm and GitHub Release assets](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
+
+Updated daily. The npm series covers the whole package, and the GitHub series counts the plugin's `.tgz` assets across releases. [Source data](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
+
+---
+
 ## Quick start
 
 ### 1. Install

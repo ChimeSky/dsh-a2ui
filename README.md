@@ -56,6 +56,14 @@
 
 ---
 
+## 下载趋势
+
+![npm 包下载量和 GitHub Release 附件下载量的累计趋势](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
+
+每日更新。npm 统计整个包，GitHub 统计所有 Release 中的插件 `.tgz` 附件。 [原始数据](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
+
+---
+
 ## 快速开始
 
 ### 1. 安装插件
