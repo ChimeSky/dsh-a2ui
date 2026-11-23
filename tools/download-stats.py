@@ -166,8 +166,24 @@ def main():
         if archive.exists()
         else {"npm_daily": {}, "github_assets": {}, "github_snapshots": {}}
     )
-    day = datetime.now(timezone.utc).date().isoformat()
-    update_history(history, npm_counts(), release_asset_counts(), day, clone_counts())
+    today = datetime.now(timezone.utc).date()
+    day = today.isoformat()
+    scheduled = os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+    if scheduled and history.get("last_complete_scheduled_update") == day:
+        print(f"Scheduled stats refresh already completed for {day} UTC.")
+        return
+
+    npm_daily = npm_counts()
+    github_assets = release_asset_counts()
+    github_clones = clone_counts()
+    update_history(history, npm_daily, github_assets, day, github_clones)
+    yesterday = (today - timedelta(days=1)).isoformat()
+    if scheduled:
+        if yesterday in npm_daily and github_clones is not None:
+            history["last_complete_scheduled_update"] = day
+        else:
+            print("Some source data is pending. A later scheduled run can retry.")
+
     output.mkdir(parents=True, exist_ok=True)
     render_chart(output / "trend.png", history)
     archive.write_text(json.dumps(history, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")

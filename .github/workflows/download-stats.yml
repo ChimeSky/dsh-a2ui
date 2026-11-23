@@ -2,7 +2,8 @@ name: Download trends
 
 on:
   schedule:
-    - cron: '27 5 * * *'
+    # Beijing time: 12:00, with retries at 12:13 and 12:37 if needed.
+    - cron: '0,13,37 4 * * *'
   workflow_dispatch:
   push:
     branches: [main]
