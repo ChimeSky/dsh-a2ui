@@ -69,24 +69,31 @@ def release_asset_counts():
 def clone_counts():
     token = os.environ.get("DOWNLOAD_STATS_TRAFFIC_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
-        return None
+        raise RuntimeError("No GitHub traffic credential")
+    report = fetch_json(GITHUB_CLONES, token)
+    return {item["timestamp"][:10]: item["count"] for item in report["clones"]}
+
+
+def collect_source(name, fetch_counts):
     try:
-        report = fetch_json(GITHUB_CLONES, token)
-        return {item["timestamp"][:10]: item["count"] for item in report["clones"]}
+        return fetch_counts()
     except HTTPError as error:
-        print(f"::warning::GitHub Clones refresh failed (HTTP {error.code}). Using saved data.")
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        print(f"::warning::GitHub Clones refresh failed ({type(error).__name__}). Using saved data.")
+        reason = f"HTTP {error.code}"
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        reason = type(error).__name__
+    print(f"::warning::{name} refresh failed ({reason}). Keeping the last saved values.")
     return None
 
 
-def update_history(history, npm_daily, github_assets, day, github_clones=None):
-    history["npm_daily"].update(npm_daily)
+def update_history(history, npm_daily, github_assets, day, github_clones):
+    if npm_daily is not None:
+        history["npm_daily"].update(npm_daily)
     if github_clones is not None:
         history.setdefault("github_clones_daily", {}).update(github_clones)
-    # Keep the last reported count if a previously observed asset is removed.
-    history["github_assets"].update(github_assets)
-    history["github_snapshots"][day] = sum(history["github_assets"].values())
+    if github_assets is not None:
+        # Keep the last reported count if a previously observed asset is removed.
+        history["github_assets"].update(github_assets)
+        history["github_snapshots"][day] = sum(history["github_assets"].values())
 
 
 def draw_series(axes, days, totals, color, start):
@@ -108,14 +115,16 @@ def render_chart(target, history):
     clones_daily = history.get("github_clones_daily", {})
     clone_days = sorted(clones_daily)
     clone_total = list(accumulate(clones_daily[day] for day in clone_days))
-    clone_value = f"{sum(clones_daily.values()):,}" if "github_clones_daily" in history else "Unavailable"
+    npm_value = f"{npm_total[-1]:,}" if npm_total else "Unavailable"
+    github_value = f"{github_total[-1]:,}" if github_total else "Unavailable"
+    clone_value = f"{clone_total[-1]:,}" if clone_total else "Unavailable"
 
     figure = plt.figure(figsize=(9.4, 4.8), dpi=140, facecolor="#ffffff")
     axes = figure.add_axes((0.094, 0.22, 0.86, 0.46))
     figure.text(0.094, 0.91, "dsh-a2ui downloads & clones", color="#18253b", fontsize=18, weight="bold")
     for x, label, value, color in (
-        (0.094, "npm package", f"{npm_total[-1]:,}", NPM_COLOR),
-        (0.385, "GitHub Release assets", f"{github_total[-1]:,}", GITHUB_COLOR),
+        (0.094, "npm package", npm_value, NPM_COLOR),
+        (0.385, "GitHub Release assets", github_value, GITHUB_COLOR),
         (0.73, "GitHub Clones", clone_value, CLONES_COLOR),
     ):
         figure.text(x, 0.82, label, color=color, fontsize=11, weight="bold")
@@ -130,7 +139,7 @@ def render_chart(target, history):
     draw_series(axes, clone_days, clone_total, CLONES_COLOR, start)
 
     axes.set_xlim(mdates.date2num(start) - 0.35, mdates.date2num(end) + 0.35)
-    upper = max(max(npm_total), max(github_total), max(clone_total, default=0))
+    upper = max((*npm_total, *github_total, *clone_total), default=0)
     axes.set_ylim(0, max(1, upper * 1.12))
     step = max(1, ((end - start).days + 5) // 6)
     axes.xaxis.set_major_locator(mdates.DayLocator(interval=step))
@@ -142,9 +151,10 @@ def render_chart(target, history):
     for spine in axes.spines.values():
         spine.set_visible(False)
 
+    npm_date = f"through {npm_days[-1]}" if npm_days else "unavailable"
+    github_date = f"as of {github_days[-1]}" if github_days else "unavailable"
     figure.text(
-        0.094, 0.092,
-        f"npm through {npm_days[-1]}  |  Release assets as of {github_days[-1]}  |  UTC",
+        0.094, 0.092, f"npm {npm_date}  |  Release assets {github_date}  |  UTC",
         color="#475569", fontsize=9,
     )
     if clone_days:
@@ -173,21 +183,40 @@ def main():
         print(f"Scheduled stats refresh already completed for {day} UTC.")
         return
 
-    npm_daily = npm_counts()
-    github_assets = release_asset_counts()
-    github_clones = clone_counts()
+    npm_daily = collect_source("npm", npm_counts)
+    github_assets = collect_source("GitHub Releases", release_asset_counts)
+    github_clones = collect_source("GitHub Clones", clone_counts)
+    if not (npm_daily or github_assets is not None or github_clones):
+        raise RuntimeError("No download or clone data refreshed. Keeping the previous chart.")
+
     update_history(history, npm_daily, github_assets, day, github_clones)
-    yesterday = (today - timedelta(days=1)).isoformat()
     if scheduled:
-        if yesterday in npm_daily and github_clones is not None:
+        yesterday = (today - timedelta(days=1)).isoformat()
+        complete = (
+            github_assets is not None
+            and yesterday in (npm_daily or {})
+            and yesterday in (github_clones or {})
+        )
+        if complete:
             history["last_complete_scheduled_update"] = day
         else:
-            print("Some source data is pending. A later scheduled run can retry.")
+            print(f"Some source data through {yesterday} UTC is pending. A later scheduled run can retry.")
 
     output.mkdir(parents=True, exist_ok=True)
     render_chart(output / "trend.png", history)
     archive.write_text(json.dumps(history, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-    print(f"npm: {sum(history['npm_daily'].values()):,} | GitHub: {history['github_snapshots'][day]:,}")
+    for name, key in (
+        ("npm", "npm_daily"),
+        ("GitHub Releases", "github_snapshots"),
+        ("GitHub Clones", "github_clones_daily"),
+    ):
+        counts = history.get(key, {})
+        if not counts:
+            print(f"{name}: unavailable")
+            continue
+        latest = max(counts)
+        total = counts[latest] if key == "github_snapshots" else sum(counts.values())
+        print(f"{name}: {total:,} through {latest} UTC")
 
 
 if __name__ == "__main__":
