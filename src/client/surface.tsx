@@ -31,7 +31,9 @@ import {
 } from './context.js'
 import { renderText } from './markdown.js'
 import { renderButton, CheckBoxView, ChoicePickerView, DateTimeInputView, SliderView, TextFieldView } from './fields.js'
-import { BarChartView, LineChartView, PieChartView, PlotView } from './charts.js'
+import { BarChartView, LineChartView, ParetoChartView, PieChartView, PlotView } from './charts.js'
+import { RadarChartView } from './radar.js'
+import { HeatmapView, TimelineView } from './display.js'
 import { FramePlayerView } from './player.js'
 
 const JUSTIFY: Record<string, string> = {
@@ -229,6 +231,21 @@ function ComponentNode(props: { component: A2UIComponent; scope: Scope; depth: n
       return wrap(h('div', { className: 'a2ui-row', style: layoutStyle(component, 'row'), ...a11y }, ...renderChildren(scope, component, depth)))
     case 'Column':
       return wrap(h('div', { className: 'a2ui-stack', style: layoutStyle(component, 'column'), ...a11y }, ...renderChildren(scope, component, depth)))
+    case 'Section': {
+      const title = text(scope, component.title)
+      const description = component.description === undefined ? '' : text(scope, component.description)
+      return wrap(h(
+        'section',
+        { className: 'a2ui-section', ...a11y },
+        title === '' && description === '' ? null : h(
+          'header',
+          { className: 'a2ui-section-head' },
+          title === '' ? null : h('h3', { className: 'a2ui-section-title' }, title),
+          description === '' ? null : h('p', { className: 'a2ui-caption' }, description),
+        ),
+        ...renderChildren(scope, component, depth),
+      ))
+    }
     case 'List':
       return wrap(
         h(
@@ -277,12 +294,20 @@ function ComponentNode(props: { component: A2UIComponent; scope: Scope; depth: n
       return wrap(renderProgress(scope, component))
     case 'BarChart':
       return wrap(h(BarChartView, { component, scope }))
+    case 'ParetoChart':
+      return wrap(h(ParetoChartView, { component, scope }))
+    case 'RadarChart':
+      return wrap(h(RadarChartView, { component, scope }))
     case 'LineChart':
       return wrap(h(LineChartView, { component, scope }))
     case 'PieChart':
       return wrap(h(PieChartView, { component, scope }))
     case 'Plot':
       return wrap(h(PlotView, { component, scope }))
+    case 'Heatmap':
+      return wrap(h(HeatmapView, { component, scope }))
+    case 'Timeline':
+      return wrap(h(TimelineView, { component, scope }))
     case 'FramePlayer':
       return wrap(h(FramePlayerView, { component, scope }))
     default:

@@ -4,7 +4,7 @@
 > 
 > *Make data-heavy AI answers easier to understand with inline, on-demand A2UI visualizations.*
 
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](./CHANGELOG.md)
 [![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
 [![Tests](https://img.shields.io/badge/tests-171%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![React Tests](https://img.shields.io/badge/react%20tests-19%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
@@ -23,7 +23,7 @@
 | 特性 | 说明 |
 | :--- | :--- |
 | **按需可视化** | Agent 根据回答内容自动判断是否值得启用可视化，无需用户手动输入特定指令 |
-| **A2UI 1.0 协议** | 使用标准协议消息与 26 个受控组件目录，依据官方 Schema 校验，拒绝直接注入原始 HTML |
+| **A2UI 1.0 协议** | 使用标准协议消息与 31 个受控组件目录，依据官方 Schema 校验，拒绝直接注入原始 HTML |
 | **组件级渐进式渲染** | 模型流式生成工具参数时，每闭合一个完整 JSON 值与组件即可逐步上屏，告别漫长白屏等待 |
 | **轻量交互闭环** | 原生支持表格排序、图表悬停、滑块调参等本地交互，必要时可通过 `agent -> UI -> agent` 通道将操作回传 Agent |
 | **历史一致性** | 每次调用生成自包含的回答快照，无需维护跨轮次状态即可由会话日志完整重放 |
@@ -70,9 +70,10 @@ npm 统计整个包，GitHub Release 统计插件 `.tgz` 附件，GitHub Clones 
 
 插件以 bundle 形式打包（`dsh.bundle` + `dsh.client`），仓库根目录就是可安装的包，构建产物已随仓库提交，安装时不需要现场编译。
 
-- **在 DSH 内安装（推荐）** — 打开「插件」→「添加插件」，输入 `dsh-a2ui` 并点击安装。默认使用所选安装源的 `latest` 标签，如需固定版本可输入 `dsh-a2ui@0.3.1`。 [npm 包页面](https://www.npmjs.com/package/dsh-a2ui)
-- **从 GitHub 安装** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
-- **离线安装** — 运行 `npm pack dsh-a2ui` 下载 `.tgz`，再把文件的绝对路径填入「添加插件」。仓库中的固定版本也可用 `dsh plugin --profile desktop add <绝对路径>/vendor/dsh-a2ui-0.3.1.tgz` 或 `tools/install.ps1` 安装。
+- **在 DSH 内安装 v0.4.0** — 打开「插件」→「添加插件」，输入 `github:ChimeSky/dsh-a2ui#v0.4.0` 并点击安装。
+- **命令行安装 v0.4.0** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.4.0`
+- **离线安装 v0.4.0** — 下载 `dsh-a2ui.tgz` 后，在「添加插件」中输入文件的绝对路径。也可以用 `tools/install.ps1` 安装仓库里的 `vendor/dsh-a2ui-0.4.0.tgz`。 [GitHub Release](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
+- **从 npm 安装** — 输入 `dsh-a2ui` 安装所选 Registry 的 `latest` 版本，或输入 `dsh-a2ui@0.3.1` 固定该版本。 [npm 包页面](https://www.npmjs.com/package/dsh-a2ui)
 - **插件管理器**：`plugin_manager action=install_bundle target=<绝对路径或 tarball 路径>`
 
 把 `desktop` 换成目标 profile（Web 端通常为 `web`）。替换已安装的包之后，需要重启 DSH 才能加载新的 JavaScript 模块。
@@ -148,20 +149,35 @@ npm run all
 
 `Text`、`Image`、`Icon`、`Video`、`AudioPlayer`、`Row`、`Column`、`List`、`Card`、`Tabs`、`Modal`、`Divider`、`Button`、`TextField`、`CheckBox`、`ChoicePicker`、`Slider`、`DateTimeInput`，以及 `checks` 校验规则（`required` / `regex` / `length` / `numeric` / `email`）：校验失败时按钮禁用并显示错误。
 
-### 扩展 catalog（8）
+### 扩展 catalog（13）
 
 | 组件 | 说明 |
 |---|---|
 | `Table` | 列声明 + 数据行；支持 `number` / `currency` / `percent` / `date` 格式化、对齐、横向滚动、40 行折叠 |
-| `BarChart` | 分组 / 堆叠 / 横向柱状图 |
+| `BarChart` | 分组 / 堆叠 / 横向柱状图，普通和分组竖向柱支持误差棒 |
+| `ParetoChart` | 分类降序柱状图与累计占比折线 |
+| `RadarChart` | 在同一评分刻度上比较多组维度分数 |
 | `LineChart` | 折线、面积、平滑曲线、数据点 |
 | `PieChart` | 饼图 / 环形图 + 图例百分比 |
 | `Stat` | KPI 指标卡（值、单位、变化量、趋势色） |
 | `Progress` | 进度条（`neutral` / `success` / `warning` / `danger`） |
-| `Plot` | 安全算术表达式函数图（`a*x^2+b*x+c` 等），`variables` 可绑定数据模型实现本地重绘 |
+| `Plot` | 函数图、散点图与气泡图，可选线性回归。函数图可通过 `variables` 绑定数据模型实现本地重绘 |
 | `FramePlayer` | 分步动画播放器（播放 / 暂停 / 单步 / 重置 / 调速，全部本地） |
+| `Heatmap` | 矩阵热力图，支持顺序与发散色阶、缺失值标记和双向滚动 |
+| `Timeline` | 按输入顺序排列的纵向时间线，可附说明与状态 |
+| `Section` | 带标题和可选说明的轻量内容分区 |
 
 `Plot` 的表达式由**自写解析器**求值：只接受数字、`x`、调用方变量、`+ - * / ^ %`、括号与固定数学函数（`sin`、`sqrt`、`max` 等）。白名单之外的标识符一律编译失败，**不使用 `eval` / `new Function`**。
+
+`Plot` 的散点系列使用 `kind: "scatter"` 和 `points`。点可带非负数值 `size`，以圆的面积表示第三个指标，`sizeLabel` 提供指标名和单位。极小的正值会保留可见大小，零值用空心圆表示，省略 `size` 时显示普通散点。
+
+给散点系列加 `regression: "linear"`，插件会用该系列的原始 X/Y 数据拟合直线，并在有定义时显示 R²。线段只显示在样本 X 的范围和当前坐标轴范围内。点击图例会同时隐藏该系列和拟合线。
+
+`ParetoChart` 接收 `items: [{ "label": "类别", "value": 30 }]` 或绑定的数组。插件按非负值降序排列，并在右轴显示累计占比，`valueSuffix` 可标注原值的单位。鼠标悬停或按方向键可查看完整类别、原值和累计占比。总值为零时会给出说明。
+
+普通或分组竖向 `BarChart` 支持在系列里设置 `errorBars: [{ "lower": 8, "upper": 14 }, null]`，也可绑定数组。每个条目对应一个类别，`null` 表示该柱没有误差棒，上下界应包含柱值。`errorLabel` 可标明已有的区间含义，例如「95% 置信区间」，悬停可查看完整上下界。
+
+`RadarChart` 使用 `axes: ["速度", "准确率", "稳定性"]` 和 `series: [{ "label": "方案 A", "values": [80, 90, null] }]`。支持 3–8 个维度，维度名称和系列分数数组都可绑定数据模型。所有维度共享 `min` 和 `max`，默认 0–100。用 `null` 表示缺失，图上会断开对应线段。悬停、触屏点按或方向键都可查看该维度的各组原始分数，点击图例可以显隐系列。长名称在窄栏里会通过编号对照完整展示。
 
 ### 数据绑定与函数
 
@@ -270,7 +286,7 @@ npm run pack:vendor              # 重新生成 vendor/dsh-a2ui-<version>.tgz
 npm run all                      # 以上全部
 ```
 
-当前验证规模：171 个自动化用例（含 18 个 jsdom DOM 用例、27 个流式用例、43 个官方样例）、19 个真实 React 渲染用例、32 项 bundle 不变量。详细结果与「真实 DSH 中验证 / 仅无头验证」的分界见 [docs/TEST-REPORT.md](docs/TEST-REPORT.md)，逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+v0.4.0 通过 198 个自动化用例、19 个 React 渲染用例和 32 项 bundle 检查。验证范围见 [测试报告](docs/TEST-REPORT.md)，逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 `index.js`、`lib/**`、`client.js` 是构建产物，随仓库提交，便于 `dsh plugin add github:` 直接安装；改源码后重新执行 `npm run build` 再提交。构建不会删除任何文件，也不会使用 esbuild（受限沙箱禁止其原生服务所需的管道）。
 

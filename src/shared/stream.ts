@@ -27,8 +27,10 @@ import { recoverArguments } from './partial-json.js'
 import {
   applyMessageBatch,
   checkComponentAlone,
+  isPresentation,
   type A2UIComponent,
   type AgentToRendererMessage,
+  type Presentation,
   type SurfaceState,
 } from './validate.js'
 
@@ -36,6 +38,7 @@ import {
 export interface StreamingFold {
   /** `title`, once the model finished writing that string. */
   title?: string
+  presentation?: Presentation
   /** Surfaces that are safe to draw, in declaration order. */
   surfaces: SurfaceState[]
   /** Components recovered so far, across every drawn surface. */
@@ -199,7 +202,8 @@ export function foldStreaming(text: string): StreamingFold {
     }
     messages.push(message)
   }
-  if (messages.length === 0) return { ...EMPTY, streaming: recovered.open, truncated }
+  const presentation = isPresentation(recovered.presentation) ? { presentation: recovered.presentation } : {}
+  if (messages.length === 0) return { ...EMPTY, ...presentation, streaming: recovered.open, truncated }
   const folded = applyMessageBatch(new Map<string, SurfaceState>(), messages)
   const surfaces: SurfaceState[] = []
   let components = 0
@@ -224,7 +228,7 @@ export function foldStreaming(text: string): StreamingFold {
       truncated = true
       continue
     }
-    const estimate = estimateExpansion(state)
+    const estimate = estimateExpansion(state, LIMITS.maxExpandedNodes, LIMITS.maxExpandedDataUnits, true)
     if (estimate.reason !== undefined) {
       // Over the per-surface budget: this surface can never become legal.
       truncated = true
@@ -243,6 +247,7 @@ export function foldStreaming(text: string): StreamingFold {
   }
   return {
     ...(recovered.title === undefined ? {} : { title: recovered.title }),
+    ...presentation,
     surfaces,
     components,
     streaming: recovered.open,

@@ -69,7 +69,8 @@ test('host registers the two tools and one prompt section', () => {
   const tools = ctx.tools_()
   assert.deepEqual([...tools.keys()].sort(), ['a2ui', 'a2ui_catalog'])
   const tool = tools.get('a2ui')
-  assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ['messages', 'title'])
+  assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ['messages', 'presentation', 'title'])
+  assert.deepEqual(tool.parameters.properties.presentation.enum, ['card', 'compact'])
   assert.deepEqual(tool.parameters.required, ['messages'])
   assert.equal(tool.parameters.additionalProperties, false)
   assert.match(tool.description, /A2UI 1\.0/u)
@@ -161,9 +162,16 @@ test('valid calls with no title return lossless presentation metadata', async ()
     assert.equal(value.ok, true)
     const meta = tool.output.presentationMeta(args, value)
     assert.equal(Object.hasOwn(meta, 'title'), false)
+    assert.equal(Object.hasOwn(meta, 'presentation'), false)
     assert.deepEqual(meta, JSON.parse(JSON.stringify(meta)))
     assert.deepEqual(meta.messages, messages)
   }
+  const compact = { presentation: 'compact', messages: [create] }
+  const value = await tool.execute(compact, { signal: new AbortController().signal })
+  assert.equal(value.ok, true)
+  const meta = tool.output.presentationMeta(compact, value)
+  assert.equal(meta.presentation, 'compact')
+  assert.deepEqual(meta, JSON.parse(JSON.stringify(meta)))
 })
 
 test('the tool rejects an invalid payload with path-qualified reasons', async () => {

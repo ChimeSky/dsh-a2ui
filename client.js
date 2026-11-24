@@ -61,8 +61,46 @@ const zh = {
     tableRowLimit: '共 {total} 行，仅保留前 {limit} 行供查看。',
     tableShowAvailable: '显示可查看的行',
     chartEmpty: '没有可绘制的数据',
+    barErrorRange: '误差范围',
+    paretoChart: '帕累托图',
+    paretoValue: '原值',
+    paretoCumulative: '累计占比',
+    paretoZeroTotal: '所有类别的值均为 0，无法计算累计占比。',
+    paretoKeyboard: '使用方向键查看类别，Home 和 End 跳到首尾，Esc 关闭提示。',
+    radarChart: '雷达图',
+    radarAxes: '维度对照',
+    radarScale: '统一刻度 {min} 至 {max}',
+    radarMissing: '缺失',
+    radarMissingCount: '{count} 项缺失',
+    radarAllHidden: '已隐藏全部系列。',
+    radarKeyboard: '使用方向键查看维度，Home 和 End 跳到首尾，Esc 关闭读数。',
     plotInvalid: '函数表达式无效',
     plotInvalidRange: '绘图范围无效，xMin 必须小于 xMax。',
+    scatterInvalidYRange: '散点图的 Y 轴范围无效，yMin 必须小于 yMax。',
+    scatterEmpty: '暂无可绘制的散点。',
+    scatterInvalidPoints: '散点数据无效。每个点需要有限的 x、y 数值，且每组最多 {limit} 个点。',
+    scatterOutside: '{count} 个点在显示范围外。',
+    scatterOverlap: '重合点 {index}/{total}',
+    scatterSize: '大小',
+    scatterRegression: '线性拟合',
+    scatterRegressionConstant: '线性拟合（Y 值相同）',
+    scatterRegressionUnavailable: '线性拟合需要至少两个不同的 X 值',
+    scatterKeyboard: '使用方向键逐点查看，Home 和 End 跳到首尾，Esc 关闭提示。',
+    displayWaiting: '正在等待绑定数据…',
+    displayInvalid: '绑定数据不符合组件要求。',
+    heatmap: '热力图',
+    heatmapEmpty: '暂无可显示的热力图数据。',
+    heatmapNoValues: '没有有效数值',
+    heatmapMissing: '缺失',
+    heatmapScale: '色阶',
+    heatmapOutsideScale: '超出色阶范围',
+    heatmapKeyboard: '使用方向键查格，Home 和 End 跳到本行首尾，Esc 关闭提示。',
+    timeline: '时间线',
+    timelineEmpty: '暂无时间线事件。',
+    'timelineStatus-done': '已完成',
+    'timelineStatus-current': '进行中',
+    'timelineStatus-upcoming': '计划中',
+    'timelineStatus-blocked': '受阻',
     play: '播放',
     pause: '暂停',
     step: '单步',
@@ -117,8 +155,46 @@ const en = {
     tableRowLimit: 'Only the first {limit} of {total} rows are available in this table.',
     tableShowAvailable: 'Show available rows',
     chartEmpty: 'Nothing to plot',
+    barErrorRange: 'Error range',
+    paretoChart: 'Pareto chart',
+    paretoValue: 'Value',
+    paretoCumulative: 'Cumulative share',
+    paretoZeroTotal: 'All values are zero, so cumulative shares cannot be calculated.',
+    paretoKeyboard: 'Use the arrow keys to inspect categories, Home and End to jump, or Escape to dismiss the tooltip.',
+    radarChart: 'Radar chart',
+    radarAxes: 'Axis key',
+    radarScale: 'Shared scale {min} to {max}',
+    radarMissing: 'Missing',
+    radarMissingCount: '{count} missing',
+    radarAllHidden: 'All series are hidden.',
+    radarKeyboard: 'Use the arrow keys to inspect axes, Home and End to jump, or Escape to dismiss the values.',
     plotInvalid: 'Invalid function expression',
     plotInvalidRange: 'The plot range requires xMin to be less than xMax.',
+    scatterInvalidYRange: 'The scatter plot requires yMin to be less than yMax.',
+    scatterEmpty: 'There are no scatter points to display.',
+    scatterInvalidPoints: 'Each scatter point needs finite x and y values, with at most {limit} points per series.',
+    scatterOutside: '{count} points fall outside the displayed range.',
+    scatterOverlap: 'Overlapping point {index}/{total}',
+    scatterSize: 'Size',
+    scatterRegression: 'Linear fit',
+    scatterRegressionConstant: 'Linear fit (constant Y)',
+    scatterRegressionUnavailable: 'Linear fit requires at least two distinct X values',
+    scatterKeyboard: 'Use the arrow keys to inspect points, Home and End to jump, or Escape to dismiss the tooltip.',
+    displayWaiting: 'Waiting for bound data…',
+    displayInvalid: 'The bound data does not match this component.',
+    heatmap: 'Heatmap',
+    heatmapEmpty: 'There is no heatmap data to display.',
+    heatmapNoValues: 'No numeric values',
+    heatmapMissing: 'Missing',
+    heatmapScale: 'Color scale',
+    heatmapOutsideScale: 'Outside the color scale',
+    heatmapKeyboard: 'Use the arrow keys to inspect cells, Home and End to move within the row, or Escape to close the tooltip.',
+    timeline: 'Timeline',
+    timelineEmpty: 'There are no timeline events.',
+    'timelineStatus-done': 'Done',
+    'timelineStatus-current': 'In progress',
+    'timelineStatus-upcoming': 'Planned',
+    'timelineStatus-blocked': 'Blocked',
     play: 'Play',
     pause: 'Pause',
     step: 'Step',
@@ -162,21 +238,35 @@ __registry["./client/styles.js"] = function(module, exports, require) {
  * legible on both backgrounds and no theme token provides a palette.
  */
 const CSS = `
-.a2ui-root{--a2ui-radius:10px;--a2ui-gap:10px;--a2ui-c1:#4c8dff;--a2ui-c2:#2fb37a;--a2ui-c3:#e8a33d;--a2ui-c4:#d96a8b;--a2ui-c5:#8c7bf0;--a2ui-c6:#2ab6c6;--a2ui-c7:#e0684b;--a2ui-c8:#7d8fa8;
-  display:block;min-width:0;width:100%;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;box-sizing:border-box}
+.a2ui-root{--a2ui-radius:10px;--a2ui-space-xs:4px;--a2ui-space-sm:8px;--a2ui-gap:10px;--a2ui-panel-padding:14px;
+  --a2ui-body-size:13px;--a2ui-heading-size:14px;--a2ui-caption-size:11.5px;
+  --a2ui-fg:var(--dsw-alias-label-primary);--a2ui-muted:var(--dsw-alias-label-secondary);--a2ui-border:var(--dsw-alias-border-l1);
+  --a2ui-c1:#4c8dff;--a2ui-c2:#2fb37a;--a2ui-c3:#e8a33d;--a2ui-c4:#d96a8b;--a2ui-c5:#8c7bf0;--a2ui-c6:#2ab6c6;--a2ui-c7:#e0684b;--a2ui-c8:#7d8fa8;
+  container:a2ui / inline-size;display:block;min-width:0;width:100%;color:var(--a2ui-fg);font-size:var(--a2ui-body-size);line-height:1.55;box-sizing:border-box}
 .a2ui-root *,.a2ui-root *::before,.a2ui-root *::after{box-sizing:border-box}
-.a2ui-card{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);border-radius:14px;overflow:hidden;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-.a2ui-card-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);min-width:0}
+.a2ui-card{border:1px solid var(--a2ui-border);background:var(--dsw-alias-bg-layer-2);border-radius:14px;overflow:hidden;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.a2ui-card-head{display:flex;align-items:center;gap:var(--a2ui-space-sm);padding:var(--a2ui-gap) var(--a2ui-panel-padding);border-bottom:1px solid var(--a2ui-border);min-width:0}
 .a2ui-card-spark{display:inline-flex;flex:none;width:14px;height:14px;color:var(--dsw-alias-brand-primary)}
 .a2ui-card-spark svg{width:100%;height:100%}
-.a2ui-card-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);letter-spacing:.005em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.a2ui-card-body{padding:14px;min-width:0}
+.a2ui-card-title{font-size:var(--a2ui-body-size);font-weight:600;color:var(--a2ui-fg);letter-spacing:.005em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.a2ui-card-body{padding:var(--a2ui-panel-padding);min-width:0}
+.a2ui-compact{display:flex;flex-direction:column;gap:var(--a2ui-space-sm);min-width:0;padding-block:var(--a2ui-space-xs)}
+.a2ui-compact-head{display:flex;align-items:baseline;gap:var(--a2ui-space-sm);min-width:0}
+.a2ui-compact-head .a2ui-card-title{font-size:var(--a2ui-heading-size);white-space:normal;overflow-wrap:anywhere}
+.a2ui-compact-body{min-width:0}
+.a2ui-section{display:flex;flex-direction:column;gap:var(--a2ui-space-sm);min-width:0}
+.a2ui-section-head{display:grid;gap:var(--a2ui-space-xs);min-width:0}
+.a2ui-section-title{margin:0;font-size:var(--a2ui-heading-size);font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+@container a2ui (max-width:480px){
+  .a2ui-compact .a2ui-row,.a2ui-section .a2ui-row{flex-direction:column;align-items:stretch!important}
+  .a2ui-compact .a2ui-row>*,.a2ui-section .a2ui-row>*{flex-basis:auto!important;min-width:0;max-width:100%}
+}
 .a2ui-surface{display:flex;flex-direction:column;gap:var(--a2ui-gap);min-width:0}
 .a2ui-stack{display:flex;flex-direction:column;gap:var(--a2ui-gap);min-width:0}
 .a2ui-row{display:flex;flex-direction:row;gap:var(--a2ui-gap);min-width:0;flex-wrap:wrap}
-.a2ui-list{display:flex;gap:8px;min-width:0}
+.a2ui-list{display:flex;gap:var(--a2ui-space-sm);min-width:0}
 .a2ui-text{margin:0;min-width:0;overflow-wrap:anywhere}
-.a2ui-text-caption{font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.a2ui-text-caption{font-size:var(--a2ui-caption-size);color:var(--a2ui-muted)}
 .a2ui-text code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--dsw-alias-markdown-inline-code);border-radius:4px;padding:1px 4px}
 .a2ui-text strong{font-weight:600}
 .a2ui-card-inner{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:var(--a2ui-radius);padding:12px;min-width:0}
@@ -191,7 +281,7 @@ const CSS = `
 .a2ui-btn-borderless{border-color:transparent;background:transparent;color:var(--dsw-alias-brand-primary);padding-left:4px;padding-right:4px}
 .a2ui-btn-borderless:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}
 .a2ui-field{display:flex;flex-direction:column;gap:5px;min-width:0}
-.a2ui-label{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary)}
+.a2ui-label{font-size:12px;font-weight:500;color:var(--a2ui-muted)}
 .a2ui-input,.a2ui-textarea,.a2ui-select{font:inherit;font-size:13px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 10px;min-height:32px;width:100%;min-width:0}
 .a2ui-textarea{min-height:74px;resize:vertical;line-height:1.5}
 .a2ui-input:focus-visible,.a2ui-textarea:focus-visible,.a2ui-select:focus-visible{border-color:var(--dsw-alias-brand-primary);outline:none}
@@ -232,12 +322,99 @@ const CSS = `
 .a2ui-table tbody tr:nth-child(even) td{background:color-mix(in oklab, var(--dsw-alias-label-primary) 3%, transparent)}
 .a2ui-table tbody tr:nth-child(even):hover td{background:color-mix(in oklab, var(--dsw-alias-label-primary) 5%, transparent)}
 .a2ui-table .a2ui-num{text-align:right;font-variant-numeric:tabular-nums}
-.a2ui-caption{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin:0}
+.a2ui-caption{font-size:var(--a2ui-caption-size);color:var(--a2ui-muted);margin:0;overflow-wrap:anywhere}
 .a2ui-chart{display:block;width:100%;overflow:visible}
 .a2ui-chart-wrap{display:flex;flex-direction:column;gap:6px;min-width:0}
 .a2ui-chart-note{font-size:11px;color:var(--dsw-alias-label-secondary);margin:0}
 .a2ui-chart-svg{width:100%;height:auto;display:block;overflow:visible}
 .a2ui-bar-plot{position:relative;min-width:0}
+.a2ui-plot,.a2ui-plot-frame{position:relative;min-width:0}
+.a2ui-plot-frame:focus,#root .a2ui-root .a2ui-plot-frame:focus{outline:none;box-shadow:none}
+.a2ui-plot-frame:focus-visible::after{content:"";position:absolute;inset:0;border:2px solid var(--dsw-alias-state-business-primary,var(--dsw-alias-brand-primary,Highlight));border-radius:var(--a2ui-radius);pointer-events:none}
+.a2ui-plot-frame circle[data-plot-point]{cursor:pointer}
+.a2ui-plot-label{margin:0;font-size:var(--a2ui-caption-size);color:var(--a2ui-muted);overflow-wrap:anywhere}
+.a2ui-plot-label-x{text-align:center}
+.a2ui-plot-key{display:flex;flex-wrap:wrap;align-items:center;gap:var(--a2ui-space-xs) var(--a2ui-gap)}
+.a2ui-plot-key>span{display:inline-flex;align-items:center;gap:var(--a2ui-space-xs);min-width:0;overflow-wrap:anywhere}
+.a2ui-plot-size-swatch{display:inline-block;flex:none;box-sizing:border-box;border:1px solid currentColor;border-radius:50%;background:color-mix(in oklab,currentColor 26%,transparent)}
+.a2ui-plot-fit-swatch{inline-size:1rem;flex:none;border-block-start:2px dashed currentColor}
+.a2ui-pareto-line-swatch{inline-size:1rem;flex:none;border-block-start:2px solid currentColor}
+.a2ui-pareto [tabindex] :is([data-pareto-bar],circle){cursor:pointer}
+.a2ui-radar-grid{stroke:var(--a2ui-border);stroke-width:1}
+.a2ui-radar-grid .a2ui-radar-spoke-active{stroke:var(--dsw-alias-brand-primary,Highlight);stroke-width:1.5}
+.a2ui-radar-frame[tabindex] [data-radar-axis]{cursor:pointer}
+.a2ui-radar-frame [data-radar-label] rect{fill:transparent}
+.a2ui-radar-frame [data-radar-label] text{fill:var(--a2ui-fg);font-size:12px}
+.a2ui-radar-frame .a2ui-radar-label-active rect{fill:color-mix(in oklab,var(--dsw-alias-brand-primary,Highlight) 17%,transparent)}
+.a2ui-radar-scale{text-align:center;overflow-wrap:anywhere}
+.a2ui-radar-axis-key{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,9.5rem),1fr));
+  gap:var(--a2ui-space-xs) var(--a2ui-gap);font-size:var(--a2ui-caption-size);color:var(--a2ui-muted)}
+.a2ui-radar-axis-key li{display:grid;grid-template-columns:1.2em minmax(0,1fr);gap:var(--a2ui-space-xs);align-items:baseline;overflow-wrap:anywhere}
+.a2ui-radar-axis-number{font-weight:600;color:var(--a2ui-fg);font-variant-numeric:tabular-nums}
+.a2ui-radar-legend .a2ui-legend-item{min-inline-size:0;max-inline-size:100%;text-align:start;overflow-wrap:anywhere}
+.a2ui-radar-swatch{flex:none;inline-size:23px;block-size:8px}
+.a2ui-radar-readout{display:grid;gap:var(--a2ui-space-xs);border-block-start:1px solid var(--a2ui-border);padding-block-start:var(--a2ui-space-xs);
+  overflow-wrap:anywhere;white-space:pre-wrap}
+.a2ui-visually-hidden{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.a2ui-heatmap{--a2ui-heat-base:var(--dsw-alias-bg-layer-3,Canvas);--a2ui-heat-high:var(--dsw-alias-brand-primary,#3972d0);--a2ui-heat-low:#bd5a25;
+  --a2ui-heat-row-width:7rem;--a2ui-heat-cell-width:2.65rem;--a2ui-heat-gap:3px;--a2ui-heat-fade-width:14px;position:relative;margin:0;min-width:0}
+.a2ui-heatmap-scroll{align-self:flex-start;max-inline-size:100%;max-block-size:25rem;overflow:auto;
+  scroll-padding-inline-start:calc(var(--a2ui-heat-row-width) + 10px + var(--a2ui-heat-gap) + var(--a2ui-heat-fade-width));
+  scroll-padding-block-start:calc(var(--a2ui-heat-header-size,2rem) + var(--a2ui-heat-gap) + var(--a2ui-heat-fade-width))}
+.a2ui-heatmap-table{position:relative;border-collapse:separate;border-spacing:var(--a2ui-heat-gap);table-layout:fixed;inline-size:max-content;font-size:var(--a2ui-caption-size)}
+.a2ui-heatmap-table th{padding:4px 5px;font-weight:500;line-height:1.25;color:var(--a2ui-fg);overflow-wrap:anywhere;background:color-mix(in oklab,var(--dsw-alias-bg-layer-2,Canvas) 88%,Canvas)}
+.a2ui-heatmap-table thead th{position:sticky;inset-block-start:0;block-size:2rem;z-index:2;max-inline-size:6rem}
+.a2ui-heatmap-table th[scope=row]{position:sticky;inset-inline-start:0;z-index:1;inline-size:var(--a2ui-heat-row-width);max-inline-size:var(--a2ui-heat-row-width);text-align:start}
+.a2ui-heat-corner{position:sticky;inset-inline-start:0;inset-block-start:0;z-index:3}
+.a2ui-heatmap-table[data-heat-scrolled] :is(th[scope=col],td[data-heat-cell]){
+  --a2ui-heat-clip-x:calc(var(--a2ui-heat-scroll-x) - var(--a2ui-heat-gap) - var(--a2ui-heat-column-x));
+  --a2ui-heat-clip-left:max(0px,var(--a2ui-heat-clip-x));
+  --a2ui-heat-mask-x:linear-gradient(var(--a2ui-heat-fade-direction,to right),transparent var(--a2ui-heat-clip-x),#000 calc(var(--a2ui-heat-clip-x) + var(--a2ui-heat-fade-width)))}
+.a2ui-heatmap-table[data-heat-scrolled][data-heat-rtl] :is(th[scope=col],td[data-heat-cell]){
+  --a2ui-heat-fade-direction:to left;--a2ui-heat-clip-left:0px;--a2ui-heat-clip-right:max(0px,var(--a2ui-heat-clip-x))}
+.a2ui-heatmap-table[data-heat-scrolled-y] tbody :is(th[scope=row],td[data-heat-cell]){
+  --a2ui-heat-clip-y:calc(var(--a2ui-heat-scroll-y) - var(--a2ui-heat-gap) - var(--a2ui-heat-row-y));
+  --a2ui-heat-clip-top:max(0px,var(--a2ui-heat-clip-y));
+  --a2ui-heat-mask-y:linear-gradient(to bottom,transparent var(--a2ui-heat-clip-y),#000 calc(var(--a2ui-heat-clip-y) + var(--a2ui-heat-fade-width)))}
+.a2ui-heatmap-table[data-heat-scrolled] :is(th[scope=col],td[data-heat-cell]),
+.a2ui-heatmap-table[data-heat-scrolled-y] tbody :is(th[scope=row],td[data-heat-cell]){
+  clip-path:inset(var(--a2ui-heat-clip-top,0px) var(--a2ui-heat-clip-right,0px) 0 var(--a2ui-heat-clip-left,0px));
+  mask-image:var(--a2ui-heat-mask-x,linear-gradient(#000,#000)),var(--a2ui-heat-mask-y,linear-gradient(#000,#000));mask-composite:intersect}
+.a2ui-heatmap-table td[data-heat-cell]{min-inline-size:var(--a2ui-heat-cell-width);block-size:2rem;border:1px solid var(--a2ui-border);border-radius:4px;text-align:center;color:var(--a2ui-muted)}
+.a2ui-heatmap-table td[tabindex]{cursor:pointer}
+.a2ui-heatmap-table td[tabindex]:hover{box-shadow:inset 0 0 0 1px var(--a2ui-fg)}
+.a2ui-heatmap-table td:focus-visible,#root .a2ui-heatmap-table td:focus-visible{outline:2px solid var(--a2ui-fg,Highlight);outline-offset:-2px}
+.a2ui-heat-missing{background:repeating-linear-gradient(135deg,var(--a2ui-heat-base) 0 3px,var(--a2ui-border) 3px 4px)}
+.a2ui-heatmap>.a2ui-bar-tip{z-index:3}
+.a2ui-heat-legend,.a2ui-heat-key,.a2ui-heat-ticks{display:flex;align-items:center;gap:var(--a2ui-space-sm)}
+.a2ui-heat-legend{flex-wrap:wrap;gap:var(--a2ui-space-xs) var(--a2ui-panel-padding)}
+.a2ui-heat-scale{flex:1;min-inline-size:min(100%,10rem);max-inline-size:19rem}
+.a2ui-heat-ramp{block-size:8px;border-radius:4px;border:1px solid var(--a2ui-border)}
+.a2ui-heat-ticks{justify-content:space-between;font-variant-numeric:tabular-nums}
+.a2ui-heat-chip{inline-size:12px;block-size:12px;border-radius:3px;flex:none;border:1px solid var(--a2ui-border)}
+.a2ui-timeline{display:grid;gap:var(--a2ui-space-sm);min-width:0}
+.a2ui-timeline-list{list-style:none;margin:0;padding:0;display:grid;gap:var(--a2ui-gap)}
+.a2ui-timeline-item{display:grid;grid-template-columns:minmax(5rem,9rem) .8rem minmax(0,1fr);column-gap:var(--a2ui-space-sm);min-width:0}
+.a2ui-timeline-when{font-size:var(--a2ui-caption-size);font-weight:500;color:var(--a2ui-muted);overflow-wrap:anywhere}
+.a2ui-timeline-track{position:relative;display:flex;justify-content:center;align-items:flex-start}
+.a2ui-timeline-track::before{content:"";position:absolute;inset-block:.55em calc(-1 * var(--a2ui-gap));inline-size:1px;background:var(--a2ui-border)}
+.a2ui-timeline-item:last-child .a2ui-timeline-track::before{content:none}
+.a2ui-timeline-dot{position:relative;margin-block-start:.36em;inline-size:8px;block-size:8px;border-radius:50%;background:var(--dsw-alias-brand-primary,currentColor)}
+.a2ui-timeline-content{min-width:0;overflow-wrap:anywhere}
+.a2ui-timeline-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:var(--a2ui-space-xs) var(--a2ui-space-sm)}
+.a2ui-timeline-title{font-size:var(--a2ui-body-size);font-weight:600;color:var(--a2ui-fg)}
+.a2ui-timeline-description{margin:var(--a2ui-space-xs) 0 0;color:var(--a2ui-muted);white-space:pre-wrap}
+.a2ui-timeline-status{font-size:var(--a2ui-caption-size);color:var(--a2ui-muted)}
+.a2ui-timeline-done{color:var(--dsw-alias-state-success-primary,var(--a2ui-muted))}
+.a2ui-timeline-current{color:var(--dsw-alias-brand-primary,var(--a2ui-muted))}
+.a2ui-timeline-blocked{color:var(--dsw-alias-state-error-primary,var(--a2ui-muted))}
+@container a2ui (max-width:480px){
+  .a2ui-heatmap{--a2ui-heat-row-width:5.5rem;--a2ui-heat-cell-width:2.25rem}
+  .a2ui-timeline-item{grid-template-columns:.8rem minmax(0,1fr);grid-template-rows:auto auto;row-gap:var(--a2ui-space-xs)}
+  .a2ui-timeline-track{grid-column:1;grid-row:1 / span 2}
+  .a2ui-timeline-when{grid-column:2;grid-row:1}
+  .a2ui-timeline-content{grid-column:2;grid-row:2}
+}
 .a2ui-bar-tip{position:absolute;left:0;top:0;z-index:1;visibility:hidden;pointer-events:none;width:max-content;max-width:min(280px,calc(100% - 8px));max-height:calc(100% - 8px);overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-layer-2,Canvas));color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.4}
 .a2ui-axis text{fill:var(--dsw-alias-label-secondary);font-size:10px}
 .a2ui-grid line{stroke:var(--dsw-alias-border-l1);stroke-width:1}
@@ -293,7 +470,7 @@ const CSS = `
 .a2ui-tail{display:flex;flex-direction:column;gap:10px;min-width:0;margin:6px 0 2px}
 .a2ui-card-streaming{border-style:dashed}
 .a2ui-card-state{margin-left:auto;flex:none;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-brand-primary);opacity:.85}
-.a2ui-card-streaming .a2ui-card-body{pointer-events:none}
+.a2ui-card-streaming :is(.a2ui-card-body,.a2ui-compact-body){pointer-events:none}
 .a2ui-skel{display:flex;flex-direction:column;gap:8px;min-width:0}
 .a2ui-skel-line,.a2ui-skel-block{display:block;border-radius:6px;background:linear-gradient(90deg,var(--dsw-alias-bg-layer-3) 0%,var(--dsw-alias-interactive-bg-hover-solid) 45%,var(--dsw-alias-bg-layer-3) 90%);background-size:220% 100%;animation:a2ui-shimmer 1.25s ease-in-out infinite}
 .a2ui-skel-line{height:9px}
@@ -654,6 +831,12 @@ const LIMITS = {
     maxTableRows: 500,
     /** Maximum number of columns in a Table, or categories in a chart series. */
     maxSeriesPoints: 500,
+    /** Row and column limit of each heatmap. */
+    maxHeatmapAxis: 40,
+    /** Dimension limit for a radar chart. */
+    maxRadarAxes: 8,
+    /** Maximum number of events on one timeline. */
+    maxTimelineEvents: 100,
     /** Maximum number of animation frames in a FramePlayer. */
     maxFrames: 400,
     /** Maximum number of items in a FramePlayer frame. */
@@ -2273,6 +2456,328 @@ exports["resolveNumberList"] = resolveNumberList;
 exports["resolveActionContext"] = resolveActionContext;
 exports["expandTemplate"] = expandTemplate;
 };
+__registry["./shared/plot-data.js"] = function(module, exports, require) {
+const { LIMITS } = require("./shared/limits.js");
+const { arr, bindingOrCall, isDataBinding, fail, num, obj, str } = require("./shared/schema.js");
+const plotPointList = arr(obj({ x: num(), y: num(), label: str(), size: num({ min: 0 }) }, { required: ['x', 'y'] }), {
+    max: LIMITS.maxSeriesPoints,
+});
+const plotPoints = (value, path, out) => {
+    if (Array.isArray(value))
+        plotPointList(value, path, out);
+    else if (isDataBinding(value))
+        bindingOrCall(value, path, out);
+    else
+        fail(out, path, 'must be an array of points or a data-model binding');
+};
+function axisFraction(value, min, max) {
+    const span = max - min;
+    const offset = value - min;
+    return Number.isFinite(span) && Number.isFinite(offset)
+        ? offset / span
+        : (value / 2 - min / 2) / (max / 2 - min / 2);
+}
+/** Fit in normalized coordinates to keep sums finite across the numeric range. */
+function fitLinearRegression(points) {
+    if (points.length < 2)
+        return undefined;
+    const xMin = Math.min(...points.map((point) => point.x));
+    const xMax = Math.max(...points.map((point) => point.x));
+    if (xMin === xMax)
+        return undefined;
+    const yMin = Math.min(...points.map((point) => point.y));
+    const yMax = Math.max(...points.map((point) => point.y));
+    if (yMin === yMax)
+        return { xMin, xMax, yMin, yMax, slope: 0, intercept: 0 };
+    const values = points.map(({ x, y }) => ({ x: axisFraction(x, xMin, xMax), y: axisFraction(y, yMin, yMax) }));
+    const meanX = values.reduce((sum, point) => sum + point.x, 0) / values.length;
+    const meanY = values.reduce((sum, point) => sum + point.y, 0) / values.length;
+    let sumXX = 0;
+    let sumYY = 0;
+    let sumXY = 0;
+    for (const { x, y } of values) {
+        const dx = x - meanX;
+        const dy = y - meanY;
+        sumXX += dx * dx;
+        sumYY += dy * dy;
+        sumXY += dx * dy;
+    }
+    const slope = sumXY / sumXX;
+    const intercept = meanY - slope * meanX;
+    const rSquared = Math.min(1, (sumXY * sumXY) / (sumXX * sumYY));
+    return { xMin, xMax, yMin, yMax, slope, intercept, rSquared };
+}
+function fromFraction(fraction, min, max) {
+    const span = max - min;
+    return Number.isFinite(span) ? min + fraction * span : min * (1 - fraction) + max * fraction;
+}
+/** Clip the fitted segment to the axes without extrapolating beyond sample X. */
+function visibleRegressionSegment(fit, bounds) {
+    const xMin = Math.max(bounds.xMin, fit.xMin);
+    const xMax = Math.min(bounds.xMax, fit.xMax);
+    if (!(xMin < xMax) || !(bounds.yMin < bounds.yMax))
+        return undefined;
+    if (fit.yMin === fit.yMax) {
+        const y = fit.yMin;
+        return y >= bounds.yMin && y <= bounds.yMax ? [{ x: xMin, y }, { x: xMax, y }] : undefined;
+    }
+    let start = axisFraction(xMin, fit.xMin, fit.xMax);
+    let end = axisFraction(xMax, fit.xMin, fit.xMax);
+    const low = axisFraction(bounds.yMin, fit.yMin, fit.yMax);
+    const high = axisFraction(bounds.yMax, fit.yMin, fit.yMax);
+    if (fit.slope === 0) {
+        if (fit.intercept < low || fit.intercept > high)
+            return undefined;
+    }
+    else {
+        const a = (low - fit.intercept) / fit.slope;
+        const b = (high - fit.intercept) / fit.slope;
+        start = Math.max(start, Math.min(a, b));
+        end = Math.min(end, Math.max(a, b));
+    }
+    if (start >= end)
+        return undefined;
+    const point = (x) => {
+        const y = fromFraction(fit.intercept + fit.slope * x, fit.yMin, fit.yMax);
+        return {
+            x: Math.max(xMin, Math.min(xMax, fromFraction(x, fit.xMin, fit.xMax))),
+            y: Math.max(bounds.yMin, Math.min(bounds.yMax, y)),
+        };
+    };
+    return [point(start), point(end)];
+}
+
+exports["plotPointList"] = plotPointList;
+exports["plotPoints"] = plotPoints;
+exports["axisFraction"] = axisFraction;
+exports["fitLinearRegression"] = fitLinearRegression;
+exports["visibleRegressionSegment"] = visibleRegressionSegment;
+};
+__registry["./shared/display-data.js"] = function(module, exports, require) {
+const { resolveValue } = require("./shared/binding.js");
+const { LIMITS } = require("./shared/limits.js");
+const { isPlainObject } = require("./shared/json.js");
+const { arr, bindingOrCall, fail, isDataBinding, num, obj, str } = require("./shared/schema.js");
+const HEATMAP_SCALES = ['sequential', 'diverging'];
+const TIMELINE_STATUSES = ['done', 'current', 'upcoming', 'blocked'];
+const heatmapLabels = arr(str({ minLength: 1 }), { max: LIMITS.maxHeatmapAxis });
+const finiteNumber = num();
+const nullableNumber = (value, path, out) => {
+    if (value !== null)
+        finiteNumber(value, path, out);
+};
+const heatmapValues = arr(arr(nullableNumber, { max: LIMITS.maxHeatmapAxis }), { max: LIMITS.maxHeatmapAxis });
+const timelineEvents = arr(obj({
+    when: str({ minLength: 1 }),
+    title: str({ minLength: 1 }),
+    description: str(),
+    status: str({ enum: TIMELINE_STATUSES }),
+}, { required: ['when', 'title'] }), { max: LIMITS.maxTimelineEvents });
+const paretoItems = arr(obj({ label: str({ minLength: 1 }), value: num({ min: 0 }) }, {
+    required: ['label', 'value'],
+}), { max: LIMITS.maxSeriesPoints });
+const errorRange = obj({ lower: finiteNumber, upper: finiteNumber }, { required: ['lower', 'upper'] });
+const errorRanges = arr((value, path, out) => {
+    if (value !== null)
+        errorRange(value, path, out);
+}, { max: LIMITS.maxSeriesPoints });
+const radarAxisName = str({ minLength: 1 });
+const radarAxes = arr((value, path, out) => {
+    radarAxisName(value, path, out);
+    if (typeof value === 'string' && value !== '' && value.trim() === '')
+        fail(out, path, 'must have a visible name');
+}, { min: 3, max: LIMITS.maxRadarAxes });
+const radarScores = arr(nullableNumber, { min: 3, max: LIMITS.maxRadarAxes });
+function arrayOrBinding(check) {
+    return (value, path, out) => {
+        if (isDataBinding(value))
+            bindingOrCall(value, path, out);
+        else
+            check(value, path, out);
+    };
+}
+const heatmapLabelInput = arrayOrBinding(heatmapLabels);
+const heatmapValueInput = arrayOrBinding(heatmapValues);
+const timelineEventInput = arrayOrBinding(timelineEvents);
+const paretoItemInput = arrayOrBinding(paretoItems);
+const errorRangeInput = arrayOrBinding(errorRanges);
+const radarAxisInput = arrayOrBinding(radarAxes);
+const radarScoreInput = arrayOrBinding(radarScores);
+function checkHeatmapScale(component, path, out) {
+    const { min, max } = component;
+    if ((min === undefined) !== (max === undefined)) {
+        fail(out, `${path}/${min === undefined ? 'min' : 'max'}`, 'must be provided together with the other color bound');
+    }
+    if (typeof min !== 'number' || typeof max !== 'number')
+        return;
+    if (!(min < max))
+        fail(out, `${path}/max`, 'must be greater than min');
+    else if (component.scale === 'diverging' && !(min < 0 && max > 0)) {
+        fail(out, `${path}/scale`, 'diverging color bounds must include values on both sides of zero');
+    }
+}
+function resolveArray(input, context, check, path) {
+    const bound = isDataBinding(input);
+    const value = bound ? resolveValue(input, context) : input;
+    if (bound && value === undefined) {
+        return { kind: 'pending', issue: { path, message: 'data binding does not resolve to a value' }, units: 0 };
+    }
+    const issues = [];
+    check(value, path, issues);
+    if (issues.length > 0)
+        return { kind: 'invalid', issue: issues[0], units: 0 };
+    const array = value;
+    return { kind: 'ready', value: array, units: array.length };
+}
+function resolveHeatmapData(component, context, path) {
+    const rows = resolveArray(component.rowLabels, context, heatmapLabels, `${path}/rowLabels`);
+    const columns = resolveArray(component.columnLabels, context, heatmapLabels, `${path}/columnLabels`);
+    const matrix = resolveArray(component.values, context, heatmapValues, `${path}/values`);
+    const units = matrix.kind === 'ready' ? matrix.value.reduce((count, row) => count + row.length, 0) : 0;
+    // Definite errors take precedence when other fields in the same stream are still arriving.
+    for (const field of [rows, columns, matrix]) {
+        if (field.kind === 'invalid')
+            return { ...field, units };
+    }
+    if (rows.kind !== 'ready')
+        return { ...rows, units };
+    if (columns.kind !== 'ready')
+        return { ...columns, units };
+    if (matrix.kind !== 'ready')
+        return matrix;
+    if (matrix.value.length !== rows.value.length) {
+        return { kind: 'invalid', units, issue: { path: `${path}/values`, message: 'row count must match rowLabels' } };
+    }
+    for (const [index, row] of matrix.value.entries()) {
+        if (row.length !== columns.value.length) {
+            return { kind: 'invalid', units, issue: { path: `${path}/values/${index}`, message: 'column count must match columnLabels' } };
+        }
+    }
+    return { kind: 'ready', units, value: { rowLabels: rows.value, columnLabels: columns.value, values: matrix.value } };
+}
+function resolveTimelineEvents(input, context, path) {
+    return resolveArray(input, context, timelineEvents, path);
+}
+function resolveParetoItems(input, context, path) {
+    return resolveArray(input, context, paretoItems, path);
+}
+function radarBounds(component) {
+    return {
+        min: typeof component.min === 'number' ? component.min : 0,
+        max: typeof component.max === 'number' ? component.max : 100,
+    };
+}
+function checkRadarScale(component, path, out) {
+    const { min, max } = radarBounds(component);
+    if (!(min < max))
+        fail(out, `${path}/${component.max === undefined ? 'min' : 'max'}`, 'radar max must be greater than min');
+}
+function resolveRadarData(component, context, path) {
+    const invalid = (at, message) => ({
+        kind: 'invalid', units: 0, issue: { path: at, message },
+    });
+    const { min, max } = radarBounds(component);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || !(min < max)) {
+        return invalid(`${path}/max`, 'radar scale requires finite min and max with min < max');
+    }
+    const axes = resolveArray(component.axes, context, radarAxes, `${path}/axes`);
+    if (axes.kind === 'invalid')
+        return axes;
+    const series = component.series;
+    if (!Array.isArray(series) || series.length < 1 || series.length > LIMITS.maxSeries) {
+        return invalid(`${path}/series`, `must contain 1–${LIMITS.maxSeries} series`);
+    }
+    let units = axes.units;
+    let pending = axes.kind === 'pending' ? axes.issue : undefined;
+    const scores = [];
+    for (const [i, entry] of series.entries()) {
+        const seriesPath = `${path}/series/${i}`;
+        if (!isPlainObject(entry))
+            return invalid(seriesPath, 'must be an object');
+        const valuesPath = `${seriesPath}/values`;
+        const values = resolveArray(entry.values, context, radarScores, valuesPath);
+        if (values.kind !== 'ready') {
+            if (values.kind === 'invalid')
+                return values;
+            pending ??= values.issue;
+            continue;
+        }
+        if (axes.kind === 'ready' && values.value.length !== axes.value.length) {
+            return invalid(valuesPath, 'must contain one score or null per axis');
+        }
+        for (const [index, score] of values.value.entries()) {
+            if (score !== null && (score < min || score > max)) {
+                return invalid(`${valuesPath}/${index}`, `must be between ${min} and ${max}, or null`);
+            }
+        }
+        scores.push(values.value);
+        units += values.units;
+    }
+    if (axes.kind !== 'ready')
+        return { ...axes, units };
+    if (pending !== undefined)
+        return { kind: 'pending', units, issue: pending };
+    return { kind: 'ready', value: { axes: axes.value, scores, min, max }, units };
+}
+/** Retain one slot per category so missing values never move a later mark. */
+function chartSeriesValues(value, categoryCount) {
+    if (!Array.isArray(value))
+        return typeof value === 'number' && Number.isFinite(value) ? [value] : [];
+    const values = categoryCount === undefined ? value : value.slice(0, categoryCount);
+    return values.map((entry) => {
+        const number = typeof entry === 'string' && entry.trim() !== '' ? Number(entry) : entry;
+        return typeof number === 'number' && Number.isFinite(number) ? number : undefined;
+    });
+}
+function resolveErrorRanges(input, categories, values, context, path) {
+    const ranges = resolveArray(input, context, errorRanges, path);
+    if (ranges.kind !== 'ready')
+        return ranges;
+    if (categories === undefined || values === undefined) {
+        return { kind: 'pending', units: 0, issue: { path, message: 'requires resolved categories and series values' } };
+    }
+    const invalid = (at, message) => ({
+        kind: 'invalid', units: 0, issue: { path: at, message },
+    });
+    if (!Array.isArray(categories) || ranges.value.length !== categories.length) {
+        return invalid(path, 'must contain one range or null per category');
+    }
+    const points = chartSeriesValues(values, categories.length);
+    let units = 0;
+    for (const [index, range] of ranges.value.entries()) {
+        if (range === null)
+            continue;
+        const value = points[index];
+        const itemPath = `${path}/${index}`;
+        if (value === undefined)
+            return invalid(itemPath, 'cannot set an error range for a missing value');
+        if (range.lower > value)
+            return invalid(`${itemPath}/lower`, 'must be at or below the bar value');
+        if (range.upper < value)
+            return invalid(`${itemPath}/upper`, 'must be at or above the bar value');
+        units += 1;
+    }
+    return { ...ranges, units };
+}
+
+exports["HEATMAP_SCALES"] = HEATMAP_SCALES;
+exports["TIMELINE_STATUSES"] = TIMELINE_STATUSES;
+exports["heatmapLabelInput"] = heatmapLabelInput;
+exports["heatmapValueInput"] = heatmapValueInput;
+exports["timelineEventInput"] = timelineEventInput;
+exports["paretoItemInput"] = paretoItemInput;
+exports["errorRangeInput"] = errorRangeInput;
+exports["radarAxisInput"] = radarAxisInput;
+exports["radarScoreInput"] = radarScoreInput;
+exports["checkHeatmapScale"] = checkHeatmapScale;
+exports["resolveHeatmapData"] = resolveHeatmapData;
+exports["resolveTimelineEvents"] = resolveTimelineEvents;
+exports["resolveParetoItems"] = resolveParetoItems;
+exports["checkRadarScale"] = checkRadarScale;
+exports["resolveRadarData"] = resolveRadarData;
+exports["chartSeriesValues"] = chartSeriesValues;
+exports["resolveErrorRanges"] = resolveErrorRanges;
+};
 __registry["./shared/budget.js"] = function(module, exports, require) {
 /**
  * Render-budget estimation.
@@ -2288,29 +2793,53 @@ const { isPlainObject } = require("./shared/json.js");
 const { LIMITS } = require("./shared/limits.js");
 const { isChildTemplate, childReferences } = require("./shared/graph.js");
 const { resolveBinding, resolveValue } = require("./shared/binding.js");
+const { plotPointList } = require("./shared/plot-data.js");
+const { resolveErrorRanges, resolveHeatmapData, resolveParetoItems, resolveRadarData, resolveTimelineEvents } = require("./shared/display-data.js");
 function contextFor(state, item) {
     return { dataModel: state.dataModel, item, locale: 'en', now: 0 };
 }
 /** Rows/points/items a single component would materialise. */
-function dataUnitsOf(component, state, item) {
+function dataUnitsOf(component, state, item, streaming) {
     const context = contextFor(state, item);
     const name = component.component;
+    if (name === 'Heatmap' || name === 'Timeline') {
+        const path = `/components/${component.id}`;
+        const data = name === 'Heatmap'
+            ? resolveHeatmapData(component, context, path)
+            : resolveTimelineEvents(component.events, context, `${path}/events`);
+        return data.kind === 'ready' || (data.kind === 'pending' && streaming) ? data.units : data.issue;
+    }
+    if (name === 'ParetoChart') {
+        const data = resolveParetoItems(component.items, context, `/components/${component.id}/items`);
+        return data.kind === 'ready' || (data.kind === 'pending' && streaming) ? data.units * 2 : data.issue;
+    }
+    if (name === 'RadarChart') {
+        const data = resolveRadarData(component, context, `/components/${component.id}`);
+        return data.kind === 'ready' || (data.kind === 'pending' && streaming) ? data.units : data.issue;
+    }
     try {
         if (name === 'Table') {
             const rows = resolveValue(component.rows, context);
             return Array.isArray(rows) ? rows.length : 0;
         }
         if (name === 'BarChart' || name === 'LineChart') {
-            const categories = Array.isArray(component.categories) ? component.categories.length : 0;
+            const categories = name === 'BarChart' ? resolveValue(component.categories, context) : component.categories;
             const series = Array.isArray(component.series) ? component.series : [];
             let points = 0;
-            for (const entry of series) {
+            for (const [index, entry] of series.entries()) {
                 if (!isPlainObject(entry))
                     continue;
                 const values = resolveValue(entry.values, context);
                 points += Array.isArray(values) ? values.length : 0;
+                if (name === 'BarChart' && entry.errorBars !== undefined) {
+                    const path = `/components/${component.id}/series/${index}/errorBars`;
+                    const ranges = resolveErrorRanges(entry.errorBars, categories, values, context, path);
+                    if (ranges.kind !== 'ready' && !(ranges.kind === 'pending' && streaming))
+                        return ranges.issue;
+                    points += ranges.units;
+                }
             }
-            return categories + points;
+            return (Array.isArray(categories) ? categories.length : 0) + points;
         }
         if (name === 'PieChart') {
             return Array.isArray(component.slices) ? component.slices.length : 0;
@@ -2332,12 +2861,21 @@ function dataUnitsOf(component, state, item) {
             const requested = typeof component.samples === 'number' ? component.samples : 240;
             const samples = Math.max(8, Math.min(1200, requested));
             let units = 0;
-            for (const plot of plots) {
+            for (const [index, plot] of plots.entries()) {
                 if (!isPlainObject(plot))
                     continue;
-                const points = resolveValue(plot.points, context);
-                if (Array.isArray(points))
+                const points = Array.isArray(plot.points) ? plot.points : resolveValue(plot.points, context);
+                if (points !== undefined && points !== null && !Array.isArray(plot.points)) {
+                    const errors = [];
+                    plotPointList(points, `/components/${component.id}/plots/${index}/points`, errors);
+                    if (errors.length > 0)
+                        return errors[0];
+                }
+                if (Array.isArray(points)) {
                     units += points.length;
+                    if (points.length >= 2 && plot.kind === 'scatter' && plot.regression === 'linear')
+                        units += 2;
+                }
                 const scatter = plot.kind === 'scatter' || typeof plot.expression !== 'string';
                 if (!scatter)
                     units += samples;
@@ -2356,8 +2894,9 @@ function dataUnitsOf(component, state, item) {
  * @param state folded surface (components + data model).
  * @param maxNodes override the node budget (defaults to `LIMITS.maxExpandedNodes`).
  * @param maxDataUnits override the data-unit budget.
+ * @param streaming allow a new component to wait for an unresolved binding.
  */
-function estimateExpansion(state, maxNodes = LIMITS.maxExpandedNodes, maxDataUnits = LIMITS.maxExpandedDataUnits) {
+function estimateExpansion(state, maxNodes = LIMITS.maxExpandedNodes, maxDataUnits = LIMITS.maxExpandedDataUnits, streaming = false) {
     let nodes = 0;
     let dataUnits = 0;
     const stack = [{ id: 'root', depth: 0 }];
@@ -2375,7 +2914,10 @@ function estimateExpansion(state, maxNodes = LIMITS.maxExpandedNodes, maxDataUni
         nodes += 1;
         if (nodes > maxNodes)
             return { nodes, dataUnits, reason: `expands to more than ${maxNodes} rendered components` };
-        dataUnits += dataUnitsOf(component, state, frame.item);
+        const units = dataUnitsOf(component, state, frame.item, streaming);
+        if (typeof units !== 'number')
+            return { nodes, dataUnits, reason: units.message, path: units.path };
+        dataUnits += units;
         if (dataUnits > maxDataUnits)
             return { nodes, dataUnits, reason: `renders more than ${maxDataUnits} data rows, points or animation items` };
         // Template child list: expand it here so the estimate counts repetitions.
@@ -2415,8 +2957,11 @@ __registry["./shared/catalog.js"] = function(module, exports, require) {
  * `@a2ui/web_core@0.15.0` (`src/catalogs/basic/v1/components/basic_components.js`
  * and `src/v1_0/schema/common-types.js`), not from prose.
  */
-const { action, arr, bindingOrCall, bool, childList, childRef, dynBool, dynNum, dynNumList, dynStr, dynStrList, dynValue, knownFunctions, num, obj, oneOf, str } = require("./shared/schema.js");
+const { action, arr, bindingOrCall, bool, childList, childRef, dynBool, dynNum, dynNumList, dynStr, dynStrList, dynValue, fail, knownFunctions, num, obj, oneOf, str } = require("./shared/schema.js");
 const { LIMITS } = require("./shared/limits.js");
+const { isPlainObject } = require("./shared/json.js");
+const { plotPoints } = require("./shared/plot-data.js");
+const { checkHeatmapScale, HEATMAP_SCALES, heatmapLabelInput, heatmapValueInput, timelineEventInput, errorRangeInput, paretoItemInput, checkRadarScale, radarAxisInput, radarScoreInput } = require("./shared/display-data.js");
 /** The official v1.0 basic catalog id. */
 const BASIC_CATALOG_ID = 'https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json';
 /** This plugin's extension catalog id (basic components plus data display). */
@@ -2664,11 +3209,8 @@ const BASIC_COMPONENTS = [
 /* Extension catalog: data display (not in the basic catalog)          */
 /* ------------------------------------------------------------------ */
 const colorString = str({ pattern: /^(#[0-9a-fA-F]{3,8}|var\(--[a-zA-Z0-9-]+\)|[a-zA-Z]+)$/ });
-const seriesEntry = obj({
-    label: dynStr,
-    values: dynNumList,
-    color: colorString,
-}, { required: ['values'] });
+const seriesFields = { label: dynStr, values: dynNumList, color: colorString };
+const seriesEntry = obj(seriesFields, { required: ['values'] });
 const chartCommon = {
     categories: dynStrList,
     series: arr(seriesEntry, { min: 1, max: LIMITS.maxSeries }),
@@ -2681,7 +3223,48 @@ const chartCommon = {
     showValues: bool,
     weight,
 };
+function checkChartYRange(component, path, out, equalMeansAuto = false) {
+    const { yMin, yMax } = component;
+    if (typeof yMin === 'number' && typeof yMax === 'number' && (yMin > yMax || (!equalMeansAuto && yMin === yMax))) {
+        fail(out, `${path}/yMax`, 'must be greater than yMin');
+    }
+}
 const EXTENSION_COMPONENTS = [
+    {
+        name: 'Heatmap',
+        origin: 'extension',
+        summary: 'A numeric matrix with rowLabels, columnLabels and values; use null for missing cells and a diverging scale for signed data.',
+        properties: {
+            rowLabels: heatmapLabelInput,
+            columnLabels: heatmapLabelInput,
+            values: heatmapValueInput,
+            scale: str({ enum: HEATMAP_SCALES }),
+            min: num(),
+            max: num(),
+            unit: dynStr,
+            caption: dynStr,
+            weight,
+        },
+        required: ['rowLabels', 'columnLabels', 'values'],
+        childStyle: 'none',
+        check: checkHeatmapScale,
+    },
+    {
+        name: 'Timeline',
+        origin: 'extension',
+        summary: 'A vertical sequence of events in input order. Each event has when and title, with optional description and status.',
+        properties: { events: timelineEventInput, caption: dynStr, weight },
+        required: ['events'],
+        childStyle: 'none',
+    },
+    {
+        name: 'Section',
+        origin: 'extension',
+        summary: 'A lightweight titled section with an optional description and stacked children.',
+        properties: { title: dynStr, description: dynStr, children: childList, weight },
+        required: ['title', 'children'],
+        childStyle: 'list',
+    },
     {
         name: 'Table',
         origin: 'extension',
@@ -2709,10 +3292,50 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'BarChart',
         origin: 'extension',
-        summary: 'A categorical bar chart. Provide one value per category in order.',
-        properties: { ...chartCommon, horizontal: bool, stacked: bool },
+        summary: 'A categorical bar chart. Supply one value per category. Vertical non-stacked series may include errorBars with absolute lower and upper bounds.',
+        properties: {
+            ...chartCommon,
+            series: arr(obj({ ...seriesFields, errorBars: errorRangeInput, errorLabel: dynStr }, { required: ['values'] }), { min: 1, max: LIMITS.maxSeries }),
+            horizontal: bool,
+            stacked: bool,
+        },
         required: ['categories', 'series'],
         childStyle: 'none',
+        check: (component, path, out) => {
+            checkChartYRange(component, path, out, true);
+            if ((component.horizontal !== true && component.stacked !== true) || !Array.isArray(component.series))
+                return;
+            for (const [index, series] of component.series.entries()) {
+                if (isPlainObject(series) && series.errorBars !== undefined) {
+                    fail(out, `${path}/series/${index}/errorBars`, 'only supported on vertical, non-stacked bars');
+                }
+            }
+        },
+    },
+    {
+        name: 'ParetoChart',
+        origin: 'extension',
+        summary: 'Rank nonnegative category totals in descending order and plot their cumulative share on a second axis. Pass items:[{label,value}] or bind the array.',
+        properties: { items: paretoItemInput, caption: dynStr, valueSuffix: dynStr, height: num({ min: 120, max: 520 }), weight },
+        required: ['items'],
+        childStyle: 'none',
+    },
+    {
+        name: 'RadarChart',
+        origin: 'extension',
+        summary: 'Compare profiles on 3–8 named axes with a common numeric scale (0–100 by default). Supply one score or null per axis in each series.',
+        properties: {
+            axes: radarAxisInput,
+            series: arr(obj({ ...seriesFields, values: radarScoreInput }, { required: ['values'] }), { min: 1, max: LIMITS.maxSeries }),
+            min: num(),
+            max: num(),
+            caption: dynStr,
+            height: num({ min: 220, max: 520 }),
+            weight,
+        },
+        required: ['axes', 'series'],
+        childStyle: 'none',
+        check: checkRadarScale,
     },
     {
         name: 'LineChart',
@@ -2727,6 +3350,7 @@ const EXTENSION_COMPONENTS = [
         },
         required: ['categories', 'series'],
         childStyle: 'none',
+        check: checkChartYRange,
     },
     {
         name: 'PieChart',
@@ -2778,13 +3402,14 @@ const EXTENSION_COMPONENTS = [
     {
         name: 'Plot',
         origin: 'extension',
-        summary: 'A function plot: samples safe arithmetic expressions such as "a*x^2+b*x+c" over [xMin, xMax]. `variables` may be bound to the data model so sliders redraw it locally.',
+        summary: 'Numeric X/Y series. Use kind:"scatter" with points:[{x,y,label?,size?}] or a bound point array. Point size adds bubbles; regression:"linear" fits a line per scatter series. Function plots sample safe expressions and may bind variables to sliders.',
         properties: {
             plots: arr(obj({
                 label: dynStr,
                 expression: str({ pattern: /^[\x20-\x7e]{1,240}$/ }),
-                points: arr(obj({ x: num(), y: num() }, { required: ['x', 'y'] }), { max: LIMITS.maxSeriesPoints }),
+                points: plotPoints,
                 kind: str({ enum: ['function', 'scatter'] }),
+                regression: str({ enum: ['linear'] }),
                 color: colorString,
             }, {}), { min: 1, max: LIMITS.maxSeries }),
             variables: dynValue,
@@ -2795,11 +3420,30 @@ const EXTENSION_COMPONENTS = [
             samples: num({ min: 8, max: 1200, integer: true }),
             xLabel: dynStr,
             yLabel: dynStr,
+            sizeLabel: dynStr,
             caption: dynStr,
             height: num({ min: 140, max: 560 }),
             weight,
         },
-        required: ['plots', 'xMin', 'xMax'],
+        required: ['plots'],
+        check: (component, path, out) => {
+            checkChartYRange(component, path, out);
+            if (!Array.isArray(component.plots) || component.plots.length === 0)
+                return;
+            for (const [index, plot] of component.plots.entries()) {
+                if (isPlainObject(plot) && plot.regression !== undefined && plot.kind !== 'scatter') {
+                    fail(out, `${path}/plots/${index}/regression`, 'requires kind "scatter"');
+                }
+            }
+            const scatterOnly = component.plots.every((plot) => isPlainObject(plot) && plot.kind === 'scatter');
+            const { xMin, xMax } = component;
+            if (scatterOnly && xMin === undefined && xMax === undefined)
+                return;
+            if (xMin === undefined)
+                fail(out, `${path}/xMin`, 'is required when xMax is given or a function is plotted');
+            if (xMax === undefined)
+                fail(out, `${path}/xMax`, 'is required when xMin is given or a function is plotted');
+        },
         childStyle: 'none',
     },
     {
@@ -2897,7 +3541,7 @@ function describeProperties(spec, detail) {
 function describeCatalog(detail = 'full') {
     const lines = [];
     lines.push('A2UI 1.0 catalogs available to this plugin.');
-    lines.push(`Default catalogId: ${EXTENSION_CATALOG_ID} (the official basic catalog ${BASIC_CATALOG_ID} is also accepted; it has no Table/Chart/Plot/FramePlayer).`);
+    lines.push(`Default catalogId: ${EXTENSION_CATALOG_ID} (the official basic catalog ${BASIC_CATALOG_ID} is also accepted; entries marked [extension] belong to this plugin).`);
     lines.push('');
     lines.push('Components (* = required property). Every component needs "id" and "component". The root component id MUST be "root"; createSurface implicitly wraps it in the canonical Surface container.');
     lines.push('');
@@ -2909,12 +3553,19 @@ function describeCatalog(detail = 'full') {
         lines.push('');
         lines.push('Values: a property that takes DynamicString/DynamicNumber/DynamicBoolean may be a literal, a data binding {"@path":"/json/pointer"}, or a function call {"@call":"name","args":{...}}.');
         lines.push(`Functions: ${BASIC_FUNCTION_NAMES.join(', ')}.`);
-        lines.push('Child references: Card/Button take "child"; Row/Column/List take "children" (array of ids, or {"componentId","path"} for a data-model list); Tabs take "tabs":[{"title","child"}]; Modal takes "trigger" and "content".');
+        lines.push('Child references: Card/Button take "child"; Row/Column/List/Section take "children" (array of ids, or {"componentId","path"} for a data-model list); Tabs take "tabs":[{"title","child"}]; Modal takes "trigger" and "content".');
         lines.push('Actions: {"event":{"name":"submit","userMessage":"...","context":{"field":{"@path":"/field"}}}} sends an action to you; {"functionCall":{...}} runs locally.');
         lines.push('Layout: positive "weight" lets siblings share available space along their parent flex layout. Use it for widths in Row or horizontal List, and for heights in Column or vertical List.');
         lines.push(`Row/Column "justify" values: ${justifyEnum.join(', ')}. The CSS spellings space-around, space-between and space-evenly are accepted as aliases.`);
         lines.push(`Table rows are objects keyed by column key. The table makes only the first ${LIMITS.maxTableRows} rows available when there are more.`);
         lines.push('BarChart/LineChart: provide one value per category in the same order. Use zero only when the value is actually zero.');
+        lines.push('BarChart error bars: vertical ordinary and grouped series accept errorBars:[{lower,upper},null,...] or a bound array, one slot per category. Bounds are absolute and must contain the bar value. Set errorLabel to the known meaning, e.g. "95% CI".');
+        lines.push('ParetoChart: items:[{label,value}] or a bound array, with nonnegative values and a common unit in valueSuffix. The chart sorts items and calculates cumulative share.');
+        lines.push('RadarChart: axes:["Speed","Quality","Cost"] and series:[{label,values:[72,90,null]}]. Each axis uses one shared scale (min 0, max 100 by default). Score arrays and axes may bind with @path. Use null for missing scores; they leave a gap.');
+        lines.push('Plot: scatter points are exact numeric coordinates. Only scatter-only plots can omit both xMin and xMax. xLabel and yLabel can include units.');
+        lines.push('Plot bubbles: add a finite nonnegative size to each sized point and set sizeLabel for its metric and units. Omitted size draws a normal dot. Use regression:"linear" on a scatter series to fit its original X/Y data; no formula input is needed.');
+        lines.push(`Heatmap: values match rowLabels × columnLabels (max ${LIMITS.maxHeatmapAxis} on each axis). Arrays may bind with @path. Use numbers or null in cells. scale is "sequential" (default) or "diverging" (centered at zero); provide min and max together for a fixed color scale. unit and caption are optional.`);
+        lines.push(`Timeline: events is an array or @path binding (max ${LIMITS.maxTimelineEvents} events). Each event has when and title, with optional description and status: done, current, upcoming, or blocked. Put events in the intended reading order and write when as ready-to-display text.`);
         lines.push('Minimal component examples:');
         lines.push('  Text: {"id":"root","component":"Text","text":"Summary","variant":"body"}');
         lines.push('  Table: {"id":"root","component":"Table","columns":[{"key":"name","label":"Name"}],"rows":[{"name":"Alpha"}]}');
@@ -2954,6 +3605,10 @@ const { childReferences } = require("./shared/graph.js");
 const { estimateExpansion } = require("./shared/budget.js");
 const { BASIC_CATALOG_ID, CATALOG_IDS, COMPONENT_BY_NAME, EXTENSION_CATALOG_ID, PROTOCOL_VERSION, accessibilityValidator, componentAllowedIn, metadataValidator, resolveCatalogId } = require("./shared/catalog.js");
 const { fail } = require("./shared/schema.js");
+const PRESENTATIONS = ['card', 'compact'];
+function isPresentation(value) {
+    return value === 'card' || value === 'compact';
+}
 const MESSAGE_KINDS = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface'];
 const ALL_MESSAGE_KEYS = [
     'createSurface',
@@ -3141,6 +3796,7 @@ function checkComponentProperties(component, catalogId, path, out, isExtensionCa
             continue;
         validator(value, `${path}/${key}`, out);
     }
+    spec.check?.(component, path, out);
     if (isExtensionCatalog && spec.origin === 'basic')
         return;
 }
@@ -3350,13 +4006,16 @@ function validateToolArguments(input) {
     if (!isPlainObject(input)) {
         return { ok: false, errors: [{ path: '', message: 'arguments must be an object' }], warnings, surfaces: [], messages: [], states: new Map() };
     }
-    const unknownRoot = Object.keys(input).filter((key) => key !== 'messages' && key !== 'title');
+    const unknownRoot = Object.keys(input).filter((key) => key !== 'messages' && key !== 'title' && key !== 'presentation');
     if (unknownRoot.length > 0)
         fail(errors, '', `has unsupported properties: ${unknownRoot.join(', ')}`);
     if (input.title !== undefined && typeof input.title !== 'string')
         fail(errors, '/title', 'must be a string');
     if (typeof input.title === 'string' && input.title.length > 200)
         fail(errors, '/title', 'must be at most 200 characters');
+    if (input.presentation !== undefined && !isPresentation(input.presentation)) {
+        fail(errors, '/presentation', 'must be "card" or "compact"');
+    }
     const raw = input.messages;
     if (!Array.isArray(raw)) {
         fail(errors, '/messages', 'is required and must be an array of A2UI 1.0 messages');
@@ -3585,7 +4244,7 @@ function validateToolArguments(input) {
             continue;
         const estimate = estimateExpansion(state);
         if (estimate.reason !== undefined) {
-            fail(errors, `/surfaces/${touch.surfaceId}`, `surface "${touch.surfaceId}" ${estimate.reason}`);
+            fail(errors, `/surfaces/${touch.surfaceId}${estimate.path ?? ''}`, `surface "${touch.surfaceId}" ${estimate.reason}`);
             continue;
         }
         totalNodes += estimate.nodes;
@@ -3633,6 +4292,8 @@ function looksLikeMessage(value) {
     return isPlainObject(value) && (MESSAGE_KINDS.some((kind) => kind in value) || 'version' in value);
 }
 
+exports["PRESENTATIONS"] = PRESENTATIONS;
+exports["isPresentation"] = isPresentation;
 exports["checkComponentAlone"] = checkComponentAlone;
 exports["applyMessageBatch"] = applyMessageBatch;
 exports["validateToolArguments"] = validateToolArguments;
@@ -4030,6 +4691,7 @@ function recoverArguments(text) {
         open = false;
     return {
         ...(title === undefined ? {} : { title }),
+        ...(scan.value.presentation === undefined ? {} : { presentation: scan.value.presentation }),
         messages,
         ...(partialMessage === undefined ? {} : { partialMessage }),
         open,
@@ -4071,7 +4733,7 @@ const { estimateExpansion } = require("./shared/budget.js");
 const { isPlainObject } = require("./shared/json.js");
 const { LIMITS } = require("./shared/limits.js");
 const { recoverArguments } = require("./shared/partial-json.js");
-const { applyMessageBatch, checkComponentAlone } = require("./shared/validate.js");
+const { applyMessageBatch, checkComponentAlone, isPresentation } = require("./shared/validate.js");
 const EMPTY = { surfaces: [], components: 0, streaming: false, stopped: false, truncated: false };
 function usableId(value) {
     return typeof value === 'string' && value.length <= LIMITS.maxIdLength && /^[A-Za-z0-9._:-]+$/u.test(value);
@@ -4227,8 +4889,9 @@ function foldStreaming(text) {
         }
         messages.push(message);
     }
+    const presentation = isPresentation(recovered.presentation) ? { presentation: recovered.presentation } : {};
     if (messages.length === 0)
-        return { ...EMPTY, streaming: recovered.open, truncated };
+        return { ...EMPTY, ...presentation, streaming: recovered.open, truncated };
     const folded = applyMessageBatch(new Map(), messages);
     const surfaces = [];
     let components = 0;
@@ -4256,7 +4919,7 @@ function foldStreaming(text) {
             truncated = true;
             continue;
         }
-        const estimate = estimateExpansion(state);
+        const estimate = estimateExpansion(state, LIMITS.maxExpandedNodes, LIMITS.maxExpandedDataUnits, true);
         if (estimate.reason !== undefined) {
             // Over the per-surface budget: this surface can never become legal.
             truncated = true;
@@ -4275,6 +4938,7 @@ function foldStreaming(text) {
     }
     return {
         ...(recovered.title === undefined ? {} : { title: recovered.title }),
+        ...presentation,
         surfaces,
         components,
         streaming: recovered.open,
@@ -5451,6 +6115,81 @@ exports["tryCompileExpression"] = tryCompileExpression;
 exports["EXPRESSION_FUNCTIONS"] = EXPRESSION_FUNCTIONS;
 exports["EXPRESSION_CONSTANTS"] = EXPRESSION_CONSTANTS;
 };
+__registry["./client/chart-tooltip.js"] = function(module, exports, require) {
+const React = require("react");
+const { h } = require("./client/h.js");
+/** Measure the data mark and tooltip in CSS pixels, including SVG scaling. */
+function ChartTooltip({ anchor, lines, viewport, viewportStartCorner }) {
+    const ref = React.useRef(null);
+    React.useLayoutEffect(() => {
+        const tip = ref.current;
+        const layer = tip?.parentElement;
+        const element = 'current' in anchor ? anchor.current : anchor;
+        if (!tip || !layer || !element)
+            return;
+        const update = () => {
+            const frame = layer.getBoundingClientRect();
+            const mark = element.getBoundingClientRect();
+            if (viewport !== undefined) {
+                const clip = viewport.getBoundingClientRect();
+                const x = (mark.left + mark.right) / 2;
+                const y = (mark.top + mark.bottom) / 2;
+                const boundary = viewportStartCorner?.getBoundingClientRect();
+                const rtl = boundary !== undefined && viewport.ownerDocument.defaultView?.getComputedStyle(viewport).direction === 'rtl';
+                const start = boundary !== undefined && !rtl ? Math.max(clip.left, boundary.right) : clip.left;
+                const end = boundary !== undefined && rtl ? Math.min(clip.right, boundary.left) : clip.right;
+                const top = Math.max(clip.top, boundary?.bottom ?? clip.top);
+                if (x < start || x > end || y < top || y > clip.bottom) {
+                    tip.style.visibility = 'hidden';
+                    return;
+                }
+            }
+            const scaleX = frame.width > 0 && layer.clientWidth > 0 ? frame.width / layer.clientWidth : 1;
+            const scaleY = frame.height > 0 && layer.clientHeight > 0 ? frame.height / layer.clientHeight : 1;
+            const box = tip.getBoundingClientRect();
+            const width = box.width / scaleX;
+            const height = box.height / scaleY;
+            const left = (mark.left - frame.left) / scaleX;
+            const right = (mark.right - frame.left) / scaleX;
+            const top = (mark.top - frame.top) / scaleY;
+            const bottom = (mark.bottom - frame.top) / scaleY;
+            const gap = 8;
+            const inset = 4;
+            const maxX = Math.max(inset, layer.clientWidth - width - inset);
+            const maxY = Math.max(inset, layer.clientHeight - height - inset);
+            let x;
+            let y = (top + bottom - height) / 2;
+            if (right + gap <= maxX)
+                x = right + gap;
+            else if (left - gap - width >= inset)
+                x = left - gap - width;
+            else {
+                x = (left + right - width) / 2;
+                y = top - gap - height >= inset ? top - gap - height : bottom + gap;
+            }
+            tip.style.left = `${Math.max(inset, Math.min(maxX, x))}px`;
+            tip.style.top = `${Math.max(inset, Math.min(maxY, y))}px`;
+            tip.style.visibility = 'visible';
+        };
+        update();
+        const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update);
+        observer?.observe(layer);
+        observer?.observe(element);
+        observer?.observe(tip);
+        if (viewport !== undefined) {
+            observer?.observe(viewport);
+            viewport.addEventListener('scroll', update, { passive: true });
+        }
+        return () => {
+            observer?.disconnect();
+            viewport?.removeEventListener('scroll', update);
+        };
+    }, [anchor, lines, viewport, viewportStartCorner]);
+    return h('div', { ref, className: 'a2ui-bar-tip', role: 'tooltip' }, ...lines.map((line, index) => h('div', { key: index }, line)));
+}
+
+exports["ChartTooltip"] = ChartTooltip;
+};
 __registry["./client/charts.js"] = function(module, exports, require) {
 /**
  * SVG charts for the extension catalog: BarChart, LineChart, PieChart, Plot.
@@ -5466,13 +6205,17 @@ __registry["./client/charts.js"] = function(module, exports, require) {
  */
 const React = require("react");
 const { h } = require("./client/h.js");
-const { compileExpression } = require("./shared/expression.js");
-const { anyValue, numberValue, text } = require("./client/context.js");
+const { compileExpression, tryCompileExpression } = require("./shared/expression.js");
+const { anyValue, numberValue, resolveContext, text } = require("./client/context.js");
 const { isDataBinding, isFunctionCall } = require("./shared/schema.js");
+const { isPlainObject } = require("./shared/json.js");
+const { LIMITS } = require("./shared/limits.js");
+const { axisFraction, fitLinearRegression, plotPointList, visibleRegressionSegment } = require("./shared/plot-data.js");
+const { chartSeriesValues, resolveErrorRanges, resolveParetoItems } = require("./shared/display-data.js");
+const { bindingPointer } = require("./client/fields.js");
+const { ChartTooltip } = require("./client/chart-tooltip.js");
 const VIEW_WIDTH = 640;
 const PAD = { top: 18, right: 16, bottom: 30, left: 46 };
-const TOOLTIP_FONT = 10.5;
-const CHAR_WIDTH = 6.1;
 /** Series colour: an authored safe colour, else the theme-independent palette. */
 function seriesColor(index, override) {
     if (typeof override === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/u.test(override))
@@ -5495,6 +6238,12 @@ function trim(value) {
     const rounded = Math.abs(value) >= 100 ? Math.round(value) : Math.round(value * 100) / 100;
     return String(rounded);
 }
+function visibleCategoryLabel(label, limit) {
+    if (label.length <= limit)
+        return label;
+    const points = Array.from(label);
+    return points.length <= limit ? label : `${points.slice(0, limit - 1).join('')}…`;
+}
 function niceScale(values, forcedMin, forcedMax, tickCount = 4) {
     const finite = values.filter((value) => Number.isFinite(value));
     let min = forcedMin ?? (finite.length > 0 ? Math.min(...finite) : 0);
@@ -5515,11 +6264,25 @@ function niceScale(values, forcedMin, forcedMax, tickCount = 4) {
     const magnitude = 10 ** Math.floor(Math.log10(rawStep));
     const normalized = rawStep / magnitude;
     const step = (normalized >= 5 ? 10 : normalized >= 2 ? 5 : normalized >= 1 ? 2 : 1) * magnitude;
+    if (!Number.isFinite(step) || !(step > 0))
+        return scatterScale(finite, forcedMin, forcedMax);
     const niceMin = forcedMin === undefined ? Math.floor(min / step) * step : min;
     const niceMax = forcedMax === undefined ? Math.ceil(max / step) * step : max;
+    if (!Number.isFinite(niceMin) || !Number.isFinite(niceMax))
+        return scatterScale(finite, forcedMin, forcedMax);
     const ticks = [];
-    for (let tick = niceMin; tick <= niceMax + step / 2 && ticks.length < 12; tick += step)
-        ticks.push(Number(tick.toFixed(10)));
+    for (let i = 0; i < 12; i++) {
+        const raw = niceMin + i * step;
+        const rounded = Number(raw.toFixed(10));
+        if (raw > niceMax && rounded > niceMax)
+            break;
+        const tick = Math.max(niceMin, Math.min(niceMax, rounded));
+        if (tick !== ticks.at(-1))
+            ticks.push(tick);
+    }
+    const last = ticks.at(-1);
+    if (forcedMax !== undefined && last !== undefined && niceMax - last >= step / 2 && ticks.length < 12)
+        ticks.push(niceMax);
     return { min: niceMin, max: niceMax, ticks };
 }
 function readSeries(scope, component, categoryCount) {
@@ -5528,23 +6291,9 @@ function readSeries(scope, component, categoryCount) {
         const record = (entry ?? {});
         return {
             label: record.label === undefined ? `${scope.view.t('series')} ${index + 1}` : text(scope, record.label),
-            values: resolveSeriesValues(scope, record.values, categoryCount),
+            values: chartSeriesValues(anyValue(scope, record.values), categoryCount),
             color: seriesColor(index, record.color),
         };
-    });
-}
-/**
- * Keep one slot per category, including missing entries in bound data. A
- * missing entry in the middle must not shift later values to another label.
- */
-function resolveSeriesValues(scope, value, categoryCount) {
-    const resolved = anyValue(scope, value);
-    if (!Array.isArray(resolved))
-        return typeof resolved === 'number' && Number.isFinite(resolved) ? [resolved] : [];
-    const values = categoryCount === undefined ? resolved : resolved.slice(0, categoryCount);
-    return values.map((entry) => {
-        const number = typeof entry === 'string' && entry.trim() !== '' ? Number(entry) : entry;
-        return typeof number === 'number' && Number.isFinite(number) ? number : undefined;
     });
 }
 function legend(props) {
@@ -5587,14 +6336,6 @@ function axisSummary(scope, categories, series) {
     });
     return `${categories.join(', ')}. ${parts.join('. ')}`;
 }
-/** Tooltip box drawn inside the SVG so it can never overflow the card. */
-function tooltipLines(x, y, width, height, lines, align = 'start') {
-    const left = align === 'start' ? Math.min(x, VIEW_WIDTH - width - 4) : Math.max(4, x - width);
-    return h('g', { className: 'a2ui-tip', pointerEvents: 'none' }, h('rect', { x: left, y, width, height, rx: 6, fill: 'var(--dsw-alias-bg-overlay)', stroke: 'var(--dsw-alias-border-l2)', strokeWidth: 1, opacity: 0.98 }), ...lines.map((line, index) => h('text', { key: `t${index}`, x: left + 8, y: y + 14 + index * 13, fontSize: TOOLTIP_FONT, fill: 'var(--dsw-alias-label-primary)' }, line)));
-}
-function textWidth(lines) {
-    return Math.max(...lines.map((line) => line.length)) * CHAR_WIDTH + 16;
-}
 /**
  * Domain a bar chart needs so the baseline is visible.
  *
@@ -5614,14 +6355,7 @@ function barDomain(values, forcedMin, forcedMax) {
     }
     return { min, max };
 }
-/**
- * Split sampled points into drawable runs.
- *
- * A curve that leaves the plotted domain (`1/x`, `tan`, an asymptote) is broken
- * instead of being connected across the gap, which would draw a false straight
- * line through a discontinuity.
- */
-function splitPlotSegments(points, min, max) {
+function splitPlotSegments(points, min, max, hasGap) {
     const segments = [];
     let current = [];
     for (const point of points) {
@@ -5631,70 +6365,46 @@ function splitPlotSegments(points, min, max) {
             current = [];
             continue;
         }
+        const previous = current.at(-1);
+        if (previous !== undefined && hasGap?.(previous, point)) {
+            segments.push(current);
+            current = [];
+        }
         current.push(point);
     }
     if (current.length > 0)
         segments.push(current);
     return segments;
 }
-/** Keep the HTML tooltip and the hovered SVG rectangle in the same CSS pixel space. */
-function BarTooltip({ bar, lines }) {
-    const ref = React.useRef(null);
-    React.useLayoutEffect(() => {
-        const tip = ref.current;
-        const layer = tip?.parentElement;
-        if (!tip || !layer)
-            return;
-        const update = () => {
-            const frame = layer.getBoundingClientRect();
-            const anchor = bar.getBoundingClientRect();
-            const scaleX = frame.width > 0 && layer.clientWidth > 0 ? frame.width / layer.clientWidth : 1;
-            const scaleY = frame.height > 0 && layer.clientHeight > 0 ? frame.height / layer.clientHeight : 1;
-            const box = tip.getBoundingClientRect();
-            const width = box.width / scaleX;
-            const height = box.height / scaleY;
-            const left = (anchor.left - frame.left) / scaleX;
-            const right = (anchor.right - frame.left) / scaleX;
-            const top = (anchor.top - frame.top) / scaleY;
-            const bottom = (anchor.bottom - frame.top) / scaleY;
-            const gap = 8;
-            const inset = 4;
-            const maxX = Math.max(inset, layer.clientWidth - width - inset);
-            const maxY = Math.max(inset, layer.clientHeight - height - inset);
-            let x;
-            let y = (top + bottom - height) / 2;
-            if (right + gap <= maxX)
-                x = right + gap;
-            else if (left - gap - width >= inset)
-                x = left - gap - width;
-            else {
-                x = (left + right - width) / 2;
-                y = top - gap - height >= inset ? top - gap - height : bottom + gap;
-            }
-            tip.style.left = `${Math.max(inset, Math.min(maxX, x))}px`;
-            tip.style.top = `${Math.max(inset, Math.min(maxY, y))}px`;
-            tip.style.visibility = 'visible';
-        };
-        update();
-        const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update);
-        observer?.observe(layer);
-        observer?.observe(bar);
-        observer?.observe(tip);
-        return () => observer?.disconnect();
-    }, [bar, lines[0], lines[1]]);
-    return h('div', { ref, className: 'a2ui-bar-tip', role: 'tooltip' }, ...lines.map((line, index) => h('div', { key: index }, line)));
-}
 function renderBarChart(scope, component) {
     const view = scope.view;
-    const categories = Array.isArray(component.categories) ? component.categories.map((entry) => text(scope, entry)) : [];
-    const allSeries = readSeries(scope, component, categories.length);
+    const resolvedCategories = Array.isArray(component.categories) ? component.categories : anyValue(scope, component.categories);
+    const categories = Array.isArray(resolvedCategories) ? resolvedCategories.map((entry) => text(scope, entry)) : [];
+    const declarations = Array.isArray(component.series) ? component.series : [];
+    const allSeries = readSeries(scope, component, categories.length).map((entry, index) => {
+        const raw = declarations[index];
+        if (!isPlainObject(raw) || raw.errorBars === undefined)
+            return entry;
+        const ranges = resolveErrorRanges(raw.errorBars, resolvedCategories, anyValue(scope, raw.values), resolveContext(scope), '');
+        return {
+            ...entry,
+            errorBars: ranges.kind === 'ready' ? ranges.value : undefined,
+            invalidErrors: ranges.kind === 'invalid' || (ranges.kind === 'pending' && !view.streaming),
+            errorLabel: raw.errorLabel === undefined ? '' : text(scope, raw.errorLabel),
+        };
+    });
     const [hidden, setHidden] = React.useState(() => new Set());
     const [hover, setHover] = React.useState(null);
+    const plotRef = React.useRef(null);
+    const responsive = allSeries.some((entry) => entry.errorBars !== undefined);
+    const viewWidth = useChartWidth(plotRef, responsive);
     const series = allSeries.filter((_, index) => !hidden.has(index));
     const horizontal = component.horizontal === true;
     const stacked = component.stacked === true;
     const suffix = component.valueSuffix === undefined ? '' : text(scope, component.valueSuffix);
     const all = series.flatMap((entry) => entry.values.filter((value) => value !== undefined));
+    if (allSeries.some((entry) => entry.invalidErrors))
+        return emptyChart(scope, component, view.t('displayInvalid'));
     if (categories.length === 0 || series.length === 0 || all.length === 0)
         return emptyChart(scope, component, view.t('chartEmpty'));
     const toggle = (index) => {
@@ -5709,12 +6419,14 @@ function renderBarChart(scope, component) {
         });
     };
     const height = chartHeight(component, horizontal ? Math.max(160, categories.length * 26 + PAD.top + PAD.bottom) : 240);
-    const plotWidth = VIEW_WIDTH - PAD.left - PAD.right;
+    const plotWidth = viewWidth - PAD.left - PAD.right;
     const plotHeight = height - PAD.top - PAD.bottom;
     // Bar charts must show their baseline: a positive-only series starts at 0, a
     // negative-only one ends at 0, and a mixed one contains 0. An explicit yMin /
     // yMax wins, and the plot is clamped to that domain.
-    const domain = barDomain(all, numberValue(scope, component.yMin), numberValue(scope, component.yMax));
+    const endpoints = series.flatMap((entry) => entry.errorBars?.flatMap((range) => range === null ? [] : [range.lower, range.upper]) ?? []);
+    const extent = endpoints.length === 0 ? all : [...all, ...endpoints];
+    const domain = barDomain(extent, numberValue(scope, component.yMin), numberValue(scope, component.yMax));
     let scale;
     if (stacked && !horizontal) {
         const stackMin = [];
@@ -5737,18 +6449,23 @@ function renderBarChart(scope, component) {
         scale = niceScale([...stackMax, ...stackMin], domain.min, domain.max);
     }
     else {
-        scale = niceScale(all, domain.min, domain.max);
+        scale = niceScale(extent, domain.min, domain.max);
+        if (endpoints.length > 0 && (!(scale.max > scale.min) || new Set(scale.ticks).size < 2)) {
+            scale = scatterScale(extent, domain.min, domain.max);
+        }
     }
-    const span = scale.max - scale.min || 1;
     const clamp = (value) => Math.max(scale.min, Math.min(scale.max, value));
-    const valueToY = (value) => PAD.top + plotHeight - ((clamp(value) - scale.min) / span) * plotHeight;
-    const valueToX = (value) => PAD.left + ((clamp(value) - scale.min) / span) * plotWidth;
+    const fraction = (value) => scale.min === scale.max ? 0 : axisFraction(clamp(value), scale.min, scale.max);
+    const valueToY = (value) => PAD.top + plotHeight * (1 - fraction(value));
+    const valueToX = (value) => PAD.left + plotWidth * fraction(value);
+    const tickLabels = endpoints.length > 0 ? numericTickLabels(scale.ticks) : scale.ticks.map(formatTick);
     const band = horizontal ? plotHeight / Math.max(1, categories.length) : plotWidth / Math.max(1, categories.length);
+    const labelEvery = responsive ? Math.max(1, Math.ceil(52 / band)) : 1;
     const groupWidth = band * 0.68;
     const barWidth = stacked || horizontal ? groupWidth : groupWidth / Math.max(1, series.length);
     const grid = h('g', { className: 'a2ui-grid' }, ...scale.ticks.map((tick, index) => horizontal
-        ? h('g', { key: `g${index}` }, h('line', { x1: valueToX(tick), x2: valueToX(tick), y1: PAD.top, y2: PAD.top + plotHeight }), h('text', { x: valueToX(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, formatTick(tick)))
-        : h('g', { key: `g${index}` }, h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: valueToY(tick), y2: valueToY(tick) }), h('text', { x: PAD.left - 6, y: valueToY(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, formatTick(tick)))));
+        ? h('g', { key: `g${index}` }, h('line', { x1: valueToX(tick), x2: valueToX(tick), y1: PAD.top, y2: PAD.top + plotHeight }), h('text', { x: valueToX(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, tickLabels[index]))
+        : h('g', { key: `g${index}` }, h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: valueToY(tick), y2: valueToY(tick) }), h('text', { x: PAD.left - 6, y: valueToY(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, tickLabels[index]))));
     const barEvents = (series, category) => ({
         onMouseEnter: (event) => setHover({ series, category, element: event.currentTarget }),
         onMouseLeave: () => setHover(null),
@@ -5816,11 +6533,13 @@ function renderBarChart(scope, component) {
                 const zero = valueToY(0);
                 const y = valueToY(value);
                 const isHover = hover !== null && hover.category === categoryIndex && hover.series === seriesIndex;
+                const x = center - groupWidth / 2 + seriesIndex * barWidth;
+                const width = Math.max(1, barWidth * 0.88);
                 bars.push(h('rect', {
                     key: `b${categoryIndex}-${seriesIndex}`,
-                    x: center - groupWidth / 2 + seriesIndex * barWidth,
+                    x,
                     y: Math.min(y, zero),
-                    width: Math.max(1, barWidth * 0.88),
+                    width,
                     height: Math.max(0.5, Math.abs(zero - y)),
                     rx: 2,
                     fill: entry.color,
@@ -5830,9 +6549,28 @@ function renderBarChart(scope, component) {
                     ...barEvents(seriesIndex, categoryIndex),
                     style: { transition: 'opacity .12s ease' },
                 }));
+                const interval = entry.errorBars?.[categoryIndex];
+                if (interval && interval.upper >= scale.min && interval.lower <= scale.max) {
+                    const mid = x + width / 2;
+                    const halfCap = Math.min(6, width * 0.31);
+                    const low = valueToY(interval.lower);
+                    const high = valueToY(interval.upper);
+                    const cap = (at) => `M${mid - halfCap},${at}H${mid + halfCap}`;
+                    const d = `M${mid},${low}V${high}`
+                        + (interval.lower >= scale.min ? cap(low) : '')
+                        + (interval.upper <= scale.max && interval.upper !== interval.lower ? cap(high) : '');
+                    bars.push(h('path', {
+                        key: `error${categoryIndex}-${seriesIndex}`,
+                        'data-bar-error': '',
+                        'aria-hidden': true,
+                        d, fill: 'none', stroke: 'currentColor', strokeWidth: 1.5,
+                        vectorEffect: 'non-scaling-stroke', pointerEvents: 'none',
+                        opacity: hover === null || isHover ? 1 : 0.35,
+                    }));
+                }
             });
         }
-        if (categories.length <= 14) {
+        if (responsive ? categoryIndex % labelEvery === 0 : categories.length <= 14) {
             bars.push(h('text', {
                 key: `x${categoryIndex}`,
                 x: horizontal ? PAD.left - 6 : center,
@@ -5841,7 +6579,8 @@ function renderBarChart(scope, component) {
                 fontSize: 10,
                 fill: 'currentColor',
                 opacity: hover === null || hover.category === categoryIndex ? 0.85 : 0.45,
-            }, category.length > 14 ? `${category.slice(0, 13)}…` : category));
+            }, responsive ? visibleCategoryLabel(category, Math.max(3, Math.min(14, Math.floor(band * labelEvery / 11))))
+                : category.length > 14 ? `${category.slice(0, 13)}…` : category));
         }
     });
     let tooltip = null;
@@ -5850,15 +6589,20 @@ function renderBarChart(scope, component) {
         const value = entry?.values[hover.category];
         const label = categories[hover.category] ?? '';
         if (entry !== undefined && value !== undefined) {
-            tooltip = h(BarTooltip, {
-                bar: hover.element,
-                lines: [label, `${entry.label}: ${trim(value)}${suffix === '' ? '' : ` ${suffix}`}`],
+            const unit = suffix === '' ? '' : ` ${suffix}`;
+            const interval = entry.errorBars?.[hover.category];
+            const lines = [label, `${entry.label}: ${interval ? value : trim(value)}${unit}`];
+            if (interval)
+                lines.push(`${entry.errorLabel || view.t('barErrorRange')}: ${interval.lower} – ${interval.upper}${unit}`);
+            tooltip = h(ChartTooltip, {
+                anchor: hover.element,
+                lines,
             });
         }
     }
-    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('div', { className: 'a2ui-bar-plot' }, h('svg', {
+    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('div', { className: 'a2ui-bar-plot', ref: plotRef }, h('svg', {
         className: 'a2ui-chart-svg a2ui-axis',
-        viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
+        viewBox: `0 0 ${viewWidth} ${height}`,
         role: 'img',
         'aria-label': axisSummary(scope, categories, series),
         style: { maxHeight: `${height}px` },
@@ -5871,6 +6615,7 @@ function renderLineChart(scope, component) {
     const allSeries = readSeries(scope, component);
     const [hidden, setHidden] = React.useState(() => new Set());
     const [hoverIndex, setHoverIndex] = React.useState(null);
+    const tooltipAnchor = React.useRef(null);
     const series = allSeries.filter((_, index) => !hidden.has(index));
     const area = component.area === true;
     const smooth = component.curve === 'smooth';
@@ -5988,11 +6733,8 @@ function renderLineChart(scope, component) {
             if (value !== undefined)
                 lines.push(`${entry.label}: ${trim(value)}`);
         });
-        if (lines.length > 1) {
-            const x = xAt(hoverIndex);
-            const width = textWidth(lines);
-            tooltip = tooltipLines(x, PAD.top + 2, width, 14 + lines.length * 13, lines, x > VIEW_WIDTH / 2 ? 'end' : 'start');
-        }
+        if (lines.length > 1)
+            tooltip = h(ChartTooltip, { anchor: tooltipAnchor, lines });
     }
     const guide = hoverIndex === null
         ? null
@@ -6007,13 +6749,15 @@ function renderLineChart(scope, component) {
             opacity: 0.6,
         });
     const yLabel = component.yLabel === undefined ? '' : text(scope, component.yLabel);
-    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('svg', {
+    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('div', { className: 'a2ui-bar-plot' }, h('svg', {
         className: 'a2ui-chart-svg a2ui-axis',
         viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
         role: 'img',
         'aria-label': axisSummary(scope, categories, series),
         style: { maxHeight: `${height}px` },
-    }, grid, guide, yLabel === '' ? null : h('text', { x: PAD.left, y: 11, fontSize: 10, fill: 'currentColor', opacity: 0.7 }, yLabel), ...marks, ...bands, tooltip), legend({ series: allSeries, hidden, onToggle: toggle }));
+    }, grid, guide, yLabel === '' ? null : h('text', { x: PAD.left, y: 11, fontSize: 10, fill: 'currentColor', opacity: 0.7 }, yLabel), ...marks, ...bands, hoverIndex === null || tooltip === null ? null : h('circle', {
+        ref: tooltipAnchor, cx: xAt(hoverIndex), cy: PAD.top + 18, r: 1, opacity: 0, pointerEvents: 'none',
+    })), tooltip), legend({ series: allSeries, hidden, onToggle: toggle }));
 }
 /** `PieChart` */
 function renderPieChart(scope, component) {
@@ -6123,15 +6867,175 @@ function renderPieChart(scope, component) {
         ? h('text', { x: VIEW_WIDTH / 2 + 19, y: 24.5 + 10 * 19, fontSize: 11, fill: 'currentColor', opacity: 0.7 }, `+${slices.length - 10}`)
         : null));
 }
-/** `Plot` */
-function renderPlot(scope, component) {
-    const view = scope.view;
-    const xMin = numberValue(scope, component.xMin) ?? -10;
-    const xMax = numberValue(scope, component.xMax) ?? 10;
-    if (!(xMax > xMin))
-        return emptyChart(scope, component, view.t('plotInvalidRange'));
-    const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240));
-    const variablesRaw = component.variables;
+function scatterScale(values, lower, upper, inset = 0) {
+    let min = lower ?? (values.length > 0 ? Math.min(...values) : (upper ?? 1) - 1);
+    let max = upper ?? (values.length > 0 ? Math.max(...values) : (lower ?? 0) + 1);
+    if (max <= min) {
+        const edge = lower ?? upper ?? min;
+        const padding = edge === 0 ? 1 : Math.max(Math.abs(edge) * 0.1, Number.MIN_VALUE);
+        if (lower === undefined)
+            min = Math.max(-Number.MAX_VALUE, edge - padding);
+        if (upper === undefined)
+            max = Math.min(Number.MAX_VALUE, edge + padding);
+    }
+    if (inset > 0 && min < max) {
+        const padding = (max * inset - min * inset) / (1 - 2 * inset);
+        if (lower === undefined)
+            min = Math.max(-Number.MAX_VALUE, min - padding);
+        if (upper === undefined)
+            max = Math.min(Number.MAX_VALUE, max + padding);
+    }
+    const ticks = Array.from({ length: 5 }, (_, index) => {
+        const part = index / 4;
+        return min * (1 - part) + max * part;
+    });
+    return { min, max, ticks: [...new Set(ticks)] };
+}
+function bubbleRadius(size, maxSize, maxRadius) {
+    if (size === undefined || size === 0)
+        return 3.5;
+    return Math.max(1.5, maxRadius * Math.sqrt(size / maxSize));
+}
+function numericTickLabels(ticks) {
+    const labels = ticks.map((value) => {
+        const magnitude = Math.abs(value);
+        return magnitude >= 1e12 || (magnitude > 0 && magnitude < 0.01) ? value.toExponential(2) : formatTick(value);
+    });
+    if (new Set(labels).size === labels.length)
+        return labels;
+    const precise = ticks.map((value) => String(Number(value.toPrecision(9))));
+    return new Set(precise).size === precise.length ? precise : ticks.map(String);
+}
+function PlotFrame(props) {
+    const { points, svg, interactive, t } = props;
+    const id = React.useId();
+    const svgRef = React.useRef(null);
+    const [selection, setSelection] = React.useState();
+    const current = selection === undefined ? undefined : points[selection.index];
+    const active = selection !== undefined && current !== undefined && selection.anchor.isConnected
+        && current.key === selection.point.key
+        && current.x === selection.point.x && current.y === selection.point.y
+        && current.size === selection.point.size
+        && current.label === selection.point.label && current.series === selection.point.series
+        ? current
+        : undefined;
+    const groups = React.useMemo(() => {
+        const byPosition = new Map();
+        points.forEach(({ x, y }, index) => {
+            const key = `${x},${y}`;
+            const members = byPosition.get(key);
+            if (members === undefined)
+                byPosition.set(key, [index]);
+            else
+                members.push(index);
+        });
+        return byPosition;
+    }, [points]);
+    const marks = React.useMemo(() => points.map((point, index) => ({ point, index }))
+        .sort((a, b) => b.point.radius - a.point.radius)
+        .map(({ point, index }) => h('circle', {
+        key: point.key,
+        'data-plot-point': index,
+        cx: point.cx, cy: point.cy, r: point.radius,
+        fill: point.size === 0 ? 'transparent' : point.color,
+        fillOpacity: point.size === undefined ? undefined : 0.5,
+        stroke: point.size === undefined ? 'transparent' : point.color,
+        strokeWidth: point.size === undefined ? 8 : 1,
+    })), [points]);
+    const pick = (index, mode) => {
+        const point = points[index];
+        const anchor = svgRef.current?.querySelector(`[data-plot-point="${index}"]`);
+        if (point !== undefined && anchor)
+            setSelection({ index, point, anchor, mode });
+    };
+    const pointIndex = (target) => {
+        const raw = target.getAttribute?.('data-plot-point');
+        return raw == null ? undefined : Number(raw);
+    };
+    const onKeyDown = (event) => {
+        const index = active === undefined ? undefined : selection?.index;
+        let next;
+        switch (event.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+                next = index === undefined ? 0 : (index + 1) % points.length;
+                break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+                next = index === undefined ? points.length - 1 : (index - 1 + points.length) % points.length;
+                break;
+            case 'Home':
+                next = 0;
+                break;
+            case 'End':
+                next = points.length - 1;
+                break;
+            case 'Escape':
+                if (selection === undefined)
+                    return;
+                event.preventDefault();
+                event.stopPropagation();
+                setSelection(undefined);
+                return;
+            default: return;
+        }
+        event.preventDefault();
+        pick(next, 'keyboard');
+    };
+    const onClick = (event) => {
+        const index = pointIndex(event.target);
+        const point = index === undefined ? undefined : points[index];
+        if (point === undefined || index === undefined) {
+            setSelection(undefined);
+            return;
+        }
+        const overlaps = groups.get(`${point.x},${point.y}`) ?? [index];
+        const selectedOverlap = active !== undefined && selection?.mode === 'pinned' ? overlaps.indexOf(selection.index) : -1;
+        pick(selectedOverlap === -1 ? index : overlaps[(selectedOverlap + 1) % overlaps.length], 'pinned');
+    };
+    const lines = [];
+    if (active !== undefined && selection !== undefined) {
+        if (active.label)
+            lines.push(active.label);
+        lines.push(active.series, `${props.xLabel || 'X'}: ${active.x}`, `${props.yLabel || 'Y'}: ${active.y}`);
+        if (active.size !== undefined)
+            lines.push(`${props.sizeLabel}: ${active.size}`);
+        const overlaps = groups.get(`${active.x},${active.y}`);
+        if (overlaps !== undefined && overlaps.length > 1) {
+            lines.push(t('scatterOverlap')
+                .replace('{index}', String(overlaps.indexOf(selection.index) + 1))
+                .replace('{total}', String(overlaps.length)));
+        }
+    }
+    const clipId = `${id}-plot`;
+    return h('div', {
+        className: 'a2ui-plot-frame',
+        ...(interactive ? {
+            role: 'group',
+            tabIndex: 0,
+            'aria-label': svg['aria-label'],
+            'aria-describedby': `${id}-keys`,
+            onFocus: () => pick(0, 'keyboard'),
+            onBlur: () => setSelection(undefined),
+            onKeyDown,
+            onClick,
+            onPointerOver: (event) => {
+                const index = pointIndex(event.target);
+                if (index !== undefined && event.pointerType !== 'touch' && (active === undefined || selection?.mode !== 'pinned'))
+                    pick(index, 'hover');
+            },
+            onPointerOut: () => {
+                if (selection?.mode === 'hover')
+                    setSelection(undefined);
+            },
+        } : {}),
+    }, h('svg', { ...svg, ref: svgRef, 'aria-hidden': interactive || undefined }, h('defs', null, h('clipPath', { id: clipId }, h('rect', { x: props.left, y: PAD.top, width: props.plotWidth, height: props.plotHeight }))), props.children, h('g', { clipPath: `url(#${clipId})`, 'aria-hidden': true }, ...marks, active === undefined ? null : h('circle', {
+        cx: active.cx, cy: active.cy, r: active.radius + 1.5,
+        fill: active.size === undefined ? active.color : 'none',
+        stroke: 'currentColor', strokeWidth: 1.25, pointerEvents: 'none',
+    }))), interactive ? h('span', { id: `${id}-keys`, className: 'a2ui-visually-hidden' }, t('scatterKeyboard')) : null, interactive ? h('span', { className: 'a2ui-visually-hidden', role: 'status' }, selection?.mode === 'hover' ? '' : lines.join(' · ')) : null, selection !== undefined && active !== undefined ? h(ChartTooltip, { anchor: selection.anchor, lines }) : null);
+}
+function readPlotVariables(scope, variablesRaw) {
     const variables = {};
     // `variables` may be an object of per-variable bindings, or one binding that
     // resolves to the whole coefficient object (`{"@path": "/coefficients"}`).
@@ -6152,7 +7056,87 @@ function renderPlot(scope, component) {
                 variables[key] = resolved;
         }
     }
-    const plots = (Array.isArray(component.plots) ? component.plots.slice(0, 8) : []).map((entry, index) => {
+    return variables;
+}
+function plotSliderRanges(scope, variablesRaw, variables) {
+    const whole = bindingPointer(variablesRaw);
+    const variablePaths = new Map();
+    for (const name of Object.keys(variables)) {
+        const propertyPath = name.replaceAll('~', '~0').replaceAll('/', '~1');
+        const pointer = whole === undefined
+            ? bindingPointer(isPlainObject(variablesRaw) ? variablesRaw[name] : undefined)
+            : `${whole === '/' ? '' : whole}/${propertyPath}`;
+        if (pointer !== undefined)
+            variablePaths.set(name, pointer);
+    }
+    if (variablePaths.size === 0)
+        return [];
+    const sliderBounds = new Map();
+    for (const component of scope.view.state.components.values()) {
+        if (component.component !== 'Slider')
+            continue;
+        const pointer = bindingPointer(component.value);
+        const min = typeof component.min === 'number' ? component.min : 0;
+        const max = typeof component.max === 'number' ? component.max : 100;
+        if (pointer === undefined || !Number.isFinite(min) || !Number.isFinite(max) || !(max > min))
+            continue;
+        const previous = sliderBounds.get(pointer);
+        sliderBounds.set(pointer, previous === undefined ? { min, max } : {
+            min: Math.min(min, previous.min),
+            max: Math.max(max, previous.max),
+        });
+    }
+    const ranges = [];
+    for (const [name, pointer] of variablePaths) {
+        const bounds = sliderBounds.get(pointer);
+        if (bounds !== undefined)
+            ranges.push({ name, ...bounds });
+    }
+    return ranges;
+}
+/** Sample a bounded set of slider settings once, outside the drag's update loop. */
+function linkedPlotExtent(component, fixed, ranges) {
+    const { xMin, xMax, plots } = component;
+    if (typeof xMin !== 'number' || typeof xMax !== 'number' || !Number.isFinite(xMax - xMin) || !(xMax > xMin)
+        || !Array.isArray(plots))
+        return undefined;
+    const expressions = plots.flatMap((entry) => {
+        if (!isPlainObject(entry) || entry.kind === 'scatter' || typeof entry.expression !== 'string')
+            return [];
+        const expression = tryCompileExpression(entry.expression);
+        return expression?.variables.some((name) => ranges.some((range) => range.name === name)) ? [expression] : [];
+    });
+    if (expressions.length === 0)
+        return undefined;
+    const settings = ranges.reduce((inputs, range) => inputs.flatMap((input) => [range.min, range.min / 2 + range.max / 2, range.max].map((value) => ({ ...input, [range.name]: value }))), [fixed]);
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const expression of expressions) {
+        for (const input of settings) {
+            const values = { ...input, x: xMin };
+            for (let index = 0; index <= 80; index += 1) {
+                values.x = xMin + (xMax - xMin) * (index / 80);
+                const y = expression.evaluate(values);
+                if (!Number.isFinite(y))
+                    return undefined;
+                min = Math.min(min, y);
+                max = Math.max(max, y);
+            }
+        }
+    }
+    return Number.isFinite(max - min) ? [min, max] : undefined;
+}
+/** `Plot` */
+function renderPlot(scope, component, options = {}) {
+    const { width = VIEW_WIDTH, variables = readPlotVariables(scope, component.variables), linkedExtent, hidden, onToggle } = options;
+    const view = scope.view;
+    const requestedXMin = numberValue(scope, component.xMin);
+    const requestedXMax = numberValue(scope, component.xMax);
+    if (requestedXMin !== undefined && requestedXMax !== undefined && !(requestedXMax > requestedXMin)) {
+        return emptyChart(scope, component, view.t('plotInvalidRange'));
+    }
+    const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240));
+    const plots = (Array.isArray(component.plots) ? component.plots.slice(0, LIMITS.maxSeries) : []).map((entry, index) => {
         const record = (entry ?? {});
         const kind = record.kind === 'scatter' ? 'scatter' : 'function';
         let compiled;
@@ -6166,23 +7150,44 @@ function renderPlot(scope, component) {
                 error = cause instanceof Error ? cause.message : view.t('plotInvalid');
             }
         }
-        const points = Array.isArray(record.points)
-            ? record.points
-                .map((point) => ({ x: numberValue(scope, point.x), y: numberValue(scope, point.y) }))
-                .filter((point) => point.x !== undefined && point.y !== undefined)
-            : [];
+        const resolved = anyValue(scope, record.points);
+        const violations = [];
+        if (resolved !== undefined && resolved !== null)
+            plotPointList(resolved, '', violations);
+        const points = violations.length === 0 && Array.isArray(resolved) ? resolved : [];
         return {
             label: record.label === undefined ? `${view.t('series')} ${index + 1}` : text(scope, record.label),
             kind,
             compiled,
             error,
             points,
+            regression: kind === 'scatter' && record.regression === 'linear',
+            invalidPoints: violations.length > 0,
             color: seriesColor(index, record.color),
         };
     });
     if (plots.length === 0 || plots.every((plot) => plot.error !== '' && plot.points.length === 0)) {
         return emptyChart(scope, component, plots.find((plot) => plot.error !== '')?.error || view.t('plotInvalid'));
     }
+    if (plots.some((plot) => plot.invalidPoints)) {
+        return emptyChart(scope, component, view.t('scatterInvalidPoints').replace('{limit}', String(LIMITS.maxSeriesPoints)));
+    }
+    const scatterOnly = plots.every((plot) => plot.kind === 'scatter');
+    const hasPoints = plots.some((plot) => plot.points.length > 0);
+    if (scatterOnly && !hasPoints)
+        return emptyChart(scope, component, view.t('scatterEmpty'));
+    const height = chartHeight(component, 250);
+    const left = hasPoints ? 62 : PAD.left;
+    const plotWidth = width - left - PAD.right;
+    const plotHeight = height - PAD.top - PAD.bottom;
+    const sizes = plots.flatMap((plot) => plot.points.flatMap((point) => point.size === undefined ? [] : [point.size]));
+    const maxSize = Math.max(0, ...sizes);
+    const maxRadius = Math.min(16, plotWidth * 0.075, plotHeight * 0.12);
+    const xScale = scatterOnly ? scatterScale(plots.flatMap((plot) => plot.points.map((point) => point.x)), requestedXMin, requestedXMax, sizes.length > 0 ? (maxRadius + 2) / plotWidth : 0) : undefined;
+    const xMin = xScale?.min ?? requestedXMin ?? -10;
+    const xMax = xScale?.max ?? requestedXMax ?? 10;
+    if (!(xMax > xMin))
+        return emptyChart(scope, component, view.t('plotInvalidRange'));
     const step = (xMax - xMin) / (samples - 1);
     const lines = plots.map((plot) => {
         if (plot.kind === 'scatter' || plot.compiled === undefined)
@@ -6191,30 +7196,49 @@ function renderPlot(scope, component) {
         for (let index = 0; index < samples; index += 1) {
             const x = xMin + step * index;
             const y = plot.compiled.evaluate({ ...variables, x });
-            if (Number.isFinite(y))
-                points.push({ x, y });
+            points.push({ x, y });
         }
         return { ...plot, samples: points };
     });
-    const allY = [...lines.flatMap((line) => [...line.samples.map((point) => point.y), ...line.points.map((point) => point.y)])];
-    const scale = niceScale(allY, numberValue(scope, component.yMin), numberValue(scope, component.yMax));
-    const height = chartHeight(component, 250);
-    const plotWidth = VIEW_WIDTH - PAD.left - PAD.right;
-    const plotHeight = height - PAD.top - PAD.bottom;
-    const xAt = (x) => PAD.left + ((x - xMin) / (xMax - xMin)) * plotWidth;
-    const yAt = (y) => PAD.top + plotHeight - ((y - scale.min) / (scale.max - scale.min)) * plotHeight;
-    const xTicks = [];
-    for (let index = 0; index <= 4; index += 1)
-        xTicks.push(xMin + ((xMax - xMin) * index) / 4);
-    const grid = h('g', { className: 'a2ui-grid' }, ...scale.ticks.map((tick, index) => h('g', { key: `gy${index}` }, h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(tick), y2: yAt(tick) }), h('text', { x: PAD.left - 6, y: yAt(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, formatTick(tick)))), ...xTicks.map((tick, index) => h('g', { key: `gx${index}` }, h('line', { x1: xAt(tick), x2: xAt(tick), y1: PAD.top, y2: PAD.top + plotHeight }), h('text', { x: xAt(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, formatTick(tick)))));
+    const allY = lines.flatMap((line) => [...line.samples, ...line.points].map((point) => point.y)).filter(Number.isFinite);
+    const yMin = numberValue(scope, component.yMin);
+    const yMax = numberValue(scope, component.yMax);
+    const scale = scatterOnly ? scatterScale(allY, yMin, yMax, sizes.length > 0 ? (maxRadius + 2) / plotHeight : 0) : niceScale(linkedExtent === undefined ? allY : [...allY, ...linkedExtent], yMin, yMax);
+    if (scatterOnly && !(scale.max > scale.min))
+        return emptyChart(scope, component, view.t('scatterInvalidYRange'));
+    const xAt = (x) => left + axisFraction(x, xMin, xMax) * plotWidth;
+    const yAt = (y) => PAD.top + plotHeight - axisFraction(y, scale.min, scale.max) * plotHeight;
+    const xTicks = xScale?.ticks ?? Array.from({ length: 5 }, (_, index) => xMin + ((xMax - xMin) * index) / 4);
+    const xTicksShown = hasPoints && width < 420 && xTicks.length === 5 ? [xTicks[0], xTicks[2], xTicks[4]] : xTicks;
+    const xLabels = hasPoints ? numericTickLabels(xTicksShown) : xTicksShown.map(formatTick);
+    const yLabels = hasPoints ? numericTickLabels(scale.ticks) : scale.ticks.map(formatTick);
+    const grid = h('g', { className: 'a2ui-grid' }, ...scale.ticks.map((tick, index) => h('g', { key: `gy${index}` }, h('line', { x1: left, x2: left + plotWidth, y1: yAt(tick), y2: yAt(tick) }), h('text', { x: left - 6, y: yAt(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, yLabels[index]))), ...xTicksShown.map((tick, index) => h('g', { key: `gx${index}` }, h('line', { x1: xAt(tick), x2: xAt(tick), y1: PAD.top, y2: PAD.top + plotHeight }), h('text', {
+        x: xAt(tick), y: height - 10, fontSize: 10,
+        textAnchor: hasPoints && index === xTicksShown.length - 1 ? 'end' : 'middle',
+    }, xLabels[index]))));
     const marks = [];
+    const regressionSummaries = [];
+    const scatter = [];
+    let outside = 0;
     if (scale.min <= 0 && scale.max >= 0) {
-        marks.push(h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(0), y2: yAt(0), stroke: 'currentColor', opacity: 0.35, strokeWidth: 1 }));
+        marks.push(h('line', { x1: left, x2: left + plotWidth, y1: yAt(0), y2: yAt(0), stroke: 'currentColor', opacity: 0.35, strokeWidth: 1 }));
     }
     lines.forEach((line, index) => {
+        // Keep the domain derived from all series so comparison does not rescale the visible points.
+        if (hidden?.has(index))
+            return;
         // A curve that leaves the plotted domain (1/x, tan, a vertical asymptote) is
         // broken rather than connected across the gap.
-        const segments = splitPlotSegments(line.samples, scale.min, scale.max);
+        const evaluate = line.compiled?.evaluate;
+        const segments = splitPlotSegments(line.samples, scale.min, scale.max, evaluate === undefined ? undefined : (previous, next) => {
+            // Probe a steep step for a discontinuity between the sampled positions.
+            const jump = axisFraction(next.y, scale.min, scale.max) - axisFraction(previous.y, scale.min, scale.max);
+            if (Math.abs(jump) < 0.25)
+                return false;
+            const x = previous.x + (next.x - previous.x) / 2;
+            const y = evaluate({ ...variables, x });
+            return !Number.isFinite(y) || y < scale.min || y > scale.max;
+        });
         segments.forEach((segment, segmentIndex) => {
             if (segment.length === 1) {
                 marks.push(h('circle', { key: `fx${index}-${segmentIndex}`, cx: xAt(segment[0].x), cy: yAt(segment[0].y), r: 2, fill: line.color }));
@@ -6230,23 +7254,205 @@ function renderPlot(scope, component) {
                 strokeLinecap: 'round',
             }));
         });
-        line.points.forEach((point, pointIndex) => {
-            marks.push(h('circle', { key: `s${index}-${pointIndex}`, cx: xAt(point.x), cy: yAt(point.y), r: 3, fill: line.color }));
-        });
+        if (line.regression) {
+            const fit = fitLinearRegression(line.points);
+            const segment = fit && visibleRegressionSegment(fit, { xMin, xMax, yMin: scale.min, yMax: scale.max });
+            if (segment) {
+                const [start, end] = segment;
+                marks.push(h('line', {
+                    key: `fit${index}`,
+                    'data-plot-regression': index,
+                    x1: xAt(start.x), y1: yAt(start.y), x2: xAt(end.x), y2: yAt(end.y),
+                    stroke: line.color, strokeWidth: 2, strokeDasharray: '6 4', pointerEvents: 'none',
+                }));
+            }
+            const summary = fit === undefined ? view.t('scatterRegressionUnavailable')
+                : fit.rSquared === undefined ? view.t('scatterRegressionConstant')
+                    : `${view.t('scatterRegression')} · R² ${Number(fit.rSquared.toFixed(3))}`;
+            regressionSummaries.push(h('span', { key: index }, segment ? h('span', { className: 'a2ui-plot-fit-swatch', style: { color: line.color }, 'aria-hidden': true }) : null, `${line.label} · ${summary}`));
+        }
+        for (const [pointIndex, point] of line.points.entries()) {
+            if (point.x < xMin || point.x > xMax || point.y < scale.min || point.y > scale.max) {
+                outside += 1;
+                continue;
+            }
+            scatter.push({
+                ...point, key: `${index}-${pointIndex}`, cx: xAt(point.x), cy: yAt(point.y),
+                series: line.label, color: line.color, radius: bubbleRadius(point.size, maxSize, maxRadius),
+            });
+        }
     });
     const invalid = plots.filter((plot) => plot.error !== '');
-    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('svg', {
+    const xLabel = component.xLabel === undefined ? '' : text(scope, component.xLabel);
+    const yLabel = component.yLabel === undefined ? '' : text(scope, component.yLabel);
+    const sizeLabel = (component.sizeLabel === undefined ? '' : text(scope, component.sizeLabel)) || view.t('scatterSize');
+    const sizeTicks = [...new Set([
+            ...(sizes.includes(0) ? [0] : []),
+            ...(maxSize > 0 ? [Math.min(...sizes.filter((size) => size > 0)), maxSize] : []),
+        ])];
+    const sizeLabels = numericTickLabels(sizeTicks);
+    const svg = {
         className: 'a2ui-chart-svg a2ui-axis',
-        viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
+        viewBox: `0 0 ${width} ${height}`,
         role: 'img',
-        'aria-label': `${component.xLabel === undefined ? 'x' : text(scope, component.xLabel)} ${trim(xMin)}..${trim(xMax)}`,
+        'aria-label': `${xLabel || 'x'} ${hasPoints ? xMin : trim(xMin)}..${hasPoints ? xMax : trim(xMax)}${yLabel === '' ? '' : ` · ${yLabel}`}`,
         style: { maxHeight: `${height}px` },
-    }, grid, ...marks), invalid.length === 0
+    };
+    return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), yLabel === '' ? null : h('p', { className: 'a2ui-plot-label' }, yLabel), scatter.length === 0
+        ? h('svg', svg, grid, ...marks)
+        : h(PlotFrame, { svg, points: scatter, plotWidth, plotHeight, left, xLabel, yLabel, sizeLabel, interactive: !view.streaming, t: view.t }, grid, ...marks), xLabel === '' ? null : h('p', { className: 'a2ui-plot-label a2ui-plot-label-x' }, xLabel), outside === 0 ? null : h('p', { className: 'a2ui-caption' }, view.t('scatterOutside').replace('{count}', String(outside))), invalid.length === 0
         ? null
-        : h('p', { className: 'a2ui-error' }, ...invalid.map((plot, index) => h('span', { key: `e${index}` }, `${plot.label}: ${plot.error}; `))), legend({ series: lines }));
+        : h('p', { className: 'a2ui-error' }, ...invalid.map((plot, index) => h('span', { key: `e${index}` }, `${plot.label}: ${plot.error}; `))), legend({ series: lines, hidden, onToggle }), sizeTicks.length === 0 ? null : h('div', { className: 'a2ui-caption a2ui-plot-key a2ui-plot-size' }, h('span', null, sizeLabel), ...sizeTicks.map((size, index) => {
+        const diameter = 2 * bubbleRadius(size, maxSize, maxRadius);
+        return h('span', { key: size }, h('span', { className: 'a2ui-plot-size-swatch', 'aria-hidden': true,
+            style: { width: diameter, height: diameter, background: size === 0 ? 'transparent' : undefined } }), sizeLabels[index]);
+    })), regressionSummaries.length === 0 ? null : h('div', { className: 'a2ui-caption a2ui-plot-key' }, ...regressionSummaries));
 }
 function BarChartView(props) {
     return renderBarChart(props.scope, props.component);
+}
+function useChartWidth(ref, responsive, minWidth = 240) {
+    const [width, setWidth] = React.useState(VIEW_WIDTH);
+    React.useEffect(() => {
+        const target = ref.current;
+        if (!responsive || !target)
+            return;
+        const measure = () => {
+            const available = Math.floor(target.clientWidth);
+            if (available > 0)
+                setWidth(Math.min(VIEW_WIDTH, Math.max(minWidth, available)));
+        };
+        measure();
+        if (typeof ResizeObserver === 'undefined')
+            return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [ref, responsive, minWidth]);
+    return width;
+}
+function paretoTickLabels(base, factors) {
+    const values = factors.map((factor) => base * factor);
+    const finiteLabels = numericTickLabels(values.filter(Number.isFinite));
+    let i = 0;
+    return values.map((value, index) => {
+        if (Number.isFinite(value))
+            return finiteLabels[i++];
+        const [significand, power] = base.toExponential(16).split('e');
+        const [normalized, shift] = (Number(significand) * factors[index]).toExponential(2).split('e');
+        return `${normalized}e+${Number(power) + Number(shift)}`;
+    });
+}
+function ParetoPlot({ scope, component, items }) {
+    const t = scope.view.t;
+    const interactive = !scope.view.streaming;
+    const ref = React.useRef(null);
+    const width = useChartWidth(ref, true);
+    const id = React.useId();
+    const [selection, setSelection] = React.useState();
+    const { ordered, base, total } = React.useMemo(() => {
+        const sorted = [...items].sort((a, b) => b.value - a.value);
+        const base = sorted[0].value;
+        let total = 0;
+        // Sum scaled values so even several near-maximum finite values stay drawable.
+        const ordered = sorted.map((item) => {
+            const part = item.value / base;
+            total += part;
+            return { item, part, cumulative: total };
+        });
+        return { ordered, base, total };
+    }, [items]);
+    const current = selection === undefined ? undefined : ordered[selection.index];
+    const active = current?.item === selection?.item ? current : undefined;
+    const suffix = component.valueSuffix === undefined ? '' : text(scope, component.valueSuffix);
+    const rawLabel = suffix === '' ? t('paretoValue') : `${t('paretoValue')} (${suffix})`;
+    const cumulativeLabel = t('paretoCumulative');
+    const title = component.caption === undefined ? t('paretoChart') : text(scope, component.caption) || t('paretoChart');
+    const fractions = [0, 0.25, 0.5, 0.75, 1];
+    const labels = paretoTickLabels(base, fractions.map((fraction) => total * fraction));
+    const ticks = fractions.map((fraction, index) => ({ fraction, label: labels[index] }));
+    const height = chartHeight(component, 250);
+    const left = Math.max(36, Math.max(...ticks.map((tick) => tick.label.length)) * 6 + 10);
+    const right = 40;
+    const plotHeight = height - PAD.top - PAD.bottom;
+    const plotWidth = width - left - right;
+    const band = plotWidth / items.length;
+    const barWidth = Math.min(72, band * 0.68);
+    const x = (index) => left + band * (index + 0.5);
+    const y = (fraction) => PAD.top + plotHeight * (1 - fraction);
+    const baseline = y(0);
+    const barColor = seriesColor(0, undefined);
+    const lineColor = seriesColor(1, undefined);
+    const labelEvery = Math.max(1, Math.ceil(60 / band));
+    const pickBar = (index) => {
+        const anchor = ref.current?.querySelector(`[data-pareto-bar="${index}"]`);
+        if (anchor)
+            setSelection({ index, item: ordered[index].item, anchor, keyboard: true });
+    };
+    const onKeyDown = (event) => {
+        const last = items.length - 1;
+        const index = active === undefined ? 0 : (selection?.index ?? 0);
+        const moves = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: last };
+        if (event.key === 'Escape') {
+            if (selection === undefined)
+                return;
+            event.stopPropagation();
+            setSelection(undefined);
+        }
+        else {
+            const next = moves[event.key];
+            if (typeof next !== 'number')
+                return;
+            pickBar(Math.max(0, Math.min(last, next)));
+        }
+        event.preventDefault();
+    };
+    const hover = (index) => interactive ? {
+        onPointerEnter: (event) => {
+            setSelection({ index, item: ordered[index].item, anchor: event.currentTarget, keyboard: false });
+        },
+        onPointerLeave: () => setSelection((current) => current?.keyboard ? current : undefined),
+        onClick: (event) => {
+            setSelection({ index, item: ordered[index].item, anchor: event.currentTarget, keyboard: false });
+        },
+    } : {};
+    const lines = active === undefined ? [] : [
+        active.item.label,
+        `${t('paretoValue')}: ${active.item.value}${suffix === '' ? '' : ` ${suffix}`}`,
+        `${cumulativeLabel}: ${trim(100 * active.cumulative / total)}%`,
+    ];
+    return h('div', { className: 'a2ui-chart-wrap a2ui-pareto' }, caption(scope, component), h('div', { className: 'a2ui-bar-plot a2ui-plot-frame', ref,
+        ...(interactive ? {
+            role: 'group', tabIndex: 0, 'aria-label': title, 'aria-describedby': id,
+            onFocus: () => pickBar(0), onBlur: () => setSelection(undefined), onKeyDown,
+        } : {}),
+    }, h('svg', { className: 'a2ui-chart-svg a2ui-axis', viewBox: `0 0 ${width} ${height}`,
+        role: 'img', 'aria-label': title, 'aria-hidden': interactive || undefined, style: { maxHeight: `${height}px` },
+    }, h('g', { className: 'a2ui-grid' }, ...ticks.map(({ fraction, label }) => h('g', { key: fraction }, h('line', { x1: left, x2: width - right, y1: y(fraction), y2: y(fraction) }), h('text', { x: left - 6, y: y(fraction) + 3.5, textAnchor: 'end', fontSize: 10 }, label), h('text', { x: width - right + 5, y: y(fraction) + 3.5, fontSize: 10 }, `${fraction * 100}%`)))), ...ordered.map(({ item, part }, index) => {
+        const top = y(part / total);
+        const labelSize = Math.max(2, Math.floor(Math.min(labelEvery * band, 2 * (x(index) - 3), 2 * (width - x(index) - 3), 88) / 11));
+        return h('g', { key: `bar${index}` }, h('rect', { 'data-pareto-bar': index, x: x(index) - barWidth / 2, width: barWidth,
+            y: Math.min(top, baseline - 1), height: Math.max(1, baseline - top), rx: 2,
+            fill: barColor, opacity: active === undefined || active === ordered[index] ? 0.92 : 0.55, ...hover(index),
+        }), index % labelEvery === 0 ? h('text', { x: x(index), y: height - 9, textAnchor: 'middle', fontSize: 10 }, visibleCategoryLabel(item.label, labelSize)) : null);
+    }), h('polyline', { 'data-pareto-line': '', points: ordered.map((row, index) => `${x(index)},${y(row.cumulative / total)}`).join(' '),
+        fill: 'none', stroke: lineColor, strokeWidth: 2, strokeLinejoin: 'round', pointerEvents: 'none',
+    }), ...ordered.map(({ cumulative }, index) => h('circle', {
+        key: `share${index}`, cx: x(index), cy: y(cumulative / total), r: Math.min(3.2, band * 0.3),
+        fill: lineColor, ...hover(index),
+    }))), interactive ? h('span', { id, className: 'a2ui-visually-hidden' }, t('paretoKeyboard')) : null, interactive ? h('span', { role: 'status', className: 'a2ui-visually-hidden' }, selection?.keyboard ? lines.join(' · ') : '') : null, selection && lines.length > 0 ? h(ChartTooltip, { anchor: selection.anchor, lines }) : null), h('div', { className: 'a2ui-caption a2ui-plot-key' }, h('span', null, h('span', { className: 'a2ui-legend-swatch', style: { background: barColor }, 'aria-hidden': true }), rawLabel), h('span', null, h('span', { className: 'a2ui-pareto-line-swatch', style: { color: lineColor }, 'aria-hidden': true }), cumulativeLabel)));
+}
+function ParetoChartView({ component, scope }) {
+    const t = scope.view.t;
+    const data = resolveParetoItems(component.items, resolveContext(scope), '/items');
+    if (data.kind !== 'ready') {
+        return emptyChart(scope, component, t(data.kind === 'pending' && scope.view.streaming ? 'displayWaiting' : 'displayInvalid'));
+    }
+    if (data.value.length === 0)
+        return emptyChart(scope, component, t('chartEmpty'));
+    if (data.value.every((item) => item.value === 0))
+        return emptyChart(scope, component, t('paretoZeroTotal'));
+    return h(ParetoPlot, { scope, component, items: data.value });
 }
 function LineChartView(props) {
     return renderLineChart(props.scope, props.component);
@@ -6255,9 +7461,48 @@ function PieChartView(props) {
     return renderPieChart(props.scope, props.component);
 }
 function PlotView(props) {
-    return renderPlot(props.scope, props.component);
+    const { component, scope } = props;
+    const responsive = Array.isArray(component.plots)
+        && component.plots.some((plot) => isPlainObject(plot) && (plot.kind === 'scatter' || plot.points !== undefined));
+    const variables = readPlotVariables(scope, component.variables);
+    const ranges = !scope.view.streaming && (component.yMin === undefined || component.yMax === undefined)
+        ? plotSliderRanges(scope, component.variables, variables)
+        : [];
+    const rangeKey = ranges.length === 0 || ranges.length > 2 ? '' : JSON.stringify({
+        ranges,
+        fixed: Object.fromEntries(Object.entries(variables).filter(([name]) => !ranges.some((range) => range.name === name))),
+    });
+    const extent = React.useMemo(() => {
+        if (rangeKey === '')
+            return undefined;
+        const input = JSON.parse(rangeKey);
+        return linkedPlotExtent(component, input.fixed, input.ranges);
+    }, [component, rangeKey]);
+    const ref = React.useRef(null);
+    const width = useChartWidth(ref, responsive);
+    const [hidden, setHidden] = React.useState(() => new Set());
+    const toggle = (index) => {
+        setHidden((current) => {
+            const next = new Set(current);
+            if (next.has(index))
+                next.delete(index);
+            else
+                next.add(index);
+            return next;
+        });
+    };
+    const content = renderPlot(scope, component, {
+        width: responsive ? width : VIEW_WIDTH,
+        variables,
+        linkedExtent: extent,
+        ...(responsive && !scope.view.streaming ? { hidden, onToggle: toggle } : {}),
+    });
+    return responsive ? h('div', { ref, className: 'a2ui-plot' }, content) : content;
 }
 
+exports["seriesColor"] = seriesColor;
+exports["caption"] = caption;
+exports["emptyChart"] = emptyChart;
 exports["barDomain"] = barDomain;
 exports["splitPlotSegments"] = splitPlotSegments;
 exports["renderBarChart"] = renderBarChart;
@@ -6265,9 +7510,499 @@ exports["renderLineChart"] = renderLineChart;
 exports["renderPieChart"] = renderPieChart;
 exports["renderPlot"] = renderPlot;
 exports["BarChartView"] = BarChartView;
+exports["useChartWidth"] = useChartWidth;
+exports["ParetoChartView"] = ParetoChartView;
 exports["LineChartView"] = LineChartView;
 exports["PieChartView"] = PieChartView;
 exports["PlotView"] = PlotView;
+};
+__registry["./client/radar.js"] = function(module, exports, require) {
+const React = require("react");
+const { isPlainObject } = require("./shared/json.js");
+const { axisFraction } = require("./shared/plot-data.js");
+const { resolveRadarData } = require("./shared/display-data.js");
+const { caption, emptyChart, seriesColor, useChartWidth } = require("./client/charts.js");
+const { ChartTooltip } = require("./client/chart-tooltip.js");
+const { accessibilityAttributes, resolveContext, text } = require("./client/context.js");
+const { h } = require("./client/h.js");
+const dashPatterns = ['', '7 4', '2 4', '10 4 2 4', '4 3', '10 5', '2 3 6 3', '4 3 1 3'];
+const rings = [0.25, 0.5, 0.75, 1];
+function labelWidth(value) {
+    let width = 0;
+    for (const character of value) {
+        if (character.charCodeAt(0) >= 128)
+            width += 14;
+        else if (/[MW@%&mw]/u.test(character))
+            width += 13;
+        else if (/[A-Z]/u.test(character))
+            width += 10;
+        else
+            width += 8;
+    }
+    return width;
+}
+function radarLayout(axes, width, height) {
+    const center = { x: width / 2, y: height / 2 };
+    const directions = axes.map((_, index) => {
+        const angle = 2 * Math.PI * index / axes.length - Math.PI / 2;
+        return { x: Math.cos(angle), y: Math.sin(angle) };
+    });
+    const at = (index, distance) => ({
+        x: center.x + distance * directions[index].x,
+        y: center.y + distance * directions[index].y,
+    });
+    const makeLabels = (radius, names) => names.map((text, index) => {
+        const point = at(index, radius + 15);
+        const direction = directions[index].x;
+        const align = direction > 0.18 ? 'start' : direction < -0.18 ? 'end' : 'middle';
+        const size = labelWidth(text);
+        const left = point.x - (align === 'start' ? 0 : align === 'end' ? size : size / 2);
+        return { ...point, text, align, left, right: left + size };
+    });
+    const directRadius = Math.min(width / 2 - 56, height / 2 - 35);
+    const directLabels = makeLabels(directRadius, axes);
+    // When label boxes would collide, keep their full names in an ordered key.
+    const numbered = directLabels.some((label, index) => {
+        if (label.left < 8 || label.right > width - 8)
+            return true;
+        return directLabels.slice(0, index).some((other) => (Math.abs(other.y - label.y) < 20 && other.left < label.right + 7 && label.left < other.right + 7));
+    });
+    const radius = numbered ? Math.min(width / 2 - 37, height / 2 - 35) : directRadius;
+    return {
+        at, radius, center, numbered,
+        labels: numbered ? makeLabels(radius, axes.map((_, index) => String(index + 1))) : directLabels,
+    };
+}
+function hitAxis(target) {
+    return target?.closest?.('[data-radar-axis]') ?? undefined;
+}
+function pointList(points) {
+    return points.map(({ x, y }) => `${x},${y}`).join(' ');
+}
+function RadarPlot({ component, scope, data }) {
+    const { axes, scores, min, max } = data;
+    const t = scope.view.t;
+    const interactive = !scope.view.streaming;
+    const id = React.useId();
+    const frame = React.useRef(null);
+    const pointerType = React.useRef('');
+    const availableWidth = useChartWidth(frame, true, 0);
+    const width = Math.max(240, availableWidth);
+    const height = typeof component.height === 'number' ? component.height : 316;
+    const [hidden, setHidden] = React.useState(() => new Set());
+    const [selected, setSelected] = React.useState();
+    const definitions = Array.isArray(component.series) ? component.series : [];
+    const series = scores.map((values, index) => {
+        const raw = definitions[index];
+        const definition = isPlainObject(raw) ? raw : {};
+        return {
+            index, values,
+            label: (definition.label === undefined ? '' : text(scope, definition.label)) || `${t('series')} ${index + 1}`,
+            color: seriesColor(index, definition.color),
+            dash: dashPatterns[index],
+            missing: values.filter((score) => score === null).length,
+        };
+    });
+    const visible = series.filter((entry) => !hidden.has(entry.index));
+    const { at, radius, center, numbered, labels } = radarLayout(axes, width, height);
+    const selectedSeries = selected?.anchor.getAttribute('data-radar-series');
+    const active = selected !== undefined && axes[selected.index] !== undefined && visible.length > 0
+        && (selectedSeries == null || scores[Number(selectedSeries)]?.[selected.index] != null) ? selected : undefined;
+    const header = component.caption === undefined ? '' : text(scope, component.caption);
+    const accessibility = accessibilityAttributes(scope, component);
+    const title = accessibility['aria-label'] || header || t('radarChart');
+    const scale = t('radarScale').replace('{min}', String(min)).replace('{max}', String(max));
+    const readout = active === undefined ? [] : [axes[active.index], ...visible.map((entry) => (`${entry.label}: ${entry.values[active.index] ?? t('radarMissing')}`))];
+    const readoutWidth = Math.max(1, Math.min(256, availableWidth - 38));
+    const estimatedLines = readout.flatMap((line) => line.split(/\r?\n/u))
+        .reduce((count, line) => count + Math.max(1, Math.ceil(labelWidth(line) / readoutWidth)), 0);
+    const showInlineReadout = estimatedLines * 18 + 20 > height * (availableWidth / width) - 36;
+    const select = (anchor, mode) => {
+        setSelected({ anchor, mode, index: Number(anchor.getAttribute('data-radar-axis')) });
+    };
+    const selectLabel = (index) => {
+        const anchor = frame.current?.querySelector(`[data-radar-label="${index}"]`);
+        if (anchor)
+            select(anchor, 'keyboard');
+    };
+    const onKeyDown = (event) => {
+        if (visible.length === 0)
+            return;
+        const count = axes.length;
+        const index = active?.index;
+        let next;
+        switch (event.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+                next = index === undefined ? 0 : (index + 1) % count;
+                break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+                next = index === undefined ? count - 1 : (index - 1 + count) % count;
+                break;
+            case 'Home':
+                next = 0;
+                break;
+            case 'End':
+                next = count - 1;
+                break;
+            case 'Escape':
+                if (selected === undefined)
+                    return;
+                event.preventDefault();
+                event.stopPropagation();
+                setSelected(undefined);
+                return;
+            default: return;
+        }
+        event.preventDefault();
+        selectLabel(next);
+    };
+    const toggle = (index) => {
+        setSelected(undefined);
+        setHidden((current) => {
+            const next = new Set(current);
+            if (next.has(index))
+                next.delete(index);
+            else
+                next.add(index);
+            return next;
+        });
+    };
+    return h('div', { className: 'a2ui-chart-wrap a2ui-radar' }, caption(scope, component), h('div', { className: 'a2ui-radar-frame a2ui-plot-frame', ref: frame,
+        ...(interactive ? {
+            role: 'group', tabIndex: 0, ...accessibility, 'aria-label': title, 'aria-describedby': `${id}-scale ${id}-keys`,
+            onFocus: () => selectLabel(0),
+            onBlur: () => setSelected(undefined),
+            onKeyDown,
+            onPointerDown: (event) => { pointerType.current = event.pointerType; },
+            onPointerCancel: () => { pointerType.current = ''; },
+            onPointerOver: (event) => {
+                const hit = hitAxis(event.target);
+                if (event.pointerType !== 'touch' && hit && hit !== hitAxis(event.relatedTarget))
+                    select(hit, 'hover');
+            },
+            onPointerOut: (event) => {
+                if (event.pointerType === 'touch')
+                    return;
+                const hit = hitAxis(event.target);
+                if (hit === undefined || hit === hitAxis(event.relatedTarget))
+                    return;
+                setSelected((current) => current?.mode === 'hover' && current.anchor === hit ? undefined : current);
+            },
+            onClick: (event) => {
+                const native = event.nativeEvent;
+                const kind = ('pointerType' in native && native.pointerType) || pointerType.current;
+                pointerType.current = '';
+                const hit = hitAxis(event.target);
+                if (hit)
+                    select(hit, kind === 'touch' ? 'touch' : 'hover');
+                else
+                    setSelected(undefined);
+            },
+        } : {}),
+    }, h('svg', { className: 'a2ui-chart-svg a2ui-axis', viewBox: `0 0 ${width} ${height}`,
+        role: 'img', 'aria-label': title, 'aria-hidden': interactive || undefined, style: { maxHeight: `${height}px` },
+    }, h('g', { className: 'a2ui-radar-grid', fill: 'none', 'aria-hidden': true }, ...rings.map((fraction) => h('polygon', { key: fraction, points: pointList(axes.map((_, index) => at(index, radius * fraction))) })), ...axes.map((_, index) => {
+        const end = at(index, radius);
+        return h('line', { key: `axis${index}`, x1: center.x, y1: center.y, x2: end.x, y2: end.y,
+            className: active?.index === index ? 'a2ui-radar-spoke-active' : undefined });
+    })), ...visible.map((entry) => {
+        const marks = entry.values.map((score, index) => score === null ? null : at(index, radius * axisFraction(score, min, max)));
+        const plotted = marks.filter((point) => point !== null);
+        const complete = plotted.length === marks.length;
+        const edges = complete ? '' : marks.map((point, index) => {
+            const next = marks[(index + 1) % marks.length];
+            return point && next ? `M${point.x},${point.y}L${next.x},${next.y}` : '';
+        }).join('');
+        const outline = { stroke: entry.color, strokeWidth: 2, strokeDasharray: entry.dash || undefined, strokeLinejoin: 'round', pointerEvents: 'none' };
+        return h('g', { key: `series${entry.index}`, 'data-radar-series-group': entry.index }, complete ? h('polygon', { ...outline, 'data-radar-profile': '', points: pointList(plotted), fill: entry.color, fillOpacity: 0.1 })
+            : edges !== '' ? h('path', { ...outline, 'data-radar-gap-path': '', d: edges, fill: 'none' }) : null, ...marks.map((point, index) => point === null ? null : h('circle', {
+            key: index, 'data-radar-axis': index, 'data-radar-series': entry.index,
+            cx: point.x, cy: point.y, r: active?.index === index ? 4 : 3,
+            fill: entry.color, stroke: 'transparent', strokeWidth: 9,
+        })));
+    }), ...labels.map((label, index) => h('g', {
+        key: `label${index}`, 'data-radar-label': index, 'data-radar-axis': index,
+        className: active?.index === index ? 'a2ui-radar-label-active' : undefined,
+    }, h('rect', { x: label.left - 4, y: label.y - 10, width: label.right - label.left + 8, height: 20, rx: 5 }), h('text', { x: label.x, y: label.y + 4, textAnchor: label.align, fontSize: 12, pointerEvents: 'none' }, label.text)))), interactive ? h('span', { id: `${id}-keys`, className: 'a2ui-visually-hidden' }, t('radarKeyboard')) : null, interactive ? h('span', { role: 'status', className: 'a2ui-visually-hidden' }, active?.mode !== 'hover' ? readout.join(' · ') : '') : null, active && !showInlineReadout ? h(ChartTooltip, { anchor: active.anchor, lines: readout }) : null), h('p', { id: `${id}-scale`, className: 'a2ui-caption a2ui-radar-scale' }, scale), numbered ? h('ol', { className: 'a2ui-radar-axis-key', 'aria-label': t('radarAxes') }, ...axes.map((label, index) => h('li', { key: index }, h('span', { className: 'a2ui-radar-axis-number', 'aria-hidden': true }, index + 1), h('span', null, label)))) : null, h('div', { className: 'a2ui-legend a2ui-radar-legend' }, ...series.map((entry) => {
+        const swatch = h('svg', { className: 'a2ui-radar-swatch', viewBox: '0 0 23 8', 'aria-hidden': true }, h('line', { x1: 0, x2: 23, y1: 4, y2: 4, stroke: entry.color, strokeWidth: 2, strokeDasharray: entry.dash || undefined }));
+        const name = entry.missing === 0 ? entry.label : `${entry.label} · ${t('radarMissingCount').replace('{count}', String(entry.missing))}`;
+        return interactive ? h('button', {
+            key: entry.index, type: 'button', className: `a2ui-legend-item${hidden.has(entry.index) ? ' a2ui-legend-off' : ''}`,
+            'aria-pressed': !hidden.has(entry.index), onClick: () => toggle(entry.index),
+        }, swatch, h('span', null, name)) : h('span', { key: entry.index, className: 'a2ui-legend-item' }, swatch, h('span', null, name));
+    })), visible.length === 0 ? h('p', { className: 'a2ui-caption' }, t('radarAllHidden')) : null, active && showInlineReadout ? h('div', { className: 'a2ui-caption a2ui-radar-readout' }, ...readout.map((line, index) => h(index === 0 ? 'strong' : 'span', { key: index }, line))) : null);
+}
+function RadarChartView({ component, scope }) {
+    const data = resolveRadarData(component, resolveContext(scope), '');
+    if (data.kind !== 'ready') {
+        return emptyChart(scope, component, scope.view.t(data.kind === 'pending' && scope.view.streaming ? 'displayWaiting' : 'displayInvalid'));
+    }
+    return h(RadarPlot, { component, scope, data: data.value });
+}
+
+exports["RadarChartView"] = RadarChartView;
+};
+__registry["./client/display.js"] = function(module, exports, require) {
+const React = require("react");
+const { resolveHeatmapData, resolveTimelineEvents } = require("./shared/display-data.js");
+const { ChartTooltip } = require("./client/chart-tooltip.js");
+const { accessibilityAttributes, fallback, resolveContext, text } = require("./client/context.js");
+const { h } = require("./client/h.js");
+const baseColor = 'var(--a2ui-heat-base)';
+const highColor = 'var(--a2ui-heat-high)';
+const lowColor = 'var(--a2ui-heat-low)';
+function colorRange(values, component) {
+    const numbers = values.flat().filter((value) => value !== null);
+    if (numbers.length === 0)
+        return undefined;
+    const diverging = component.scale === 'diverging';
+    if (typeof component.min === 'number' && typeof component.max === 'number') {
+        return { min: component.min, max: component.max, diverging };
+    }
+    const min = Math.min(...numbers);
+    const max = Math.max(...numbers);
+    if (!diverging || min === max)
+        return { min, max, diverging };
+    const magnitude = Math.max(Math.abs(min), Math.abs(max));
+    return { min: -magnitude, max: magnitude, diverging };
+}
+function cellColor(value, range) {
+    let intensity = 0.6;
+    let target = highColor;
+    if (range.diverging) {
+        target = value < 0 ? lowColor : highColor;
+        intensity = value === 0 ? 0 : range.min === range.max ? 0.6 : value / (value < 0 ? range.min : range.max);
+    }
+    else if (range.min !== range.max) {
+        const span = range.max - range.min;
+        intensity = Number.isFinite(span)
+            ? (value - range.min) / span
+            : (value / 2 - range.min / 2) / (range.max / 2 - range.min / 2);
+    }
+    const percent = Math.round(Math.max(0, Math.min(1, intensity)) * 100);
+    return `color-mix(in oklab, ${target} ${percent}%, ${baseColor})`;
+}
+function withUnit(value, unit) {
+    return unit === '' ? String(value) : `${value} ${unit}`;
+}
+function cellTarget(target) {
+    return target?.closest?.('td[data-heat-cell]') ?? undefined;
+}
+function cellPosition(cell) {
+    return { row: Number(cell.dataset.heatRow), column: Number(cell.dataset.heatColumn) };
+}
+function HeatmapGrid({ component, data, scope }) {
+    const { view } = scope;
+    const t = view.t;
+    const interactive = !view.streaming;
+    const { rowLabels, columnLabels, values } = data;
+    const unit = component.unit === undefined ? '' : text(scope, component.unit);
+    const caption = component.caption === undefined ? '' : text(scope, component.caption);
+    const range = React.useMemo(() => colorRange(values, component), [values, component]);
+    const scrollRef = React.useRef(null);
+    const tableRef = React.useRef(null);
+    const cornerRef = React.useRef(null);
+    const clickPointer = React.useRef('');
+    const id = React.useId();
+    const [cursor, setCursor] = React.useState({ row: 0, column: 0 });
+    const [selected, setSelected] = React.useState();
+    const activeRow = Math.min(cursor.row, rowLabels.length - 1);
+    const activeColumn = Math.min(cursor.column, columnLabels.length - 1);
+    React.useEffect(() => {
+        const scroller = scrollRef.current;
+        const table = tableRef.current;
+        if (!scroller || !table)
+            return;
+        const header = table.rows[0];
+        const first = header.cells[1];
+        const body = table.tBodies[0];
+        const firstRow = body?.rows[0];
+        if (!first || !body || !firstRow)
+            return;
+        let rtl = false;
+        const onScroll = () => {
+            const x = Math.max(0, rtl ? -scroller.scrollLeft : scroller.scrollLeft);
+            const y = Math.max(0, scroller.scrollTop);
+            table.style.setProperty('--a2ui-heat-scroll-x', `${x}px`);
+            table.style.setProperty('--a2ui-heat-scroll-y', `${y}px`);
+            table.toggleAttribute('data-heat-scrolled', x > 0);
+            table.toggleAttribute('data-heat-scrolled-y', y > 0);
+        };
+        const measure = () => {
+            rtl = table.ownerDocument.defaultView?.getComputedStyle(table).direction === 'rtl';
+            table.toggleAttribute('data-heat-rtl', rtl);
+            const start = (cell) => rtl ? -cell.offsetLeft - cell.offsetWidth : cell.offsetLeft;
+            const firstStart = start(first);
+            // Cache positions in table coordinates and update only the offsets on scroll.
+            const offsets = Array.from(header.cells, (cell) => `${start(cell) - firstStart}px`);
+            for (const row of table.rows) {
+                for (let i = 1; i < row.cells.length; i++)
+                    row.cells[i].style.setProperty('--a2ui-heat-column-x', offsets[i]);
+            }
+            const firstTop = firstRow.offsetTop;
+            for (const row of body.rows)
+                row.style.setProperty('--a2ui-heat-row-y', `${row.offsetTop - firstTop}px`);
+            scroller.style.setProperty('--a2ui-heat-header-size', `${header.offsetHeight}px`);
+            onScroll();
+        };
+        measure();
+        scroller.addEventListener('scroll', onScroll, { passive: true });
+        const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+        observer?.observe(table);
+        observer?.observe(header);
+        return () => {
+            observer?.disconnect();
+            scroller.removeEventListener('scroll', onScroll);
+        };
+    }, [rowLabels, columnLabels]);
+    const select = (cell, mode) => {
+        const position = cellPosition(cell);
+        setSelected({ anchor: cell, ...position, mode });
+        if (mode !== 'hover')
+            setCursor(position);
+    };
+    const onKeyDown = (event) => {
+        const cell = cellTarget(event.target);
+        if (cell === undefined)
+            return;
+        const position = cellPosition(cell);
+        let { row, column } = position;
+        switch (event.key) {
+            case 'ArrowUp':
+                row -= 1;
+                break;
+            case 'ArrowDown':
+                row += 1;
+                break;
+            case 'ArrowLeft':
+                column -= 1;
+                break;
+            case 'ArrowRight':
+                column += 1;
+                break;
+            case 'Home':
+                column = 0;
+                break;
+            case 'End':
+                column = columnLabels.length - 1;
+                break;
+            case 'Escape':
+                if (selected === undefined)
+                    return;
+                event.preventDefault();
+                event.stopPropagation();
+                setSelected(undefined);
+                return;
+            default: return;
+        }
+        event.preventDefault();
+        row = Math.max(0, Math.min(rowLabels.length - 1, row));
+        column = Math.max(0, Math.min(columnLabels.length - 1, column));
+        const next = event.currentTarget.querySelector(`td[data-heat-row="${row}"][data-heat-column="${column}"]`);
+        if (next) {
+            next.focus({ preventScroll: true });
+            next.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+        }
+    };
+    const body = React.useMemo(() => values.map((row, rowIndex) => h('tr', { key: rowIndex }, h('th', { scope: 'row' }, rowLabels[rowIndex]), ...row.map((value, columnIndex) => {
+        const missing = value === null;
+        const description = missing ? t('heatmapMissing') : withUnit(value, unit);
+        return h('td', {
+            key: columnIndex,
+            className: missing ? 'a2ui-heat-missing' : undefined,
+            'data-heat-cell': '',
+            'data-heat-row': rowIndex,
+            'data-heat-column': columnIndex,
+            'aria-label': `${rowLabels[rowIndex]} · ${columnLabels[columnIndex]} · ${description}`,
+            tabIndex: interactive ? (rowIndex === activeRow && columnIndex === activeColumn ? 0 : -1) : undefined,
+            style: value !== null && range !== undefined ? { backgroundColor: cellColor(value, range) } : undefined,
+        }, missing ? h('span', { 'aria-hidden': true }, '—') : null);
+    }))), [values, rowLabels, columnLabels, t, unit, interactive, activeRow, activeColumn, range]);
+    const reading = selected === undefined ? undefined : values[selected.row]?.[selected.column];
+    const lines = selected === undefined || reading === undefined ? [] : [
+        `${rowLabels[selected.row]} · ${columnLabels[selected.column]}`,
+        reading === null ? t('heatmapMissing') : withUnit(reading, unit),
+    ];
+    if (reading != null && range !== undefined && (reading < range.min || reading > range.max))
+        lines.push(t('heatmapOutsideScale'));
+    const showScale = range !== undefined && range.min !== range.max;
+    const colorStops = range?.diverging ? [lowColor, baseColor, highColor] : [baseColor, highColor];
+    return h('figure', { className: 'a2ui-chart-wrap a2ui-heatmap', ...accessibilityAttributes(scope, component) }, caption === '' ? null : h('figcaption', { className: 'a2ui-caption' }, caption), interactive ? h('span', { id, className: 'a2ui-visually-hidden' }, t('heatmapKeyboard')) : null, h('div', { className: 'a2ui-heatmap-scroll', ref: scrollRef }, h('table', {
+        className: 'a2ui-heatmap-table',
+        ref: tableRef,
+        'aria-label': caption || t('heatmap'),
+        'aria-describedby': interactive ? id : undefined,
+        ...(interactive ? {
+            onFocus: (event) => {
+                const cell = cellTarget(event.target);
+                if (cell !== undefined)
+                    select(cell, 'focus');
+            },
+            onBlur: (event) => {
+                if (!event.currentTarget.contains(event.relatedTarget))
+                    setSelected(undefined);
+            },
+            onKeyDown,
+            onPointerDown: (event) => {
+                clickPointer.current = event.pointerType;
+            },
+            onPointerCancel: () => { clickPointer.current = ''; },
+            onClick: (event) => {
+                const nativeEvent = event.nativeEvent;
+                const pointerType = ('pointerType' in nativeEvent && nativeEvent.pointerType) || clickPointer.current;
+                clickPointer.current = '';
+                const cell = cellTarget(event.target);
+                if (cell === undefined)
+                    setSelected(undefined);
+                else
+                    select(cell, pointerType === 'touch' ? 'touch' : 'hover');
+            },
+            onPointerOver: (event) => {
+                const cell = cellTarget(event.target);
+                if (cell !== undefined && event.pointerType !== 'touch' && cell !== cellTarget(event.relatedTarget))
+                    select(cell, 'hover');
+            },
+            onPointerOut: (event) => {
+                if (event.pointerType === 'touch')
+                    return;
+                const cell = cellTarget(event.target);
+                if (cell === undefined || cell === cellTarget(event.relatedTarget))
+                    return;
+                setSelected((current) => current?.mode === 'hover' && current.anchor === cell ? undefined : current);
+            },
+        } : {}),
+    }, h('thead', null, h('tr', null, h('td', { className: 'a2ui-heat-corner', ref: cornerRef, 'aria-hidden': true }), ...columnLabels.map((label, index) => h('th', { key: index, scope: 'col' }, label)))), h('tbody', null, ...body))), h('div', { className: 'a2ui-heat-legend a2ui-caption' }, showScale ? h('div', { className: 'a2ui-heat-scale', 'aria-label': t('heatmapScale') }, h('div', { className: 'a2ui-heat-ramp', style: { backgroundImage: `linear-gradient(to right in oklab, ${colorStops.join(',')})` }, 'aria-hidden': true }), h('div', { className: 'a2ui-heat-ticks' }, h('span', null, withUnit(range.min, unit)), range.diverging ? h('span', null, withUnit(0, unit)) : null, h('span', null, withUnit(range.max, unit)))) : range === undefined
+        ? h('span', null, t('heatmapNoValues'))
+        : h('span', { className: 'a2ui-heat-key' }, h('span', { className: 'a2ui-heat-chip', style: { backgroundColor: cellColor(range.min, range) }, 'aria-hidden': true }), withUnit(range.min, unit)), values.some((row) => row.includes(null)) ? h('span', { className: 'a2ui-heat-key' }, h('span', { className: 'a2ui-heat-chip a2ui-heat-missing', 'aria-hidden': true }), t('heatmapMissing')) : null), selected !== undefined && lines.length > 0
+        ? h(ChartTooltip, { anchor: selected.anchor, lines, viewport: scrollRef.current ?? undefined,
+            viewportStartCorner: cornerRef.current ?? undefined })
+        : null);
+}
+function HeatmapView({ component, scope }) {
+    const data = resolveHeatmapData(component, resolveContext(scope), '');
+    if (data.kind !== 'ready') {
+        return fallback(scope, scope.view.streaming && data.kind === 'pending' ? scope.view.t('displayWaiting') : scope.view.t('displayInvalid'));
+    }
+    if (data.units === 0)
+        return fallback(scope, scope.view.t('heatmapEmpty'));
+    return h(HeatmapGrid, { component, scope, data: data.value });
+}
+function TimelineView({ component, scope }) {
+    const t = scope.view.t;
+    const events = resolveTimelineEvents(component.events, resolveContext(scope), '/events');
+    if (events.kind !== 'ready') {
+        return fallback(scope, scope.view.streaming && events.kind === 'pending' ? t('displayWaiting') : t('displayInvalid'));
+    }
+    if (events.units === 0)
+        return fallback(scope, t('timelineEmpty'));
+    const caption = component.caption === undefined ? '' : text(scope, component.caption);
+    return h('div', { className: 'a2ui-timeline', ...accessibilityAttributes(scope, component) }, caption === '' ? null : h('p', { className: 'a2ui-caption' }, caption), h('ol', { className: 'a2ui-timeline-list', 'aria-label': caption || t('timeline') }, ...events.value.map((event, index) => h('li', { className: 'a2ui-timeline-item', key: index }, h('span', { className: 'a2ui-timeline-when' }, event.when), h('span', { className: 'a2ui-timeline-track', 'aria-hidden': true }, h('span', { className: 'a2ui-timeline-dot' })), h('div', { className: 'a2ui-timeline-content' }, h('div', { className: 'a2ui-timeline-head' }, h('span', { className: 'a2ui-timeline-title' }, event.title), event.status === undefined ? null : h('span', { className: `a2ui-timeline-status a2ui-timeline-${event.status}` }, t(`timelineStatus-${event.status}`))), event.description ? h('p', { className: 'a2ui-timeline-description' }, event.description) : null)))));
+}
+
+exports["HeatmapView"] = HeatmapView;
+exports["TimelineView"] = TimelineView;
 };
 __registry["./client/player.js"] = function(module, exports, require) {
 /**
@@ -6393,7 +8128,9 @@ const { safeMediaUrl, safeSvgPath } = require("./shared/url.js");
 const { accessibilityAttributes, anyValue, fallback, numberValue, templateItems, text, weightStyle } = require("./client/context.js");
 const { renderText } = require("./client/markdown.js");
 const { renderButton, CheckBoxView, ChoicePickerView, DateTimeInputView, SliderView, TextFieldView } = require("./client/fields.js");
-const { BarChartView, LineChartView, PieChartView, PlotView } = require("./client/charts.js");
+const { BarChartView, LineChartView, ParetoChartView, PieChartView, PlotView } = require("./client/charts.js");
+const { RadarChartView } = require("./client/radar.js");
+const { HeatmapView, TimelineView } = require("./client/display.js");
 const { FramePlayerView } = require("./client/player.js");
 const JUSTIFY = {
     start: 'flex-start',
@@ -6566,6 +8303,11 @@ function ComponentNode(props) {
             return wrap(h('div', { className: 'a2ui-row', style: layoutStyle(component, 'row'), ...a11y }, ...renderChildren(scope, component, depth)));
         case 'Column':
             return wrap(h('div', { className: 'a2ui-stack', style: layoutStyle(component, 'column'), ...a11y }, ...renderChildren(scope, component, depth)));
+        case 'Section': {
+            const title = text(scope, component.title);
+            const description = component.description === undefined ? '' : text(scope, component.description);
+            return wrap(h('section', { className: 'a2ui-section', ...a11y }, title === '' && description === '' ? null : h('header', { className: 'a2ui-section-head' }, title === '' ? null : h('h3', { className: 'a2ui-section-title' }, title), description === '' ? null : h('p', { className: 'a2ui-caption' }, description)), ...renderChildren(scope, component, depth)));
+        }
         case 'List':
             return wrap(h('div', {
                 className: 'a2ui-list',
@@ -6608,12 +8350,20 @@ function ComponentNode(props) {
             return wrap(renderProgress(scope, component));
         case 'BarChart':
             return wrap(h(BarChartView, { component, scope }));
+        case 'ParetoChart':
+            return wrap(h(ParetoChartView, { component, scope }));
+        case 'RadarChart':
+            return wrap(h(RadarChartView, { component, scope }));
         case 'LineChart':
             return wrap(h(LineChartView, { component, scope }));
         case 'PieChart':
             return wrap(h(PieChartView, { component, scope }));
         case 'Plot':
             return wrap(h(PlotView, { component, scope }));
+        case 'Heatmap':
+            return wrap(h(HeatmapView, { component, scope }));
+        case 'Timeline':
+            return wrap(h(TimelineView, { component, scope }));
         case 'FramePlayer':
             return wrap(h(FramePlayerView, { component, scope }));
         default:
@@ -7182,6 +8932,7 @@ function readPayload(props) {
         return {
             messages: meta.messages,
             title: typeof meta.title === 'string' ? meta.title : undefined,
+            presentation: meta.presentation,
             origin: 'meta',
         };
     }
@@ -7193,6 +8944,7 @@ function readPayload(props) {
             return {
                 messages: record.messages,
                 title: typeof record.title === 'string' ? record.title : undefined,
+                presentation: record.presentation,
                 origin: 'args',
             };
         }
@@ -7206,7 +8958,7 @@ function analyse(payload) {
     if (payload.messages.length === 0) {
         return { ok: true, errors: [], warnings: [], surfaces: [], updatedOnly: [], deleted: [] };
     }
-    const validation = validateToolArguments({ messages: payload.messages });
+    const validation = validateToolArguments({ messages: payload.messages, presentation: payload.presentation });
     if (!validation.ok) {
         return { ok: false, errors: validation.errors, warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] };
     }
@@ -7227,7 +8979,7 @@ function analyse(payload) {
             // foreign payload from expanding into a huge tree.
             const estimate = estimateExpansion(state);
             if (estimate.reason !== undefined) {
-                return { ok: false, errors: [{ path: `/surfaces/${touch.surfaceId}`, message: estimate.reason }], warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] };
+                return { ok: false, errors: [{ path: `/surfaces/${touch.surfaceId}${estimate.path ?? ''}`, message: estimate.reason }], warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] };
             }
             surfaces.push({ state, created: true, componentCount: state.components.size });
         }
@@ -7321,7 +9073,10 @@ function StreamingCard(props) {
     const bodies = props.surfaces.length === 0
         ? [h('div', { key: 'skeleton', className: 'a2ui-stack' }, Skeleton())]
         : props.surfaces.map((state) => h('div', { key: state.surfaceId, className: 'a2ui-stack' }, props.surfaces.length > 1 ? h('span', { className: 'a2ui-caption' }, state.surfaceId) : null, h(A2UISurface, { view: view(state) })));
-    return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true }, h('div', { className: 'a2ui-card-head' }, sparkle('a2ui-card-spark'), h('span', { className: 'a2ui-card-title' }, props.title), h('span', { className: 'a2ui-card-state' }, props.t('streaming'))), h('div', { className: 'a2ui-card-body', ref: bodyRef }, h(previewBoundary(), { text: props.text }, h('div', { className: 'a2ui-stack' }, ...bodies)))));
+    return h('div', { className: 'a2ui-root' }, h('div', {
+        className: props.compactPresentation ? 'a2ui-compact a2ui-card-streaming' : 'a2ui-card a2ui-card-streaming',
+        'aria-busy': true,
+    }, h('div', { className: props.compactPresentation ? 'a2ui-compact-head' : 'a2ui-card-head' }, props.compactPresentation ? null : sparkle('a2ui-card-spark'), props.title === undefined ? null : h('span', { className: 'a2ui-card-title' }, props.title), h('span', { className: 'a2ui-card-state' }, props.t('streaming'))), h('div', { className: props.compactPresentation ? 'a2ui-compact-body' : 'a2ui-card-body', ref: bodyRef }, h(previewBoundary(), { text: props.text }, h('div', { className: 'a2ui-stack' }, ...bodies)))));
 }
 /** Build the user message that carries an A2UI action to the agent. */
 { const __reexport = require("./client/action.js"); exports["formatActionPrompt"] = __reexport["formatActionPrompt"]; }
@@ -7451,9 +9206,11 @@ function A2UIToolView(props) {
     // already closed, never turns into an error notice (a half-written payload is
     // unfinished, not wrong) and never lets a control be operated.
     if (preparing) {
+        const compactPresentation = streamed?.presentation === 'compact';
         return h(StreamingCard, {
             callId: props.callId,
-            title: streamed?.title ?? t('rendering'),
+            title: streamed?.title ?? (compactPresentation ? undefined : t('rendering')),
+            compactPresentation,
             surfaces: streamed === undefined || streamed.stopped ? [] : streamed.surfaces,
             text: streamedText ?? '',
             locale,
@@ -7505,6 +9262,10 @@ function A2UIToolView(props) {
     if (mode === 'row' && compact && analysis.surfaces.length > 0) {
         const count = analysis.surfaces.reduce((total, surface) => total + surface.componentCount, 0);
         return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-pointer' }, sparkle('a2ui-pointer-icon'), h('span', { className: 'a2ui-pointer-text' }, payload.title ?? t('title')), h('span', { className: 'a2ui-pointer-meta' }, `${count} · ${t('atTurnTail')}`)));
+    }
+    if (payload.presentation === 'compact' && analysis.surfaces.length > 0) {
+        const title = payload.title?.trim();
+        return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-compact' }, title ? h('div', { className: 'a2ui-compact-head' }, h('span', { className: 'a2ui-card-title' }, title)) : null, h('div', { className: 'a2ui-compact-body a2ui-stack' }, ...bodies)));
     }
     return h('div', { className: 'a2ui-root' }, h('div', { className: 'a2ui-card' }, header, h('div', { className: 'a2ui-card-body' }, h('div', { className: 'a2ui-stack' }, ...bodies))));
 }

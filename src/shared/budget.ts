@@ -12,6 +12,9 @@ import { isPlainObject, type JsonValue } from './json.js'
 import { LIMITS } from './limits.js'
 import { isChildTemplate, childReferences } from './graph.js'
 import { resolveBinding, resolveValue, type ResolveContext } from './binding.js'
+import { plotPointList } from './plot-data.js'
+import { resolveErrorRanges, resolveHeatmapData, resolveParetoItems, resolveRadarData, resolveTimelineEvents } from './display-data.js'
+import type { Violation } from './schema.js'
 import type { SurfaceState } from './validate.js'
 
 /** Result of an expansion estimate. */
@@ -22,6 +25,8 @@ export interface ExpansionEstimate {
   dataUnits: number
   /** Set when a limit was exceeded; `nodes`/`dataUnits` then hold the partial count. */
   reason?: string
+  /** Path within the surface when a resolved property caused the failure. */
+  path?: string
 }
 
 interface Frame {
@@ -35,24 +40,47 @@ function contextFor(state: SurfaceState, item: JsonValue | undefined): ResolveCo
 }
 
 /** Rows/points/items a single component would materialise. */
-function dataUnitsOf(component: Record<string, unknown>, state: SurfaceState, item: JsonValue | undefined): number {
+function dataUnitsOf(
+  component: Record<string, unknown>, state: SurfaceState, item: JsonValue | undefined, streaming: boolean,
+): number | Violation {
   const context = contextFor(state, item)
   const name = component.component
+  if (name === 'Heatmap' || name === 'Timeline') {
+    const path = `/components/${component.id}`
+    const data = name === 'Heatmap'
+      ? resolveHeatmapData(component, context, path)
+      : resolveTimelineEvents(component.events, context, `${path}/events`)
+    return data.kind === 'ready' || (data.kind === 'pending' && streaming) ? data.units : data.issue
+  }
+  if (name === 'ParetoChart') {
+    const data = resolveParetoItems(component.items, context, `/components/${component.id}/items`)
+    return data.kind === 'ready' || (data.kind === 'pending' && streaming) ? data.units * 2 : data.issue
+  }
+  if (name === 'RadarChart') {
+    const data = resolveRadarData(component, context, `/components/${component.id}`)
+    return data.kind === 'ready' || (data.kind === 'pending' && streaming) ? data.units : data.issue
+  }
   try {
     if (name === 'Table') {
       const rows = resolveValue(component.rows, context)
       return Array.isArray(rows) ? rows.length : 0
     }
     if (name === 'BarChart' || name === 'LineChart') {
-      const categories = Array.isArray(component.categories) ? component.categories.length : 0
+      const categories = name === 'BarChart' ? resolveValue(component.categories, context) : component.categories
       const series = Array.isArray(component.series) ? component.series : []
       let points = 0
-      for (const entry of series) {
+      for (const [index, entry] of series.entries()) {
         if (!isPlainObject(entry)) continue
         const values = resolveValue(entry.values, context)
         points += Array.isArray(values) ? values.length : 0
+        if (name === 'BarChart' && entry.errorBars !== undefined) {
+          const path = `/components/${component.id}/series/${index}/errorBars`
+          const ranges = resolveErrorRanges(entry.errorBars, categories, values, context, path)
+          if (ranges.kind !== 'ready' && !(ranges.kind === 'pending' && streaming)) return ranges.issue
+          points += ranges.units
+        }
       }
-      return categories + points
+      return (Array.isArray(categories) ? categories.length : 0) + points
     }
     if (name === 'PieChart') {
       return Array.isArray(component.slices) ? component.slices.length : 0
@@ -73,10 +101,18 @@ function dataUnitsOf(component: Record<string, unknown>, state: SurfaceState, it
       const requested = typeof component.samples === 'number' ? component.samples : 240
       const samples = Math.max(8, Math.min(1200, requested))
       let units = 0
-      for (const plot of plots) {
+      for (const [index, plot] of plots.entries()) {
         if (!isPlainObject(plot)) continue
-        const points = resolveValue(plot.points, context)
-        if (Array.isArray(points)) units += points.length
+        const points = Array.isArray(plot.points) ? plot.points : resolveValue(plot.points, context)
+        if (points !== undefined && points !== null && !Array.isArray(plot.points)) {
+          const errors: Violation[] = []
+          plotPointList(points, `/components/${component.id}/plots/${index}/points`, errors)
+          if (errors.length > 0) return errors[0]
+        }
+        if (Array.isArray(points)) {
+          units += points.length
+          if (points.length >= 2 && plot.kind === 'scatter' && plot.regression === 'linear') units += 2
+        }
         const scatter = plot.kind === 'scatter' || typeof plot.expression !== 'string'
         if (!scatter) units += samples
       }
@@ -94,11 +130,13 @@ function dataUnitsOf(component: Record<string, unknown>, state: SurfaceState, it
  * @param state folded surface (components + data model).
  * @param maxNodes override the node budget (defaults to `LIMITS.maxExpandedNodes`).
  * @param maxDataUnits override the data-unit budget.
+ * @param streaming allow a new component to wait for an unresolved binding.
  */
 export function estimateExpansion(
   state: SurfaceState,
   maxNodes: number = LIMITS.maxExpandedNodes,
   maxDataUnits: number = LIMITS.maxExpandedDataUnits,
+  streaming = false,
 ): ExpansionEstimate {
   let nodes = 0
   let dataUnits = 0
@@ -115,7 +153,9 @@ export function estimateExpansion(
     nodes += 1
     if (nodes > maxNodes) return { nodes, dataUnits, reason: `expands to more than ${maxNodes} rendered components` }
 
-    dataUnits += dataUnitsOf(component, state, frame.item)
+    const units = dataUnitsOf(component, state, frame.item, streaming)
+    if (typeof units !== 'number') return { nodes, dataUnits, reason: units.message, path: units.path }
+    dataUnits += units
     if (dataUnits > maxDataUnits) return { nodes, dataUnits, reason: `renders more than ${maxDataUnits} data rows, points or animation items` }
 
     // Template child list: expand it here so the estimate counts repetitions.

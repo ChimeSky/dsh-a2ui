@@ -58,6 +58,35 @@ test('a title is not read until its string closes', () => {
   assert.equal(recoverArguments(`${text}"}`).title, 'Revenue by region')
 })
 
+test('a complete compact flag is available before the first streaming surface', () => {
+  assert.equal(foldStreaming('{"presentation":"comp').presentation, undefined)
+  assert.equal(foldStreaming('{"presentation":"compact",').presentation, 'compact')
+  const text = JSON.stringify({ presentation: 'compact', messages: [SURFACE] }).slice(0, -1)
+  assert.equal(foldStreaming(text).presentation, 'compact')
+  assert.equal(foldStreaming(text).surfaces.length, 1)
+  assert.equal(foldStreaming(text.replace('compact', 'wide')).presentation, undefined)
+})
+
+test('streaming displays can wait for bindings which must be present at settlement', () => {
+  const create = { version: '1.0', createSurface: { surfaceId: 'report',
+    components: [
+      { id: 'root', component: 'Column', children: ['matrix', 'events', 'radar'] },
+      { id: 'matrix', component: 'Heatmap', rowLabels: ['Row'], columnLabels: ['Column'], values: { '@path': '/matrix' } },
+      { id: 'events', component: 'Timeline', events: { '@path': '/events' } },
+      { id: 'radar', component: 'RadarChart', axes: { '@path': '/axes' }, series: [{ values: { '@path': '/scores' } }] },
+    ] } }
+  const pending = { presentation: 'compact', messages: [create] }
+  assert.equal(foldStreaming(JSON.stringify(pending).slice(0, -1)).surfaces.length, 1)
+  assert.equal(validateToolArguments(pending).ok, false)
+  const update = { version: '1.0', updateDataModel: {
+    surfaceId: 'report', value: { matrix: [[0]], events: [{ when: 'Today', title: 'Ready' }],
+      axes: ['Cost', 'Speed', 'Accuracy'], scores: [0, null, 90] },
+  } }
+  const complete = { ...pending, messages: [create, update] }
+  assert.equal(foldStreaming(JSON.stringify(complete).slice(0, -1)).surfaces.length, 1)
+  assert.equal(validateToolArguments(complete).ok, true)
+})
+
 test('escapes are decoded exactly once, by JSON.parse', () => {
   const text = '{"messages":[{"version":"1.0","createSurface":{"surfaceId":"s","components":[{"id":"root","component":"Text","text":"a\\"b\\u00e9\\\\c"}]}}]}'
   const recovered = recoverArguments(text)

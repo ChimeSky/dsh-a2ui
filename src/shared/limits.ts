@@ -45,6 +45,12 @@ export const LIMITS = {
   maxTableRows: 500,
   /** Maximum number of columns in a Table, or categories in a chart series. */
   maxSeriesPoints: 500,
+  /** Row and column limit of each heatmap. */
+  maxHeatmapAxis: 40,
+  /** Dimension limit for a radar chart. */
+  maxRadarAxes: 8,
+  /** Maximum number of events on one timeline. */
+  maxTimelineEvents: 100,
   /** Maximum number of animation frames in a FramePlayer. */
   maxFrames: 400,
   /** Maximum number of items in a FramePlayer frame. */

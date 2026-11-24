@@ -5,6 +5,28 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { shared } from '../build/shared.mjs'
+import { fitLinearRegression, visibleRegressionSegment } from '../lib/shared/plot-data.js'
+
+test('linear regression fits original points and clips to both displayed axes', () => {
+  const fit = fitLinearRegression([{ x: 0, y: 8 }, { x: 1, y: 6 }, { x: 4, y: 0 }])
+  assert.ok(Math.abs(fit.rSquared - 1) < 1e-12)
+  assert.deepEqual(visibleRegressionSegment(fit, { xMin: 1, xMax: 3, yMin: 3, yMax: 5 }), [
+    { x: 1.5, y: 5 }, { x: 2.5, y: 3 },
+  ])
+  const noisy = fitLinearRegression([{ x: 0, y: 0, size: 100 }, { x: 1, y: 2 }, { x: 2, y: 1 }])
+  assert.equal(noisy.rSquared, 0.25)
+  assert.equal(fitLinearRegression([{ x: 2, y: 1 }, { x: 2, y: 4 }]), undefined)
+  const flat = fitLinearRegression([{ x: 1, y: 3 }, { x: 2, y: 3 }])
+  assert.equal(flat.rSquared, undefined)
+  assert.deepEqual(visibleRegressionSegment(flat, { xMin: 0, xMax: 5, yMin: 0, yMax: 5 }), [
+    { x: 1, y: 3 }, { x: 2, y: 3 },
+  ])
+  const extreme = fitLinearRegression([{ x: -1e308, y: -1e308 }, { x: 0, y: 0 }, { x: 1e308, y: 1e308 }])
+  assert.equal(extreme.rSquared, 1)
+  const segment = visibleRegressionSegment(extreme, { xMin: -1e308, xMax: 1e308, yMin: -5e307, yMax: 5e307 })
+  assert.ok(segment.every(({ x, y }) => Number.isFinite(x) && x === y))
+  assert.equal(visibleRegressionSegment(extreme, { xMin: 0, xMax: 1e308, yMin: -1e308, yMax: -1 }), undefined)
+})
 
 const {
   pointerGet,
@@ -180,11 +202,16 @@ test('every catalog component validates with a minimal sample', () => {
     DateTimeInput: { value: '', enableDate: true },
     Table: { columns: [{ key: 'a', label: 'A' }], rows: [{ a: 1 }] },
     BarChart: { categories: ['Q1'], series: [{ label: 'S', values: [1] }] },
+    ParetoChart: { items: [{ label: 'A', value: 1 }] },
+    RadarChart: { axes: ['Speed', 'Quality', 'Stability'], series: [{ values: [80, 90, 70] }] },
     LineChart: { categories: ['Q1'], series: [{ label: 'S', values: [1] }] },
     PieChart: { slices: [{ label: 'A', value: 1 }] },
     Stat: { label: 'Revenue', value: 100 },
     Progress: { value: 40 },
     Plot: { plots: [{ expression: 'x^2' }], xMin: -1, xMax: 1 },
+    Section: { title: 'Details', children: ['leaf'] },
+    Heatmap: { rowLabels: ['Row'], columnLabels: ['Column'], values: [[0]] },
+    Timeline: { events: [{ when: 'Today', title: 'Release' }] },
     FramePlayer: { frames: [{ items: [{ value: 1 }] }] },
   }
   assert.deepEqual(Object.keys(samples).sort(), [...COMPONENT_NAMES].sort(), 'a sample exists for every component')
@@ -287,5 +314,5 @@ test('the catalog examples validate and the reference explains renderer limits',
 
 test('every catalog function is registered as known', () => {
   for (const name of BASIC_FUNCTION_NAMES) assert.ok(knownFunctions.has(name), name)
-  assert.equal(COMPONENTS.length, 26)
+  assert.equal(COMPONENTS.length, 31)
 })

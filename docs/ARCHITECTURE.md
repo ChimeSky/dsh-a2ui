@@ -6,7 +6,7 @@ This document holds the implementation details behind the README's product overv
 
 ```text
 DeepSeek Agent
-   │  a2ui({ messages, title })
+   │  a2ui({ messages, title?, presentation? })
    ▼
 Host  ──  A2UI 1.0 schema validation (surface / component / property / binding / depth / quota)
    │      tool result { ok, surfaces, warnings }; a replay copy is kept in result meta
@@ -86,6 +86,12 @@ The card has two hosts:
 They coordinate through **copy claims**: while the tail copy is mounted it claims the call and the process row collapses to a one-line pointer; the moment the tail copy unmounts for any reason (paging, a new turn, an aborted turn) the claim is released and the process row restores the full card. The interface therefore degrades to an expandable row instead of vanishing.
 
 A custom `toolName` still renders at the turn tail (matched through `meta.kind === 'a2ui'`), but the process row falls back to a generic tool row.
+
+The optional tool argument `presentation: "compact"` shows the surface without its outer card chrome. An explicit title is still shown. Put `presentation` before `messages` so the preview can use the chosen style as soon as the first component arrives. The Host saves the style in result meta alongside the messages so history uses the same presentation. An omitted style uses the regular card.
+
+`Section` belongs to the extension catalog and uses the existing child-list shape. A scatter-only `Plot` can infer both X bounds from the input points. Scatter series can supply a point array or bind one with `@path`; the fold checks resolved arrays against the same point shape and size limit as literal arrays.
+
+`Heatmap` validates the resolved row labels, column labels and matrix together. Each cell counts toward the render budget, including missing cells. `Timeline` checks the resolved event list, counts each entry and renders its original date or stage text in input order. Both can wait for an unresolved binding during the progressive preview. A settled payload must supply the data.
 
 ## Configuration
 

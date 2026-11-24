@@ -66,6 +66,7 @@ export interface ToolViewProps {
 
 interface Payload {
   title?: string
+  presentation?: unknown
   messages: unknown[]
   origin: 'meta' | 'args' | 'none'
   /** Set when the payload could not be read at all. */
@@ -102,6 +103,7 @@ function readPayload(props: ToolViewProps): Payload {
     return {
       messages: meta.messages as unknown[],
       title: typeof meta.title === 'string' ? meta.title : undefined,
+      presentation: meta.presentation,
       origin: 'meta',
     }
   }
@@ -113,6 +115,7 @@ function readPayload(props: ToolViewProps): Payload {
       return {
         messages: record.messages,
         title: typeof record.title === 'string' ? record.title : undefined,
+        presentation: record.presentation,
         origin: 'args',
       }
     }
@@ -142,7 +145,7 @@ function analyse(payload: Payload): Analysis {
   if (payload.messages.length === 0) {
     return { ok: true, errors: [], warnings: [], surfaces: [], updatedOnly: [], deleted: [] }
   }
-  const validation = validateToolArguments({ messages: payload.messages })
+  const validation = validateToolArguments({ messages: payload.messages, presentation: payload.presentation })
   if (!validation.ok) {
     return { ok: false, errors: validation.errors, warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] }
   }
@@ -162,7 +165,7 @@ function analyse(payload: Payload): Analysis {
       // foreign payload from expanding into a huge tree.
       const estimate = estimateExpansion(state)
       if (estimate.reason !== undefined) {
-        return { ok: false, errors: [{ path: `/surfaces/${touch.surfaceId}`, message: estimate.reason }], warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] }
+        return { ok: false, errors: [{ path: `/surfaces/${touch.surfaceId}${estimate.path ?? ''}`, message: estimate.reason }], warnings: validation.warnings, surfaces: [], updatedOnly: [], deleted: [] }
       }
       surfaces.push({ state, created: true, componentCount: state.components.size })
     } else if (touch.changedComponentIds.length > 0 || touch.dataModelChanged) {
@@ -269,7 +272,8 @@ function previewBoundary(): PreviewBoundaryType {
 /** Props of the card drawn while the arguments are still arriving. */
 interface StreamingCardProps {
   callId: string
-  title: string
+  title?: string
+  compactPresentation: boolean
   surfaces: readonly SurfaceState[]
   text: string
   locale: string
@@ -329,17 +333,20 @@ function StreamingCard(props: StreamingCardProps): ReturnType<typeof h> {
     { className: 'a2ui-root' },
     h(
       'div',
-      { className: 'a2ui-card a2ui-card-streaming', 'aria-busy': true },
+      {
+        className: props.compactPresentation ? 'a2ui-compact a2ui-card-streaming' : 'a2ui-card a2ui-card-streaming',
+        'aria-busy': true,
+      },
       h(
         'div',
-        { className: 'a2ui-card-head' },
-        sparkle('a2ui-card-spark'),
-        h('span', { className: 'a2ui-card-title' }, props.title),
+        { className: props.compactPresentation ? 'a2ui-compact-head' : 'a2ui-card-head' },
+        props.compactPresentation ? null : sparkle('a2ui-card-spark'),
+        props.title === undefined ? null : h('span', { className: 'a2ui-card-title' }, props.title),
         h('span', { className: 'a2ui-card-state' }, props.t('streaming')),
       ),
       h(
         'div',
-        { className: 'a2ui-card-body', ref: bodyRef },
+        { className: props.compactPresentation ? 'a2ui-compact-body' : 'a2ui-card-body', ref: bodyRef },
         h(previewBoundary(), { text: props.text }, h('div', { className: 'a2ui-stack' }, ...bodies)),
       ),
     ),
@@ -504,9 +511,11 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> | null 
   // already closed, never turns into an error notice (a half-written payload is
   // unfinished, not wrong) and never lets a control be operated.
   if (preparing) {
+    const compactPresentation = streamed?.presentation === 'compact'
     return h(StreamingCard, {
       callId: props.callId,
-      title: streamed?.title ?? t('rendering'),
+      title: streamed?.title ?? (compactPresentation ? undefined : t('rendering')),
+      compactPresentation,
       surfaces: streamed === undefined || streamed.stopped ? [] : streamed.surfaces,
       text: streamedText ?? '',
       locale,
@@ -614,6 +623,16 @@ export function A2UIToolView(props: ToolViewProps): ReturnType<typeof h> | null 
         sparkle('a2ui-pointer-icon'),
         h('span', { className: 'a2ui-pointer-text' }, payload.title ?? t('title')),
         h('span', { className: 'a2ui-pointer-meta' }, `${count} · ${t('atTurnTail')}`),
+      ),
+    )
+  }
+
+  if (payload.presentation === 'compact' && analysis.surfaces.length > 0) {
+    const title = payload.title?.trim()
+    return h('div', { className: 'a2ui-root' },
+      h('div', { className: 'a2ui-compact' },
+        title ? h('div', { className: 'a2ui-compact-head' }, h('span', { className: 'a2ui-card-title' }, title)) : null,
+        h('div', { className: 'a2ui-compact-body a2ui-stack' }, ...bodies),
       ),
     )
   }

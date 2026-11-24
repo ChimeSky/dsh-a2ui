@@ -3,7 +3,7 @@
 > **Make data-heavy AI answers easier to understand.**
 > *Let the agent answer with an inline, on-demand A2UI surface when a picture explains better than a paragraph.*
 
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](./CHANGELOG.md)
 [![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
 [![Tests](https://img.shields.io/badge/tests-171%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![React Tests](https://img.shields.io/badge/react%20tests-19%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
@@ -22,7 +22,7 @@ Its goal is **not** to build a persistent dashboard or an app workbench. It is t
 | Trait | What it means |
 | :--- | :--- |
 | **Visuals on demand** | The agent decides from the answer whether a surface is worth drawing; the user does not have to type a special command |
-| **A2UI 1.0 protocol** | Standard messages and 26 controlled components, validated against the published schema; no raw HTML injection |
+| **A2UI 1.0 protocol** | Standard messages and 31 controlled components, validated against the published schema; no raw HTML injection |
 | **Component-level progressive render** | As the model streams the tool arguments, each closed JSON value and component can appear, instead of a long blank wait |
 | **Lightweight interaction loop** | Table sorting, chart hover and slider adjustments run locally; when needed, an `agent -> UI -> agent` action sends the operation back |
 | **History stays honest** | One self-contained snapshot per call; the UI is re-rendered from the session log with no cross-turn state to maintain |
@@ -69,9 +69,10 @@ npm covers the whole package, GitHub Release counts the plugin's `.tgz` assets, 
 
 The plugin ships as a bundle (`dsh.bundle` + `dsh.client`): the repository root is the installable package, and the build artifacts are committed, so installing does not compile anything.
 
-- **In DSH (recommended)** — Open Plugins → Add plugin, enter `dsh-a2ui`, and click Install. DSH uses the selected registry's `latest` tag by default. Enter `dsh-a2ui@0.3.1` to request a specific version. [npm package](https://www.npmjs.com/package/dsh-a2ui)
-- **From GitHub** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.3.1`
-- **Offline install** — Run `npm pack dsh-a2ui` to download the `.tgz`, then enter its absolute path in Add plugin. To install the frozen tarball from this repository, use `dsh plugin --profile desktop add <absolute path>/vendor/dsh-a2ui-0.3.1.tgz` or run `tools/install.ps1`.
+- **Install v0.4.0 in DSH** — Open Plugins → Add plugin, enter `github:ChimeSky/dsh-a2ui#v0.4.0`, and click Install.
+- **Install v0.4.0 from the command line** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.4.0`
+- **Install v0.4.0 offline** — Download `dsh-a2ui.tgz` and enter its absolute path in Add plugin. You can also use `tools/install.ps1` with `vendor/dsh-a2ui-0.4.0.tgz` from the repository. [GitHub Release](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
+- **Install from npm** — Enter `dsh-a2ui` for the selected registry’s `latest` tag, or enter `dsh-a2ui@0.3.1` to pin that version. [npm package](https://www.npmjs.com/package/dsh-a2ui)
 - **DSH plugin manager**: `plugin_manager action=install_bundle target=<absolute path or tarball>`
 
 Replace `desktop` with the target profile (usually `web` for the web build). Replacing an installed package requires a DSH restart to load the new JavaScript module generation.
@@ -147,20 +148,35 @@ Default `catalogId` is `dsh-a2ui/catalog/v1` (everything below); the official ba
 
 `Text`, `Image`, `Icon`, `Video`, `AudioPlayer`, `Row`, `Column`, `List`, `Card`, `Tabs`, `Modal`, `Divider`, `Button`, `TextField`, `CheckBox`, `ChoicePicker`, `Slider`, `DateTimeInput` — plus `checks` validation rules (`required`, `regex`, `length`, `numeric`, `email`) that disable the action button and show the message when they fail.
 
-### Extension catalog (8)
+### Extension catalog (13)
 
 | Component | Notes |
 |---|---|
 | `Table` | Column declarations + rows; number/currency/percent/date formatting, alignment, horizontal scroll, 40-row fold |
-| `BarChart` | Grouped, stacked or horizontal bars |
+| `BarChart` | Grouped, stacked or horizontal bars, with optional error bars for vertical non-stacked bars |
+| `ParetoChart` | Descending category bars with a cumulative share line |
+| `RadarChart` | Compare profiles on a shared scoring scale |
 | `LineChart` | Line, area, smooth curves, point markers |
 | `PieChart` | Pie or donut with a percentage legend |
 | `Stat` | KPI tile: value, unit, delta, trend colour |
 | `Progress` | Progress bar with tone |
-| `Plot` | Safe arithmetic function plot; `variables` may bind to the data model for local redraws |
+| `Plot` | Function, scatter and bubble plots with optional linear regression. Function plots can bind `variables` to the data model for local redraws |
 | `FramePlayer` | Step animation (play/pause/step/reset/speed) over precomputed frames |
+| `Heatmap` | Matrix heatmap with sequential and diverging scales, missing-cell markers, and two-axis scrolling |
+| `Timeline` | Vertical timeline in input order with optional descriptions and statuses |
+| `Section` | Lightweight content group with a title and optional description |
 
 `Plot` expressions are evaluated by a **hand-written parser** that accepts only numbers, `x`, caller-supplied variables, `+ - * / ^ %`, parentheses and a closed set of math functions. Anything outside the whitelist fails to compile. No `eval`, no `new Function`.
+
+A scatter series in `Plot` uses `kind: "scatter"` and `points`. Add a nonnegative `size` to a point to encode a third metric as bubble area, and use `sizeLabel` for its name and units. Small positive bubbles have a minimum visible radius, zero uses a hollow circle, and points with no `size` appear as ordinary dots.
+
+Set `regression: "linear"` on a scatter series to fit a straight line from its original X/Y data and display R² where defined. The segment stays within the sample X range and the plotted axes. The series legend toggles the points and fit together.
+
+`ParetoChart` accepts `items: [{ "label": "Category", "value": 30 }]` or a bound array. It sorts nonnegative values in descending order and plots cumulative share on the right axis. Use `valueSuffix` to label the source unit. Hover or use the arrow keys to inspect categories and their cumulative shares. An all-zero total produces a message.
+
+Ordinary and grouped vertical `BarChart` series support `errorBars: [{ "lower": 8, "upper": 14 }, null]` or a bound array. Provide one slot per category and use `null` for a bar without an interval. The absolute bounds must contain the bar value. Set `errorLabel` to the known interval meaning, such as “95% confidence interval”, to show it alongside the raw bounds in the tooltip.
+
+`RadarChart` uses `axes: ["Speed", "Accuracy", "Stability"]` and `series: [{ "label": "Option A", "values": [80, 90, null] }]`. Supply 3–8 dimensions. Both the axis names and each series' values can bind to the data model. Every axis uses the same `min` and `max`, with a default range of 0–100. A `null` score leaves a gap. Hover, tap, or use the arrow keys to inspect raw scores for an axis. Use the legend to toggle series. Numbered axes keep full names readable in narrow layouts.
 
 ### Bindings and functions
 
@@ -269,7 +285,7 @@ npm run pack:vendor              # regenerate vendor/dsh-a2ui-<version>.tgz
 npm run all                      # all of the above
 ```
 
-Current scale: 171 automated cases (18 jsdom DOM cases, 27 streaming cases, 43 official examples), 19 real-React render cases and 32 bundle invariants. Details and the split between "verified in a real DSH" and "verified headlessly only" are in [docs/TEST-REPORT.md](docs/TEST-REPORT.md); per-version changes are in [CHANGELOG.md](CHANGELOG.md).
+v0.4.0 passes 198 automated cases, 19 React render cases and 32 bundle checks. See the [test report](docs/TEST-REPORT.md) for the validation scope and the [changelog](CHANGELOG.md) for per-version changes.
 
 `index.js`, `lib/**` and `client.js` are build artifacts committed to the repository so that `dsh plugin add github:` works without a build step; rerun `npm run build` and commit after changing `src/`. The build never deletes a file and does not use esbuild (the sandbox refuses its native service pipes).
 

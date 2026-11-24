@@ -1,16 +1,57 @@
-import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { publishedFiles } from './lib/published-files.mjs'
 
 const root = resolve(import.meta.dirname, '..')
+
+function verifyPackage(source, read, check) {
+  const manifest = read('package.json')
+  if (manifest === undefined) check(false, 'package.json exists')
+  else {
+    const actual = JSON.parse(manifest.toString('utf8'))
+    check(actual.name === source.name, `package name is ${source.name}`)
+    check(actual.version === source.version, `package version is ${actual.version} (source ${source.version})`)
+  }
+  for (const relative of publishedFiles(root, source)) {
+    if (relative === 'package.json' || !/\.(?:[cm]?js|json|ya?ml|svg)$/u.test(relative)) continue
+    const actual = read(relative)
+    if (actual === undefined) check(false, `package file missing: ${relative}`)
+    else {
+      check(readFileSync(join(root, relative)).equals(actual), `byte-identical: ${relative}`)
+      if (relative === 'cordis.patch.yml') check(actual.toString('utf8').includes('id: dsh-a2ui'), 'patch inserts the dsh-a2ui row')
+    }
+  }
+}
+
+/** Check a local tarball before DSH changes an installed profile. No files are extracted to disk. */
+export function verifyTarball(path) {
+  const source = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  const archive = resolve(path)
+  const command = process.platform === 'win32' ? 'tar.exe' : 'tar'
+  const exec = (args) => execFileSync(command, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
+  const passes = []
+  const failures = []
+  const check = (ok, message) => (ok ? passes : failures).push(message)
+  try {
+    const entries = new Set(exec(['-tzf', archive]).toString('utf8').split(/\r?\n/u))
+    verifyPackage(source, (relative) => {
+      const name = `package/${relative}`
+      return entries.has(name) ? exec(['-xOf', archive, name]) : undefined
+    }, check)
+  } catch (error) {
+    failures.push(`could not verify tarball: ${error.message}`)
+  }
+  return { archive, passes, failures }
+}
 
 /**
  * Verify that a profile directory holds a self-consistent install of this plugin.
  *
  * Checks the profile manifest (dependency + bundle list), the installed copy's
- * manifest, every published file byte-for-byte against the repository, and the
+ * manifest, every published runtime file byte-for-byte against the repository, and the
  * Cordis patch row. Importable so an isolated-home harness can reuse it.
  *
  * @param options.dshHome DSH home to inspect.
@@ -28,7 +69,6 @@ export function verifyInstall(options = {}) {
   const failures = []
   const passes = []
   const check = (condition, message) => (condition ? passes.push(message) : failures.push(message))
-  const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 
   check(existsSync(manifestPath), `profile manifest exists: ${manifestPath}`)
   if (existsSync(manifestPath)) {
@@ -43,35 +83,14 @@ export function verifyInstall(options = {}) {
 
   check(existsSync(installedDir), `installed package exists: ${installedDir}`)
   if (existsSync(installedDir)) {
-    const installedManifest = JSON.parse(readFileSync(join(installedDir, 'package.json'), 'utf8'))
-    check(installedManifest.name === sourceManifest.name, `installed name is ${sourceManifest.name}`)
-    check(
-      installedManifest.version === sourceManifest.version,
-      `installed version is ${installedManifest.version} (source ${sourceManifest.version})`,
-    )
-
-    const files = [
-      'index.js',
-      'client.js',
-      'cordis.patch.yml',
-      'icon.svg',
-      'locale/en.json',
-      'locale/zh.json',
-      'lib/host/index.js',
-      'lib/shared/index.js',
-      'lib/shared/validate.js',
-    ]
-    for (const relative of files) {
-      const installedFile = join(installedDir, relative)
-      if (!existsSync(installedFile)) {
-        failures.push(`installed file missing: ${relative}`)
-        continue
-      }
-      check(digest(join(root, relative)) === digest(installedFile), `byte-identical: ${relative}`)
+    try {
+      verifyPackage(sourceManifest, (relative) => {
+        const file = join(installedDir, relative)
+        return existsSync(file) ? readFileSync(file) : undefined
+      }, check)
+    } catch (error) {
+      failures.push(`could not verify installed files: ${error.message}`)
     }
-
-    const installedPatch = readFileSync(join(installedDir, 'cordis.patch.yml'), 'utf8')
-    check(installedPatch.includes('id: dsh-a2ui'), 'installed patch inserts the dsh-a2ui row')
   }
 
   return { dshHome, profile, installedDir, passes, failures, sourceManifest }
@@ -84,11 +103,18 @@ function main() {
     const index = args.indexOf(`--${name}`)
     return index >= 0 ? args[index + 1] : fallback
   }
-  const result = verifyInstall({ dshHome: option('dsh-home', undefined), profile: option('profile', undefined) })
-  console.log('dsh-a2ui install verification')
-  console.log(`  DSH home : ${result.dshHome}`)
-  console.log(`  Profile  : ${result.profile}`)
-  console.log(`  Installed: ${result.installedDir}`)
+  const tarball = option('tarball', undefined)
+  const result = tarball === undefined
+    ? verifyInstall({ dshHome: option('dsh-home', undefined), profile: option('profile', undefined) })
+    : verifyTarball(tarball)
+  if (tarball === undefined) {
+    console.log('dsh-a2ui install verification')
+    console.log(`  DSH home : ${result.dshHome}`)
+    console.log(`  Profile  : ${result.profile}`)
+    console.log(`  Installed: ${result.installedDir}`)
+  } else {
+    console.log(`dsh-a2ui tarball verification: ${result.archive}`)
+  }
   for (const line of result.passes) console.log(`  PASS  ${line}`)
   for (const line of result.failures) console.log(`  FAIL  ${line}`)
   if (result.failures.length > 0) {

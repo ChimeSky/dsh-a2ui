@@ -10,7 +10,7 @@
 import { describeCatalog } from '../shared/catalog.js'
 import type { JsonValue } from '../shared/json.js'
 import { LIMITS } from '../shared/limits.js'
-import { validateToolArguments, type ToolValidation } from '../shared/validate.js'
+import { isPresentation, PRESENTATIONS, validateToolArguments, type ToolValidation } from '../shared/validate.js'
 
 /** Configuration accepted from the bundle row; all fields are optional. */
 export interface PluginConfig {
@@ -89,6 +89,11 @@ function buildTool(toolName: string, proactive: boolean, catalogTool = true): To
   const parameters = {
     type: 'object',
     properties: {
+      presentation: {
+        type: 'string',
+        enum: PRESENTATIONS,
+        description: 'Optional display style. Use "compact" for one chart or a small section within the answer. Put it before "messages" for streaming. The default is "card".',
+      },
       messages: {
         type: 'array',
         description:
@@ -139,11 +144,12 @@ function buildTool(toolName: string, proactive: boolean, catalogTool = true): To
       presentationMeta: (args: unknown, value: unknown) => {
         // The browser renders from this durable copy so a transcript page that
         // starts after the original `tool/call` event still shows the surface.
-        const incoming = (args ?? {}) as { messages?: unknown; title?: unknown }
+        const incoming = (args ?? {}) as { messages?: unknown; title?: unknown; presentation?: unknown }
         const result = value as ToolResultValue
         const meta: Record<string, unknown> = {
           kind: 'a2ui',
           ...(typeof incoming.title === 'string' ? { title: incoming.title } : {}),
+          ...(isPresentation(incoming.presentation) ? { presentation: incoming.presentation } : {}),
           surfaces: result.surfaces,
         }
         const serializedMessages = safeStringify(incoming.messages)
@@ -230,11 +236,17 @@ function sectionText(toolName: string, catalogTool: boolean, proactive: boolean)
         '- values over time, across categories, or as shares → `BarChart` / `LineChart` / `PieChart`.',
         '- a target, progress or coverage → `Progress` / `Stat`.',
         '- a value worth trying out, or a formula → `Slider` + `Plot` bound to the data model.',
+        '- paired numeric observations → `Plot` scatter with the original X/Y values, labeled axes, and a series for each group.',
+        '- third nonnegative metric → scatter `size` and `sizeLabel`; fitted trend → `regression:"linear"` on the scatter series.',
+        '- ranked shares → `ParetoChart`; common-scale profiles → `RadarChart`; known intervals → `errorBars`.',
+        '- a numeric matrix with meaningful patterns across two axes → `Heatmap`; retain missing cells as null and use a diverging scale for signed comparisons.',
+        '- milestones, releases, or an incident sequence where order helps → `Timeline` in the intended reading order.',
         '- discrete steps, an ordering or an algorithm walk-through → `FramePlayer`.',
         '- input the user must give, or a decision to approve → form components + one submit/approve button.',
         '',
         'Keep it prose: one fact, a definition, a yes/no, a greeting, a short explanation, code, diffs, logs, paths.',
         'Never repeat in text the numbers a surface already shows; one card per answer, two charts at most.',
+        'For one chart, a short Timeline, or a small Section, use "presentation":"compact" before "messages" and omit a title the answer already supplies.',
         '',
         'Rules:',
         '- The component graph root id MUST be "root"; components are flat and reference each other by id.',
@@ -250,6 +262,7 @@ function sectionText(toolName: string, catalogTool: boolean, proactive: boolean)
         '',
         'Only render a surface when the user asks for one, or when it is the clearest way to answer a comparison, a chart, a parameter exploration, a form, or a step-by-step animation.',
         'Prefer plain Markdown for explanations, prose and simple lists. Never show the same numbers twice.',
+        'Use "presentation":"compact" before "messages" for one chart, a short Timeline, or a small Section within the answer.',
         '',
         'Rules that keep it working:',
         '- The component graph root id MUST be "root". Components are declared flat and reference each other by id.',

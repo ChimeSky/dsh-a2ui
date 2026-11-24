@@ -59,9 +59,16 @@ function Resolve-DshCmd {
 }
 
 function Invoke-Verify {
+  param([string]$Archive)
   $node = Get-Command node -ErrorAction SilentlyContinue
   if (-not $node) {
+    if ($Archive) { throw 'node is required to verify the tarball before installation.' }
     Write-Warning 'node is not on PATH; skipped byte-level verification.'
+    return
+  }
+  if ($Archive) {
+    & $node.Source (Join-Path $PSScriptRoot 'verify-install.mjs') --tarball $Archive
+    if ($LASTEXITCODE -ne 0) { throw 'Tarball verification failed. Rebuild and run npm run pack:vendor, or pass the current tarball with -Tarball.' }
     return
   }
   & $node.Source (Join-Path $PSScriptRoot 'verify-install.mjs') --dsh-home $DshHome --profile $Profile
@@ -121,14 +128,14 @@ if ($Uninstall) {
 }
 
 if (-not $Tarball) {
-  $vendor = Join-Path $root 'vendor'
-  $Tarball = Get-ChildItem -LiteralPath $vendor -Filter '*.tgz' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1 -ExpandProperty FullName
+  $package = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
+  $Tarball = Join-Path $root "vendor/$($package.name)-$($package.version).tgz"
 }
-if (-not $Tarball -or -not (Test-Path -LiteralPath $Tarball)) {
-  throw "No vendor tarball found. Run 'npm run pack:vendor' first, or pass -Tarball."
+if (-not (Test-Path -LiteralPath $Tarball -PathType Leaf)) {
+  throw "Tarball not found: $Tarball. Run 'npm run pack:vendor' first, or pass -Tarball."
 }
+$Tarball = (Resolve-Path -LiteralPath $Tarball).Path
+if (-not $SkipVerify) { Invoke-Verify -Archive $Tarball }
 
 Write-Host "DSH home : $DshHome"
 Write-Host "Profile  : $Profile"

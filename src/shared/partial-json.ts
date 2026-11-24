@@ -212,6 +212,8 @@ export function stripIncomplete(value: unknown): unknown {
 export interface RecoveredArguments {
   /** `title`, once its string finished. */
   title?: string
+  /** Presentation as written so far. The caller validates the value. */
+  presentation?: unknown
   /**
    * Messages that are safe to fold: every fully written message, followed by the
    * one still being written when its own complete content is usable.
@@ -271,6 +273,7 @@ export function recoverArguments(text: string): RecoveredArguments {
   if (scan.complete) open = false
   return {
     ...(title === undefined ? {} : { title }),
+    ...(scan.value.presentation === undefined ? {} : { presentation: scan.value.presentation }),
     messages,
     ...(partialMessage === undefined ? {} : { partialMessage }),
     open,

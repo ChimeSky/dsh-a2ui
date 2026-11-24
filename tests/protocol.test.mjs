@@ -41,6 +41,174 @@ test('accepts a minimal v1.0 createSurface and reports the surface', () => {
   assert.equal(result.surfaces[0].catalogId, EXTENSION_CATALOG_ID)
 })
 
+test('compact presentation is explicit and Section belongs to the plugin catalog', () => {
+  const components = [
+    { id: 'root', component: 'Section', title: 'Summary', children: ['text'] },
+    { id: 'text', component: 'Text', text: 'Hello' },
+  ]
+  const args = { presentation: 'compact', messages: [card({ components })] }
+  assert.equal(validateToolArguments(args).ok, true)
+  assert.equal(validateToolArguments({ ...args, presentation: 'wide' }).errors[0].path, '/presentation')
+  const basic = validateToolArguments({ messages: [card({ catalogId: BASIC_CATALOG_ID, components })] })
+  assert.equal(basic.ok, false)
+  assert.match(basic.errors[0].message, /extension catalog/u)
+})
+
+test('scatter-only Plot can fit its own axes while a function plot still requires both X bounds', () => {
+  const plot = { id: 'root', component: 'Plot', plots: [{ kind: 'scatter', points: [{ x: 0, y: -3, label: 'Zero' }] }] }
+  assert.equal(validateToolArguments({ messages: [card({ components: [plot] })] }).ok, true)
+  const partial = validateToolArguments({ messages: [card({ components: [{ ...plot, xMin: 0 }] })] })
+  assert.match(partial.errors[0].path, /\/xMax$/u)
+  const mixed = { ...plot, plots: [...plot.plots, { expression: 'x*x' }] }
+  const result = validateToolArguments({ messages: [card({ components: [mixed] })] })
+  assert.deepEqual(result.errors.map(({ path }) => path.split('/').pop()), ['xMin', 'xMax'])
+})
+
+test('binds Plot points from the final model and checks each series against its own limits', () => {
+  const plot = { id: 'root', component: 'Plot', plots: [{ kind: 'scatter', points: { '@path': '/points' } }] }
+  const args = (points) => ({
+    messages: [
+      card({ components: [plot], dataModel: { points: [] } }),
+      { version: '1.0', updateDataModel: { surfaceId: 's1', path: '/points', value: points } },
+    ],
+  })
+  const points = Array.from({ length: LIMITS.maxSeriesPoints }, (_, x) => ({ x, y: -x }))
+  assert.equal(validateToolArguments(args(points)).ok, true)
+  const oversized = validateToolArguments(args([...points, { x: 0, y: 1 }]))
+  assert.equal(oversized.ok, false)
+  assert.match(oversized.errors[0].path, /\/components\/root\/plots\/0\/points$/u)
+  const malformed = validateToolArguments(args([{ x: '3', y: 1 }]))
+  assert.match(malformed.errors[0].path, /\/points\/0\/x$/u)
+})
+
+test('validates bubble sizes in literal and bound points and limits regression to scatter', () => {
+  const args = (series, dataModel = {}) => ({ messages: [card({
+    components: [{ id: 'root', component: 'Plot', sizeLabel: 'Samples', xMin: 0, xMax: 5, plots: [series] }],
+    dataModel,
+  })] })
+  const scatter = { kind: 'scatter', regression: 'linear' }
+  const points = [{ x: 1, y: 2, size: 0 }, { x: 2, y: 4, size: 100 }, { x: 3, y: 6 }]
+  assert.equal(validateToolArguments(args({ ...scatter, points })).ok, true)
+  assert.equal(validateToolArguments(args({ ...scatter, points: { '@path': '/points' } }, { points })).ok, true)
+  const invalid = [{ x: 1, y: 1, size: -1 }]
+  for (const payload of [
+    args({ ...scatter, points: invalid }),
+    args({ ...scatter, points: { '@path': '/points' } }, { points: invalid }),
+  ]) assert.match(validateToolArguments(payload).errors[0].path, /\/points\/0\/size$/u)
+  assert.match(validateToolArguments(args({ kind: 'function', expression: 'x', regression: 'linear' })).errors[0].path,
+    /\/plots\/0\/regression$/u)
+})
+
+test('heatmap validates matrix shape, null cells, bindings and diverging color bounds', () => {
+  const component = { id: 'root', component: 'Heatmap',
+    rowLabels: { '@path': '/rows' }, columnLabels: ['Left', 'Right'], values: { '@path': '/matrix' },
+    scale: 'diverging', min: -1, max: 1 }
+  const args = (matrix, overrides = {}) => ({ messages: [card({
+    components: [{ ...component, ...overrides }], dataModel: { rows: ['A', 'B'], matrix },
+  })] })
+  assert.equal(validateToolArguments(args([[0, null], [-0.8, 0.9]])).ok, true)
+  assert.match(validateToolArguments(args([[0], [-0.8, 0.9]])).errors[0].path, /\/values\/0$/u)
+  assert.match(validateToolArguments(args([[0, '2'], [-0.8, 0.9]])).errors[0].path, /\/values\/0\/1$/u)
+  assert.match(validateToolArguments(args([[0, null], [-0.8, 0.9]], { min: 0 })).errors[0].path, /\/scale$/u)
+  const oversize = Array.from({ length: LIMITS.maxHeatmapAxis + 1 }, () => [0, 0])
+  assert.match(validateToolArguments(args(oversize)).errors[0].message, /40/u)
+})
+
+test('timeline accepts displayed date and phase text and bounds bound events', () => {
+  const component = { id: 'root', component: 'Timeline', events: { '@path': '/events' } }
+  const args = (events) => ({ messages: [card({ components: [component], dataModel: { events } })] })
+  const events = [
+    { when: '2026-11-24T23:45:00+08:00', title: 'Release', status: 'done' },
+    { when: '待定', title: 'Next phase', status: 'upcoming' },
+  ]
+  assert.equal(validateToolArguments(args(events)).ok, true)
+  assert.equal(validateToolArguments(args([])).ok, true)
+  assert.match(validateToolArguments(args([{ ...events[0], status: 'unknown' }])).errors[0].path, /\/events\/0\/status$/u)
+  const oversize = Array.from({ length: LIMITS.maxTimelineEvents + 1 }, () => events[0])
+  assert.match(validateToolArguments(args(oversize)).errors[0].message, /100/u)
+})
+
+test('Pareto accepts bound items and rejects negative values at the offending index', () => {
+  const args = (items, dataModel = {}) => ({ messages: [card({
+    components: [{ id: 'root', component: 'ParetoChart', items }],
+    dataModel,
+  })] })
+  const items = [{ label: 'A', value: 0 }, { label: 'B', value: 5 }]
+  assert.ok(validateToolArguments(args(items)).ok)
+  assert.ok(validateToolArguments(args({ '@path': '/items' }, { items })).ok)
+  assert.match(validateToolArguments(args([{ label: 'A', value: -1 }])).errors[0].path, /\/items\/0\/value$/u)
+  const invalid = validateToolArguments(args({ '@path': '/items' }, { items: [{ label: 'B', value: '-1' }] }))
+  assert.match(invalid.errors[0].path, /\/items\/0\/value$/u)
+  assert.match(validateToolArguments(args({ '@path': '/absent' })).errors[0].path, /\/items$/u)
+  assert.match(validateToolArguments(args(Array(LIMITS.maxSeriesPoints + 1).fill(items[0]))).errors[0].path, /\/items$/u)
+})
+
+test('bar error ranges stay aligned with bound values and reject unsupported or incomplete intervals', () => {
+  const args = (errorBars, mode = {}, values = [10, null, 0]) => ({ messages: [card({
+    components: [{ id: 'root', component: 'BarChart', categories: { '@path': '/dates' }, ...mode,
+      series: [{ values: { '@path': '/values' }, errorBars: { '@path': '/ranges' } }],
+    }],
+    dataModel: { dates: ['A', 'B', 'C'], values, ranges: errorBars },
+  })] })
+  const good = [{ lower: 8, upper: 14 }, null, { lower: -1, upper: 0 }]
+  assert.ok(validateToolArguments(args(good)).ok)
+  assert.match(validateToolArguments(args(good.slice(0, 2))).errors[0].path, /\/errorBars$/u)
+  assert.match(validateToolArguments(args([good[0], good[0], good[2]])).errors[0].path, /\/errorBars\/1$/u)
+  assert.match(validateToolArguments(args([{ lower: 3, upper: 9 }, null, null])).errors[0].path, /\/errorBars\/0\/upper$/u)
+  assert.match(validateToolArguments(args([{ lower: 11, upper: 14 }, null, null])).errors[0].path, /\/errorBars\/0\/lower$/u)
+  for (const mode of [{ stacked: true }, { horizontal: true }]) {
+    assert.match(validateToolArguments(args(good, mode)).errors[0].message, /vertical, non-stacked/u)
+  }
+})
+
+test('radar validates the same scale and axis alignment for literal and bound scores', () => {
+  const spec = { id: 'root', component: 'RadarChart', axes: ['Speed', 'Accuracy', 'Stability'],
+    series: [{ label: 'A', values: [90, null, 0] }] }
+  const args = (overrides, dataModel = {}) => ({ messages: [card({
+    components: [{ ...spec, ...overrides }], dataModel,
+  })] })
+  assert.equal(validateToolArguments(args({})).ok, true)
+  const bound = { axes: { '@path': '/axes' }, series: [{ values: { '@path': '/scores' } }] }
+  assert.equal(validateToolArguments(args({ ...bound, min: -10, max: 10 },
+    { axes: spec.axes, scores: [-10, 0, 10] })).ok, true)
+  assert.match(validateToolArguments(args(bound, { axes: spec.axes, scores: [0, 100, 101] })).errors[0].path,
+    /\/series\/0\/values\/2$/u)
+  assert.match(validateToolArguments(args(bound, { axes: spec.axes, scores: [0, 10, 20, 30] })).errors[0].path,
+    /\/series\/0\/values$/u)
+  assert.match(validateToolArguments(args(bound, { axes: spec.axes })).errors[0].path, /\/series\/0\/values$/u)
+  assert.match(validateToolArguments(args({ min: 50, max: 50 })).errors[0].path, /\/max$/u)
+  assert.match(validateToolArguments(args({ axes: [' ', 'Accuracy', 'Stability'] })).errors[0].path, /\/axes\/0$/u)
+  assert.match(validateToolArguments(args({ axes: Array(LIMITS.maxRadarAxes + 1).fill('Axis') })).errors[0].path, /\/axes$/u)
+})
+
+test('rejects inverted Y bounds and retains automatic BarChart scaling for equal bounds', () => {
+  for (const component of [
+    { component: 'BarChart', categories: ['A'], series: [{ values: [4] }] },
+    { component: 'LineChart', categories: ['A'], series: [{ values: [4] }] },
+    { component: 'Plot', xMin: -1, xMax: 1, plots: [{ expression: 'x' }] },
+  ]) {
+    const args = (yMin, yMax) => ({ messages: [card({ components: [{ id: 'root', ...component, yMin, yMax }] })] })
+    assert.ok(validateToolArguments(args(0, 7)).ok)
+    const reversed = validateToolArguments(args(4, 2))
+    assert.match(reversed.errors[0].path, /\/yMax$/u)
+    assert.match(reversed.errors[0].message, /greater than yMin/u)
+    assert.equal(validateToolArguments(args(4, 4)).ok, component.component === 'BarChart')
+  }
+})
+
+test('new display types use the plugin catalog and count all heatmap cells in the surface budget', () => {
+  const labels = Array.from({ length: 40 }, (_, index) => String(index))
+  const dataModel = { labels, matrix: labels.map(() => labels.map(() => null)) }
+  const heat = (id) => ({ id, component: 'Heatmap',
+    rowLabels: { '@path': '/labels' }, columnLabels: { '@path': '/labels' }, values: { '@path': '/matrix' } })
+  const basic = validateToolArguments({ messages: [card({ catalogId: BASIC_CATALOG_ID, components: [heat('root')], dataModel })] })
+  assert.match(basic.errors[0].message, /extension catalog/u)
+  const children = ['a', 'b', 'c', 'd']
+  const components = [{ id: 'root', component: 'Column', children }, ...children.map(heat)]
+  const result = validateToolArguments({ messages: [card({ components, dataModel })] })
+  assert.match(result.errors[0].message, /more than 5000/u)
+})
+
 test('accepts the official basic catalog and its components', () => {
   const result = validateToolArguments({
     messages: [

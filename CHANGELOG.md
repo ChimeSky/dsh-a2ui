@@ -3,6 +3,22 @@
 All notable changes to this plugin. Version numbers follow [SemVer](https://semver.org/); the
 `engines.dsh` range states which DeepSeek Harness releases a version was verified against.
 
+## 0.4.0 — 2026-11-24
+
+### Added
+
+- Compact presentation for individual charts and short content blocks, plus the lightweight `Section` component.
+- `Heatmap` with sequential and diverging scales and `Timeline` with event statuses.
+- Scatter series with data binding, legend toggles and keyboard inspection in `Plot`, with optional bubble sizes and per-series linear regression.
+- `ParetoChart`, optional error bars on vertical non-stacked `BarChart` series, and `RadarChart` with a shared score scale.
+
+### Fixed
+
+- Scatter plots show valid endpoints, and chart focus outlines are reserved for keyboard navigation. Fixed axes support steady slider-driven redraws.
+- Heatmap tooltips follow the pointer and clear as it leaves a cell. The scrollable cells fade at the horizontal and vertical header boundaries.
+- Refined plot segments at domain boundaries, small-value tick labels, line-chart tooltip wrapping, and long radar labels in narrow layouts.
+- The local installer validates its archive before invoking DSH and checks every packaged runtime file against the build.
+
 ## 0.3.1 — 2026-11-18
 
 ### Fixed

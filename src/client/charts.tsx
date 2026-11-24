@@ -13,17 +13,21 @@
 import * as React from 'react'
 import { h } from './h.js'
 import type { A2UIComponent } from '../shared/validate.js'
-import { compileExpression, type CompiledExpression } from '../shared/expression.js'
-import { anyValue, numberValue, text, type Scope } from './context.js'
-import { isDataBinding, isFunctionCall } from '../shared/schema.js'
+import { compileExpression, tryCompileExpression, type CompiledExpression } from '../shared/expression.js'
+import { anyValue, numberValue, resolveContext, text, type Scope } from './context.js'
+import { isDataBinding, isFunctionCall, type Violation } from '../shared/schema.js'
+import { isPlainObject } from '../shared/json.js'
+import { LIMITS } from '../shared/limits.js'
+import { axisFraction, fitLinearRegression, plotPointList, visibleRegressionSegment, type PlotPoint } from '../shared/plot-data.js'
+import { chartSeriesValues, resolveErrorRanges, resolveParetoItems, type ErrorRange, type ParetoItem } from '../shared/display-data.js'
+import { bindingPointer } from './fields.js'
+import { ChartTooltip } from './chart-tooltip.js'
 
 const VIEW_WIDTH = 640
 const PAD = { top: 18, right: 16, bottom: 30, left: 46 }
-const TOOLTIP_FONT = 10.5
-const CHAR_WIDTH = 6.1
 
 /** Series colour: an authored safe colour, else the theme-independent palette. */
-function seriesColor(index: number, override: unknown): string {
+export function seriesColor(index: number, override: unknown): string {
   if (typeof override === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/u.test(override)) return override
   return `var(--a2ui-c${(index % 8) + 1})`
 }
@@ -40,6 +44,12 @@ function trim(value: number): string {
   if (!Number.isFinite(value)) return '–'
   const rounded = Math.abs(value) >= 100 ? Math.round(value) : Math.round(value * 100) / 100
   return String(rounded)
+}
+
+function visibleCategoryLabel(label: string, limit: number): string {
+  if (label.length <= limit) return label
+  const points = Array.from(label)
+  return points.length <= limit ? label : `${points.slice(0, limit - 1).join('')}…`
 }
 
 interface Scale {
@@ -65,10 +75,20 @@ function niceScale(values: number[], forcedMin?: number, forcedMax?: number, tic
   const magnitude = 10 ** Math.floor(Math.log10(rawStep))
   const normalized = rawStep / magnitude
   const step = (normalized >= 5 ? 10 : normalized >= 2 ? 5 : normalized >= 1 ? 2 : 1) * magnitude
+  if (!Number.isFinite(step) || !(step > 0)) return scatterScale(finite, forcedMin, forcedMax)
   const niceMin = forcedMin === undefined ? Math.floor(min / step) * step : min
   const niceMax = forcedMax === undefined ? Math.ceil(max / step) * step : max
+  if (!Number.isFinite(niceMin) || !Number.isFinite(niceMax)) return scatterScale(finite, forcedMin, forcedMax)
   const ticks: number[] = []
-  for (let tick = niceMin; tick <= niceMax + step / 2 && ticks.length < 12; tick += step) ticks.push(Number(tick.toFixed(10)))
+  for (let i = 0; i < 12; i++) {
+    const raw = niceMin + i * step
+    const rounded = Number(raw.toFixed(10))
+    if (raw > niceMax && rounded > niceMax) break
+    const tick = Math.max(niceMin, Math.min(niceMax, rounded))
+    if (tick !== ticks.at(-1)) ticks.push(tick)
+  }
+  const last = ticks.at(-1)
+  if (forcedMax !== undefined && last !== undefined && niceMax - last >= step / 2 && ticks.length < 12) ticks.push(niceMax)
   return { min: niceMin, max: niceMax, ticks }
 }
 
@@ -84,23 +104,9 @@ function readSeries(scope: Scope, component: A2UIComponent, categoryCount?: numb
     const record = (entry ?? {}) as Record<string, unknown>
     return {
       label: record.label === undefined ? `${scope.view.t('series')} ${index + 1}` : text(scope, record.label),
-      values: resolveSeriesValues(scope, record.values, categoryCount),
+      values: chartSeriesValues(anyValue(scope, record.values), categoryCount),
       color: seriesColor(index, record.color),
     }
-  })
-}
-
-/**
- * Keep one slot per category, including missing entries in bound data. A
- * missing entry in the middle must not shift later values to another label.
- */
-function resolveSeriesValues(scope: Scope, value: unknown, categoryCount?: number): Array<number | undefined> {
-  const resolved = anyValue(scope, value)
-  if (!Array.isArray(resolved)) return typeof resolved === 'number' && Number.isFinite(resolved) ? [resolved] : []
-  const values = categoryCount === undefined ? resolved : resolved.slice(0, categoryCount)
-  return values.map((entry) => {
-    const number = typeof entry === 'string' && entry.trim() !== '' ? Number(entry) : entry
-    return typeof number === 'number' && Number.isFinite(number) ? number : undefined
   })
 }
 
@@ -139,12 +145,12 @@ function legend(props: LegendProps): ReturnType<typeof h> | null {
   )
 }
 
-function caption(scope: Scope, component: A2UIComponent): ReturnType<typeof h> | null {
+export function caption(scope: Scope, component: A2UIComponent): ReturnType<typeof h> | null {
   if (component.caption === undefined) return null
   return h('p', { className: 'a2ui-caption' }, text(scope, component.caption))
 }
 
-function emptyChart(scope: Scope, component: A2UIComponent, message: string): ReturnType<typeof h> {
+export function emptyChart(scope: Scope, component: A2UIComponent, message: string): ReturnType<typeof h> {
   return h('div', { className: 'a2ui-chart-wrap' }, caption(scope, component), h('p', { className: 'a2ui-caption' }, message))
 }
 
@@ -162,34 +168,6 @@ function axisSummary(scope: Scope, categories: string[], series: SeriesData[]): 
     return `${entry.label}: ${scope.view.t('total')} ${trim(values.reduce((sum, value) => sum + value, 0))} (min ${trim(min)}, max ${trim(max)})`
   })
   return `${categories.join(', ')}. ${parts.join('. ')}`
-}
-
-/** Tooltip box drawn inside the SVG so it can never overflow the card. */
-function tooltipLines(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  lines: string[],
-  align: 'start' | 'end' = 'start',
-): ReturnType<typeof h> {
-  const left = align === 'start' ? Math.min(x, VIEW_WIDTH - width - 4) : Math.max(4, x - width)
-  return h(
-    'g',
-    { className: 'a2ui-tip', pointerEvents: 'none' },
-    h('rect', { x: left, y, width, height, rx: 6, fill: 'var(--dsw-alias-bg-overlay)', stroke: 'var(--dsw-alias-border-l2)', strokeWidth: 1, opacity: 0.98 }),
-    ...lines.map((line, index) =>
-      h(
-        'text',
-        { key: `t${index}`, x: left + 8, y: y + 14 + index * 13, fontSize: TOOLTIP_FONT, fill: 'var(--dsw-alias-label-primary)' },
-        line,
-      ),
-    ),
-  )
-}
-
-function textWidth(lines: string[]): number {
-  return Math.max(...lines.map((line) => line.length)) * CHAR_WIDTH + 16
 }
 
 /**
@@ -219,18 +197,26 @@ export function barDomain(values: number[], forcedMin?: number, forcedMax?: numb
  * instead of being connected across the gap, which would draw a false straight
  * line through a discontinuity.
  */
+interface PlotSample { x: number; y: number }
+
 export function splitPlotSegments(
-  points: Array<{ x: number; y: number }>,
+  points: PlotSample[],
   min: number,
   max: number,
-): Array<Array<{ x: number; y: number }>> {
-  const segments: Array<Array<{ x: number; y: number }>> = []
-  let current: Array<{ x: number; y: number }> = []
+  hasGap?: (previous: PlotSample, next: PlotSample) => boolean,
+): PlotSample[][] {
+  const segments: PlotSample[][] = []
+  let current: PlotSample[] = []
   for (const point of points) {
     if (!Number.isFinite(point.y) || point.y < min || point.y > max) {
       if (current.length > 0) segments.push(current)
       current = []
       continue
+    }
+    const previous = current.at(-1)
+    if (previous !== undefined && hasGap?.(previous, point)) {
+      segments.push(current)
+      current = []
     }
     current.push(point)
   }
@@ -245,65 +231,39 @@ interface BarHover {
   element: SVGRectElement
 }
 
-/** Keep the HTML tooltip and the hovered SVG rectangle in the same CSS pixel space. */
-function BarTooltip({ bar, lines }: { bar: SVGRectElement; lines: string[] }): ReturnType<typeof h> {
-  const ref = React.useRef<HTMLDivElement>(null)
-  React.useLayoutEffect(() => {
-    const tip = ref.current
-    const layer = tip?.parentElement
-    if (!tip || !layer) return
-    const update = (): void => {
-      const frame = layer.getBoundingClientRect()
-      const anchor = bar.getBoundingClientRect()
-      const scaleX = frame.width > 0 && layer.clientWidth > 0 ? frame.width / layer.clientWidth : 1
-      const scaleY = frame.height > 0 && layer.clientHeight > 0 ? frame.height / layer.clientHeight : 1
-      const box = tip.getBoundingClientRect()
-      const width = box.width / scaleX
-      const height = box.height / scaleY
-      const left = (anchor.left - frame.left) / scaleX
-      const right = (anchor.right - frame.left) / scaleX
-      const top = (anchor.top - frame.top) / scaleY
-      const bottom = (anchor.bottom - frame.top) / scaleY
-      const gap = 8
-      const inset = 4
-      const maxX = Math.max(inset, layer.clientWidth - width - inset)
-      const maxY = Math.max(inset, layer.clientHeight - height - inset)
-
-      let x: number
-      let y = (top + bottom - height) / 2
-      if (right + gap <= maxX) x = right + gap
-      else if (left - gap - width >= inset) x = left - gap - width
-      else {
-        x = (left + right - width) / 2
-        y = top - gap - height >= inset ? top - gap - height : bottom + gap
-      }
-      tip.style.left = `${Math.max(inset, Math.min(maxX, x))}px`
-      tip.style.top = `${Math.max(inset, Math.min(maxY, y))}px`
-      tip.style.visibility = 'visible'
-    }
-    update()
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
-    observer?.observe(layer)
-    observer?.observe(bar)
-    observer?.observe(tip)
-    return () => observer?.disconnect()
-  }, [bar, lines[0], lines[1]])
-  return h('div', { ref, className: 'a2ui-bar-tip', role: 'tooltip' },
-    ...lines.map((line, index) => h('div', { key: index }, line)),
-  )
+interface BarSeriesData extends SeriesData {
+  errorBars?: Array<ErrorRange | null>
+  errorLabel?: string
+  invalidErrors?: boolean
 }
 
 export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
   const view = scope.view
-  const categories = Array.isArray(component.categories) ? (component.categories as unknown[]).map((entry) => text(scope, entry)) : []
-  const allSeries = readSeries(scope, component, categories.length)
+  const resolvedCategories = Array.isArray(component.categories) ? component.categories : anyValue(scope, component.categories)
+  const categories = Array.isArray(resolvedCategories) ? resolvedCategories.map((entry) => text(scope, entry)) : []
+  const declarations = Array.isArray(component.series) ? component.series : []
+  const allSeries = readSeries(scope, component, categories.length).map<BarSeriesData>((entry, index) => {
+    const raw = declarations[index]
+    if (!isPlainObject(raw) || raw.errorBars === undefined) return entry
+    const ranges = resolveErrorRanges(raw.errorBars, resolvedCategories, anyValue(scope, raw.values), resolveContext(scope), '')
+    return {
+      ...entry,
+      errorBars: ranges.kind === 'ready' ? ranges.value : undefined,
+      invalidErrors: ranges.kind === 'invalid' || (ranges.kind === 'pending' && !view.streaming),
+      errorLabel: raw.errorLabel === undefined ? '' : text(scope, raw.errorLabel),
+    }
+  })
   const [hidden, setHidden] = React.useState<Set<number>>(() => new Set())
   const [hover, setHover] = React.useState<BarHover | null>(null)
+  const plotRef = React.useRef<HTMLDivElement>(null)
+  const responsive = allSeries.some((entry) => entry.errorBars !== undefined)
+  const viewWidth = useChartWidth(plotRef, responsive)
   const series = allSeries.filter((_, index) => !hidden.has(index))
   const horizontal = component.horizontal === true
   const stacked = component.stacked === true
   const suffix = component.valueSuffix === undefined ? '' : text(scope, component.valueSuffix)
   const all = series.flatMap((entry) => entry.values.filter((value) => value !== undefined))
+  if (allSeries.some((entry) => entry.invalidErrors)) return emptyChart(scope, component, view.t('displayInvalid'))
   if (categories.length === 0 || series.length === 0 || all.length === 0) return emptyChart(scope, component, view.t('chartEmpty'))
 
   const toggle = (index: number): void => {
@@ -317,13 +277,15 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
   }
 
   const height = chartHeight(component, horizontal ? Math.max(160, categories.length * 26 + PAD.top + PAD.bottom) : 240)
-  const plotWidth = VIEW_WIDTH - PAD.left - PAD.right
+  const plotWidth = viewWidth - PAD.left - PAD.right
   const plotHeight = height - PAD.top - PAD.bottom
 
   // Bar charts must show their baseline: a positive-only series starts at 0, a
   // negative-only one ends at 0, and a mixed one contains 0. An explicit yMin /
   // yMax wins, and the plot is clamped to that domain.
-  const domain = barDomain(all, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
+  const endpoints = series.flatMap((entry) => entry.errorBars?.flatMap((range) => range === null ? [] : [range.lower, range.upper]) ?? [])
+  const extent = endpoints.length === 0 ? all : [...all, ...endpoints]
+  const domain = barDomain(extent, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
   let scale: Scale
   if (stacked && !horizontal) {
     const stackMin: number[] = []
@@ -342,13 +304,18 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     })
     scale = niceScale([...stackMax, ...stackMin], domain.min, domain.max)
   } else {
-    scale = niceScale(all, domain.min, domain.max)
+    scale = niceScale(extent, domain.min, domain.max)
+    if (endpoints.length > 0 && (!(scale.max > scale.min) || new Set(scale.ticks).size < 2)) {
+      scale = scatterScale(extent, domain.min, domain.max)
+    }
   }
-  const span = scale.max - scale.min || 1
   const clamp = (value: number): number => Math.max(scale.min, Math.min(scale.max, value))
-  const valueToY = (value: number): number => PAD.top + plotHeight - ((clamp(value) - scale.min) / span) * plotHeight
-  const valueToX = (value: number): number => PAD.left + ((clamp(value) - scale.min) / span) * plotWidth
+  const fraction = (value: number): number => scale.min === scale.max ? 0 : axisFraction(clamp(value), scale.min, scale.max)
+  const valueToY = (value: number): number => PAD.top + plotHeight * (1 - fraction(value))
+  const valueToX = (value: number): number => PAD.left + plotWidth * fraction(value)
+  const tickLabels = endpoints.length > 0 ? numericTickLabels(scale.ticks) : scale.ticks.map(formatTick)
   const band = horizontal ? plotHeight / Math.max(1, categories.length) : plotWidth / Math.max(1, categories.length)
+  const labelEvery = responsive ? Math.max(1, Math.ceil(52 / band)) : 1
   const groupWidth = band * 0.68
   const barWidth = stacked || horizontal ? groupWidth : groupWidth / Math.max(1, series.length)
 
@@ -361,13 +328,13 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             'g',
             { key: `g${index}` },
             h('line', { x1: valueToX(tick), x2: valueToX(tick), y1: PAD.top, y2: PAD.top + plotHeight }),
-            h('text', { x: valueToX(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, formatTick(tick)),
+            h('text', { x: valueToX(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, tickLabels[index]),
           )
         : h(
             'g',
             { key: `g${index}` },
             h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: valueToY(tick), y2: valueToY(tick) }),
-            h('text', { x: PAD.left - 6, y: valueToY(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, formatTick(tick)),
+            h('text', { x: PAD.left - 6, y: valueToY(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, tickLabels[index]),
           ),
     ),
   )
@@ -436,12 +403,14 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
         const zero = valueToY(0)
         const y = valueToY(value)
         const isHover = hover !== null && hover.category === categoryIndex && hover.series === seriesIndex
+        const x = center - groupWidth / 2 + seriesIndex * barWidth
+        const width = Math.max(1, barWidth * 0.88)
         bars.push(
           h('rect', {
             key: `b${categoryIndex}-${seriesIndex}`,
-            x: center - groupWidth / 2 + seriesIndex * barWidth,
+            x,
             y: Math.min(y, zero),
-            width: Math.max(1, barWidth * 0.88),
+            width,
             height: Math.max(0.5, Math.abs(zero - y)),
             rx: 2,
             fill: entry.color,
@@ -452,9 +421,28 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             style: { transition: 'opacity .12s ease' },
           }),
         )
+        const interval = entry.errorBars?.[categoryIndex]
+        if (interval && interval.upper >= scale.min && interval.lower <= scale.max) {
+          const mid = x + width / 2
+          const halfCap = Math.min(6, width * 0.31)
+          const low = valueToY(interval.lower)
+          const high = valueToY(interval.upper)
+          const cap = (at: number): string => `M${mid - halfCap},${at}H${mid + halfCap}`
+          const d = `M${mid},${low}V${high}`
+            + (interval.lower >= scale.min ? cap(low) : '')
+            + (interval.upper <= scale.max && interval.upper !== interval.lower ? cap(high) : '')
+          bars.push(h('path', {
+            key: `error${categoryIndex}-${seriesIndex}`,
+            'data-bar-error': '',
+            'aria-hidden': true,
+            d, fill: 'none', stroke: 'currentColor', strokeWidth: 1.5,
+            vectorEffect: 'non-scaling-stroke', pointerEvents: 'none',
+            opacity: hover === null || isHover ? 1 : 0.35,
+          }))
+        }
       })
     }
-    if (categories.length <= 14) {
+    if (responsive ? categoryIndex % labelEvery === 0 : categories.length <= 14) {
       bars.push(
         h(
           'text',
@@ -467,7 +455,8 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
             fill: 'currentColor',
             opacity: hover === null || hover.category === categoryIndex ? 0.85 : 0.45,
           },
-          category.length > 14 ? `${category.slice(0, 13)}…` : category,
+          responsive ? visibleCategoryLabel(category, Math.max(3, Math.min(14, Math.floor(band * labelEvery / 11))))
+            : category.length > 14 ? `${category.slice(0, 13)}…` : category,
         ),
       )
     }
@@ -479,9 +468,13 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     const value = entry?.values[hover.category]
     const label = categories[hover.category] ?? ''
     if (entry !== undefined && value !== undefined) {
-      tooltip = h(BarTooltip, {
-        bar: hover.element,
-        lines: [label, `${entry.label}: ${trim(value)}${suffix === '' ? '' : ` ${suffix}`}`],
+      const unit = suffix === '' ? '' : ` ${suffix}`
+      const interval = entry.errorBars?.[hover.category]
+      const lines = [label, `${entry.label}: ${interval ? value : trim(value)}${unit}`]
+      if (interval) lines.push(`${entry.errorLabel || view.t('barErrorRange')}: ${interval.lower} – ${interval.upper}${unit}`)
+      tooltip = h(ChartTooltip, {
+        anchor: hover.element,
+        lines,
       })
     }
   }
@@ -492,12 +485,12 @@ export function renderBarChart(scope: Scope, component: A2UIComponent): ReturnTy
     caption(scope, component),
     h(
       'div',
-      { className: 'a2ui-bar-plot' },
+      { className: 'a2ui-bar-plot', ref: plotRef },
       h(
         'svg',
         {
           className: 'a2ui-chart-svg a2ui-axis',
-          viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
+          viewBox: `0 0 ${viewWidth} ${height}`,
           role: 'img',
           'aria-label': axisSummary(scope, categories, series),
           style: { maxHeight: `${height}px` },
@@ -519,6 +512,7 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
   const allSeries = readSeries(scope, component)
   const [hidden, setHidden] = React.useState<Set<number>>(() => new Set())
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null)
+  const tooltipAnchor = React.useRef<SVGCircleElement>(null)
   const series = allSeries.filter((_, index) => !hidden.has(index))
   const area = component.area === true
   const smooth = component.curve === 'smooth'
@@ -660,11 +654,7 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
       const value = entry.values[hoverIndex]
       if (value !== undefined) lines.push(`${entry.label}: ${trim(value)}`)
     })
-    if (lines.length > 1) {
-      const x = xAt(hoverIndex)
-      const width = textWidth(lines)
-      tooltip = tooltipLines(x, PAD.top + 2, width, 14 + lines.length * 13, lines, x > VIEW_WIDTH / 2 ? 'end' : 'start')
-    }
+    if (lines.length > 1) tooltip = h(ChartTooltip, { anchor: tooltipAnchor, lines })
   }
 
   const guide =
@@ -686,7 +676,7 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
     'div',
     { className: 'a2ui-chart-wrap' },
     caption(scope, component),
-    h(
+    h('div', { className: 'a2ui-bar-plot' }, h(
       'svg',
       {
         className: 'a2ui-chart-svg a2ui-axis',
@@ -700,8 +690,10 @@ export function renderLineChart(scope: Scope, component: A2UIComponent): ReturnT
       yLabel === '' ? null : h('text', { x: PAD.left, y: 11, fontSize: 10, fill: 'currentColor', opacity: 0.7 }, yLabel),
       ...marks,
       ...bands,
-      tooltip,
-    ),
+      hoverIndex === null || tooltip === null ? null : h('circle', {
+        ref: tooltipAnchor, cx: xAt(hoverIndex), cy: PAD.top + 18, r: 1, opacity: 0, pointerEvents: 'none',
+      }),
+    ), tooltip),
     legend({ series: allSeries, hidden, onToggle: toggle }),
   )
 }
@@ -857,14 +849,201 @@ export function renderPieChart(scope: Scope, component: A2UIComponent): ReturnTy
   )
 }
 
-/** `Plot` */
-export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<typeof h> {
-  const view = scope.view
-  const xMin = numberValue(scope, component.xMin) ?? -10
-  const xMax = numberValue(scope, component.xMax) ?? 10
-  if (!(xMax > xMin)) return emptyChart(scope, component, view.t('plotInvalidRange'))
-  const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240))
-  const variablesRaw = component.variables
+function scatterScale(values: number[], lower?: number, upper?: number, inset = 0): Scale {
+  let min = lower ?? (values.length > 0 ? Math.min(...values) : (upper ?? 1) - 1)
+  let max = upper ?? (values.length > 0 ? Math.max(...values) : (lower ?? 0) + 1)
+  if (max <= min) {
+    const edge = lower ?? upper ?? min
+    const padding = edge === 0 ? 1 : Math.max(Math.abs(edge) * 0.1, Number.MIN_VALUE)
+    if (lower === undefined) min = Math.max(-Number.MAX_VALUE, edge - padding)
+    if (upper === undefined) max = Math.min(Number.MAX_VALUE, edge + padding)
+  }
+  if (inset > 0 && min < max) {
+    const padding = (max * inset - min * inset) / (1 - 2 * inset)
+    if (lower === undefined) min = Math.max(-Number.MAX_VALUE, min - padding)
+    if (upper === undefined) max = Math.min(Number.MAX_VALUE, max + padding)
+  }
+  const ticks = Array.from({ length: 5 }, (_, index) => {
+    const part = index / 4
+    return min * (1 - part) + max * part
+  })
+  return { min, max, ticks: [...new Set(ticks)] }
+}
+
+function bubbleRadius(size: number | undefined, maxSize: number, maxRadius: number): number {
+  if (size === undefined || size === 0) return 3.5
+  return Math.max(1.5, maxRadius * Math.sqrt(size / maxSize))
+}
+
+function numericTickLabels(ticks: number[]): string[] {
+  const labels = ticks.map((value) => {
+    const magnitude = Math.abs(value)
+    return magnitude >= 1e12 || (magnitude > 0 && magnitude < 0.01) ? value.toExponential(2) : formatTick(value)
+  })
+  if (new Set(labels).size === labels.length) return labels
+  const precise = ticks.map((value) => String(Number(value.toPrecision(9))))
+  return new Set(precise).size === precise.length ? precise : ticks.map(String)
+}
+
+interface ScatterMark extends PlotPoint {
+  key: string
+  cx: number
+  cy: number
+  series: string
+  color: string
+  radius: number
+}
+
+interface PlotFrameProps {
+  svg: React.SVGProps<SVGSVGElement>
+  points: ScatterMark[]
+  plotWidth: number
+  plotHeight: number
+  left: number
+  xLabel: string
+  yLabel: string
+  sizeLabel: string
+  interactive: boolean
+  t: (key: string) => string
+  children?: React.ReactNode
+}
+
+function PlotFrame(props: PlotFrameProps): ReturnType<typeof h> {
+  const { points, svg, interactive, t } = props
+  const id = React.useId()
+  const svgRef = React.useRef<SVGSVGElement>(null)
+  const [selection, setSelection] = React.useState<{
+    index: number
+    point: ScatterMark
+    anchor: SVGGraphicsElement
+    mode: 'hover' | 'keyboard' | 'pinned'
+  }>()
+  const current = selection === undefined ? undefined : points[selection.index]
+  const active = selection !== undefined && current !== undefined && selection.anchor.isConnected
+    && current.key === selection.point.key
+    && current.x === selection.point.x && current.y === selection.point.y
+    && current.size === selection.point.size
+    && current.label === selection.point.label && current.series === selection.point.series
+    ? current
+    : undefined
+  const groups = React.useMemo(() => {
+    const byPosition = new Map<string, number[]>()
+    points.forEach(({ x, y }, index) => {
+      const key = `${x},${y}`
+      const members = byPosition.get(key)
+      if (members === undefined) byPosition.set(key, [index])
+      else members.push(index)
+    })
+    return byPosition
+  }, [points])
+  const marks = React.useMemo(() => points.map((point, index) => ({ point, index }))
+    .sort((a, b) => b.point.radius - a.point.radius)
+    .map(({ point, index }) => h('circle', {
+      key: point.key,
+      'data-plot-point': index,
+      cx: point.cx, cy: point.cy, r: point.radius,
+      fill: point.size === 0 ? 'transparent' : point.color,
+      fillOpacity: point.size === undefined ? undefined : 0.5,
+      stroke: point.size === undefined ? 'transparent' : point.color,
+      strokeWidth: point.size === undefined ? 8 : 1,
+    })), [points])
+
+  const pick = (index: number, mode: 'hover' | 'keyboard' | 'pinned'): void => {
+    const point = points[index]
+    const anchor = svgRef.current?.querySelector<SVGGraphicsElement>(`[data-plot-point="${index}"]`)
+    if (point !== undefined && anchor) setSelection({ index, point, anchor, mode })
+  }
+  const pointIndex = (target: EventTarget): number | undefined => {
+    const raw = (target as Element).getAttribute?.('data-plot-point')
+    return raw == null ? undefined : Number(raw)
+  }
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const index = active === undefined ? undefined : selection?.index
+    let next: number
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown': next = index === undefined ? 0 : (index + 1) % points.length; break
+      case 'ArrowLeft':
+      case 'ArrowUp': next = index === undefined ? points.length - 1 : (index - 1 + points.length) % points.length; break
+      case 'Home': next = 0; break
+      case 'End': next = points.length - 1; break
+      case 'Escape':
+        if (selection === undefined) return
+        event.preventDefault()
+        event.stopPropagation()
+        setSelection(undefined)
+        return
+      default: return
+    }
+    event.preventDefault()
+    pick(next, 'keyboard')
+  }
+  const onClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const index = pointIndex(event.target)
+    const point = index === undefined ? undefined : points[index]
+    if (point === undefined || index === undefined) {
+      setSelection(undefined)
+      return
+    }
+    const overlaps = groups.get(`${point.x},${point.y}`) ?? [index]
+    const selectedOverlap = active !== undefined && selection?.mode === 'pinned' ? overlaps.indexOf(selection.index) : -1
+    pick(selectedOverlap === -1 ? index : overlaps[(selectedOverlap + 1) % overlaps.length], 'pinned')
+  }
+  const lines: string[] = []
+  if (active !== undefined && selection !== undefined) {
+    if (active.label) lines.push(active.label)
+    lines.push(active.series, `${props.xLabel || 'X'}: ${active.x}`, `${props.yLabel || 'Y'}: ${active.y}`)
+    if (active.size !== undefined) lines.push(`${props.sizeLabel}: ${active.size}`)
+    const overlaps = groups.get(`${active.x},${active.y}`)
+    if (overlaps !== undefined && overlaps.length > 1) {
+      lines.push(t('scatterOverlap')
+        .replace('{index}', String(overlaps.indexOf(selection.index) + 1))
+        .replace('{total}', String(overlaps.length)))
+    }
+  }
+  const clipId = `${id}-plot`
+  return h('div', {
+    className: 'a2ui-plot-frame',
+    ...(interactive ? {
+        role: 'group',
+        tabIndex: 0,
+        'aria-label': svg['aria-label'],
+        'aria-describedby': `${id}-keys`,
+        onFocus: () => pick(0, 'keyboard'),
+        onBlur: () => setSelection(undefined),
+        onKeyDown,
+        onClick,
+        onPointerOver: (event: React.PointerEvent<HTMLDivElement>) => {
+          const index = pointIndex(event.target)
+          if (index !== undefined && event.pointerType !== 'touch' && (active === undefined || selection?.mode !== 'pinned')) pick(index, 'hover')
+        },
+        onPointerOut: () => {
+          if (selection?.mode === 'hover') setSelection(undefined)
+        },
+    } : {}),
+  },
+    h('svg', { ...svg, ref: svgRef, 'aria-hidden': interactive || undefined },
+    h('defs', null, h('clipPath', { id: clipId },
+      h('rect', { x: props.left, y: PAD.top, width: props.plotWidth, height: props.plotHeight }),
+    )),
+    props.children,
+    h('g', { clipPath: `url(#${clipId})`, 'aria-hidden': true },
+      ...marks,
+      active === undefined ? null : h('circle', {
+        cx: active.cx, cy: active.cy, r: active.radius + 1.5,
+        fill: active.size === undefined ? active.color : 'none',
+        stroke: 'currentColor', strokeWidth: 1.25, pointerEvents: 'none',
+      }),
+    )),
+    interactive ? h('span', { id: `${id}-keys`, className: 'a2ui-visually-hidden' }, t('scatterKeyboard')) : null,
+    interactive ? h('span', { className: 'a2ui-visually-hidden', role: 'status' },
+      selection?.mode === 'hover' ? '' : lines.join(' · '),
+    ) : null,
+    selection !== undefined && active !== undefined ? h(ChartTooltip, { anchor: selection.anchor, lines }) : null,
+  )
+}
+
+function readPlotVariables(scope: Scope, variablesRaw: unknown): Record<string, number> {
   const variables: Record<string, number> = {}
   // `variables` may be an object of per-variable bindings, or one binding that
   // resolves to the whole coefficient object (`{"@path": "/coefficients"}`).
@@ -882,7 +1061,107 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
       if (resolved !== undefined) variables[key] = resolved
     }
   }
-  const plots = (Array.isArray(component.plots) ? component.plots.slice(0, 8) : []).map((entry, index) => {
+  return variables
+}
+
+interface SliderRange {
+  name: string
+  min: number
+  max: number
+}
+
+function plotSliderRanges(scope: Scope, variablesRaw: unknown, variables: Record<string, number>): SliderRange[] {
+  const whole = bindingPointer(variablesRaw)
+  const variablePaths = new Map<string, string>()
+  for (const name of Object.keys(variables)) {
+    const propertyPath = name.replaceAll('~', '~0').replaceAll('/', '~1')
+    const pointer = whole === undefined
+      ? bindingPointer(isPlainObject(variablesRaw) ? variablesRaw[name] : undefined)
+      : `${whole === '/' ? '' : whole}/${propertyPath}`
+    if (pointer !== undefined) variablePaths.set(name, pointer)
+  }
+  if (variablePaths.size === 0) return []
+
+  const sliderBounds = new Map<string, { min: number; max: number }>()
+  for (const component of scope.view.state.components.values()) {
+    if (component.component !== 'Slider') continue
+    const pointer = bindingPointer(component.value)
+    const min = typeof component.min === 'number' ? component.min : 0
+    const max = typeof component.max === 'number' ? component.max : 100
+    if (pointer === undefined || !Number.isFinite(min) || !Number.isFinite(max) || !(max > min)) continue
+    const previous = sliderBounds.get(pointer)
+    sliderBounds.set(pointer, previous === undefined ? { min, max } : {
+      min: Math.min(min, previous.min),
+      max: Math.max(max, previous.max),
+    })
+  }
+  const ranges: SliderRange[] = []
+  for (const [name, pointer] of variablePaths) {
+    const bounds = sliderBounds.get(pointer)
+    if (bounds !== undefined) ranges.push({ name, ...bounds })
+  }
+  return ranges
+}
+
+/** Sample a bounded set of slider settings once, outside the drag's update loop. */
+function linkedPlotExtent(
+  component: A2UIComponent,
+  fixed: Record<string, number>,
+  ranges: SliderRange[],
+): [number, number] | undefined {
+  const { xMin, xMax, plots } = component
+  if (typeof xMin !== 'number' || typeof xMax !== 'number' || !Number.isFinite(xMax - xMin) || !(xMax > xMin)
+    || !Array.isArray(plots)) return undefined
+  const expressions = plots.flatMap((entry) => {
+    if (!isPlainObject(entry) || entry.kind === 'scatter' || typeof entry.expression !== 'string') return []
+    const expression = tryCompileExpression(entry.expression)
+    return expression?.variables.some((name) => ranges.some((range) => range.name === name)) ? [expression] : []
+  })
+  if (expressions.length === 0) return undefined
+  const settings = ranges.reduce(
+    (inputs, range) => inputs.flatMap((input) => [range.min, range.min / 2 + range.max / 2, range.max].map(
+      (value) => ({ ...input, [range.name]: value }),
+    )),
+    [fixed],
+  )
+  let min = Number.POSITIVE_INFINITY
+  let max = Number.NEGATIVE_INFINITY
+  for (const expression of expressions) {
+    for (const input of settings) {
+      const values = { ...input, x: xMin }
+      for (let index = 0; index <= 80; index += 1) {
+        values.x = xMin + (xMax - xMin) * (index / 80)
+        const y = expression.evaluate(values)
+        if (!Number.isFinite(y)) return undefined
+        min = Math.min(min, y)
+        max = Math.max(max, y)
+      }
+    }
+  }
+  return Number.isFinite(max - min) ? [min, max] : undefined
+}
+
+interface PlotOptions extends Pick<LegendProps, 'hidden' | 'onToggle'> {
+  width?: number
+  variables?: Record<string, number>
+  linkedExtent?: [number, number]
+}
+
+/** `Plot` */
+export function renderPlot(
+  scope: Scope,
+  component: A2UIComponent,
+  options: PlotOptions = {},
+): ReturnType<typeof h> {
+  const { width = VIEW_WIDTH, variables = readPlotVariables(scope, component.variables), linkedExtent, hidden, onToggle } = options
+  const view = scope.view
+  const requestedXMin = numberValue(scope, component.xMin)
+  const requestedXMax = numberValue(scope, component.xMax)
+  if (requestedXMin !== undefined && requestedXMax !== undefined && !(requestedXMax > requestedXMin)) {
+    return emptyChart(scope, component, view.t('plotInvalidRange'))
+  }
+  const samples = Math.max(8, Math.min(1200, numberValue(scope, component.samples) ?? 240))
+  const plots = (Array.isArray(component.plots) ? component.plots.slice(0, LIMITS.maxSeries) : []).map((entry, index) => {
     const record = (entry ?? {}) as Record<string, unknown>
     const kind = record.kind === 'scatter' ? 'scatter' : 'function'
     let compiled: CompiledExpression | undefined
@@ -895,23 +1174,45 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
         error = cause instanceof Error ? cause.message : view.t('plotInvalid')
       }
     }
-    const points = Array.isArray(record.points)
-      ? (record.points as Array<Record<string, unknown>>)
-          .map((point) => ({ x: numberValue(scope, point.x), y: numberValue(scope, point.y) }))
-          .filter((point): point is { x: number; y: number } => point.x !== undefined && point.y !== undefined)
-      : []
+    const resolved = anyValue(scope, record.points)
+    const violations: Violation[] = []
+    if (resolved !== undefined && resolved !== null) plotPointList(resolved, '', violations)
+    const points = violations.length === 0 && Array.isArray(resolved) ? resolved as PlotPoint[] : []
     return {
       label: record.label === undefined ? `${view.t('series')} ${index + 1}` : text(scope, record.label),
       kind,
       compiled,
       error,
       points,
+      regression: kind === 'scatter' && record.regression === 'linear',
+      invalidPoints: violations.length > 0,
       color: seriesColor(index, record.color),
     }
   })
   if (plots.length === 0 || plots.every((plot) => plot.error !== '' && plot.points.length === 0)) {
     return emptyChart(scope, component, plots.find((plot) => plot.error !== '')?.error || view.t('plotInvalid'))
   }
+
+  if (plots.some((plot) => plot.invalidPoints)) {
+    return emptyChart(scope, component, view.t('scatterInvalidPoints').replace('{limit}', String(LIMITS.maxSeriesPoints)))
+  }
+  const scatterOnly = plots.every((plot) => plot.kind === 'scatter')
+  const hasPoints = plots.some((plot) => plot.points.length > 0)
+  if (scatterOnly && !hasPoints) return emptyChart(scope, component, view.t('scatterEmpty'))
+  const height = chartHeight(component, 250)
+  const left = hasPoints ? 62 : PAD.left
+  const plotWidth = width - left - PAD.right
+  const plotHeight = height - PAD.top - PAD.bottom
+  const sizes = plots.flatMap((plot) => plot.points.flatMap((point) => point.size === undefined ? [] : [point.size]))
+  const maxSize = Math.max(0, ...sizes)
+  const maxRadius = Math.min(16, plotWidth * 0.075, plotHeight * 0.12)
+  const xScale = scatterOnly ? scatterScale(
+    plots.flatMap((plot) => plot.points.map((point) => point.x)), requestedXMin, requestedXMax,
+    sizes.length > 0 ? (maxRadius + 2) / plotWidth : 0,
+  ) : undefined
+  const xMin = xScale?.min ?? requestedXMin ?? -10
+  const xMax = xScale?.max ?? requestedXMax ?? 10
+  if (!(xMax > xMin)) return emptyChart(scope, component, view.t('plotInvalidRange'))
 
   const step = (xMax - xMin) / (samples - 1)
   const lines = plots.map((plot) => {
@@ -920,20 +1221,25 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
     for (let index = 0; index < samples; index += 1) {
       const x = xMin + step * index
       const y = plot.compiled.evaluate({ ...variables, x })
-      if (Number.isFinite(y)) points.push({ x, y })
+      points.push({ x, y })
     }
     return { ...plot, samples: points }
   })
-  const allY = [...lines.flatMap((line) => [...line.samples.map((point) => point.y), ...line.points.map((point) => point.y)])]
-  const scale = niceScale(allY, numberValue(scope, component.yMin), numberValue(scope, component.yMax))
-  const height = chartHeight(component, 250)
-  const plotWidth = VIEW_WIDTH - PAD.left - PAD.right
-  const plotHeight = height - PAD.top - PAD.bottom
-  const xAt = (x: number): number => PAD.left + ((x - xMin) / (xMax - xMin)) * plotWidth
-  const yAt = (y: number): number => PAD.top + plotHeight - ((y - scale.min) / (scale.max - scale.min)) * plotHeight
+  const allY = lines.flatMap((line) => [...line.samples, ...line.points].map((point) => point.y)).filter(Number.isFinite)
+  const yMin = numberValue(scope, component.yMin)
+  const yMax = numberValue(scope, component.yMax)
+  const scale = scatterOnly ? scatterScale(allY, yMin, yMax, sizes.length > 0 ? (maxRadius + 2) / plotHeight : 0) : niceScale(
+    linkedExtent === undefined ? allY : [...allY, ...linkedExtent],
+    yMin, yMax,
+  )
+  if (scatterOnly && !(scale.max > scale.min)) return emptyChart(scope, component, view.t('scatterInvalidYRange'))
+  const xAt = (x: number): number => left + axisFraction(x, xMin, xMax) * plotWidth
+  const yAt = (y: number): number => PAD.top + plotHeight - axisFraction(y, scale.min, scale.max) * plotHeight
 
-  const xTicks: number[] = []
-  for (let index = 0; index <= 4; index += 1) xTicks.push(xMin + ((xMax - xMin) * index) / 4)
+  const xTicks = xScale?.ticks ?? Array.from({ length: 5 }, (_, index) => xMin + ((xMax - xMin) * index) / 4)
+  const xTicksShown = hasPoints && width < 420 && xTicks.length === 5 ? [xTicks[0], xTicks[2], xTicks[4]] : xTicks
+  const xLabels = hasPoints ? numericTickLabels(xTicksShown) : xTicksShown.map(formatTick)
+  const yLabels = hasPoints ? numericTickLabels(scale.ticks) : scale.ticks.map(formatTick)
 
   const grid = h(
     'g',
@@ -942,28 +1248,44 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
       h(
         'g',
         { key: `gy${index}` },
-        h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(tick), y2: yAt(tick) }),
-        h('text', { x: PAD.left - 6, y: yAt(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, formatTick(tick)),
+        h('line', { x1: left, x2: left + plotWidth, y1: yAt(tick), y2: yAt(tick) }),
+        h('text', { x: left - 6, y: yAt(tick) + 3.5, textAnchor: 'end', fontSize: 10 }, yLabels[index]),
       ),
     ),
-    ...xTicks.map((tick, index) =>
+    ...xTicksShown.map((tick, index) =>
       h(
         'g',
         { key: `gx${index}` },
         h('line', { x1: xAt(tick), x2: xAt(tick), y1: PAD.top, y2: PAD.top + plotHeight }),
-        h('text', { x: xAt(tick), y: height - 10, textAnchor: 'middle', fontSize: 10 }, formatTick(tick)),
+        h('text', {
+          x: xAt(tick), y: height - 10, fontSize: 10,
+          textAnchor: hasPoints && index === xTicksShown.length - 1 ? 'end' : 'middle',
+        }, xLabels[index]),
       ),
     ),
   )
 
   const marks: Array<ReturnType<typeof h>> = []
+  const regressionSummaries: Array<ReturnType<typeof h>> = []
+  const scatter: ScatterMark[] = []
+  let outside = 0
   if (scale.min <= 0 && scale.max >= 0) {
-    marks.push(h('line', { x1: PAD.left, x2: PAD.left + plotWidth, y1: yAt(0), y2: yAt(0), stroke: 'currentColor', opacity: 0.35, strokeWidth: 1 }))
+    marks.push(h('line', { x1: left, x2: left + plotWidth, y1: yAt(0), y2: yAt(0), stroke: 'currentColor', opacity: 0.35, strokeWidth: 1 }))
   }
   lines.forEach((line, index) => {
+    // Keep the domain derived from all series so comparison does not rescale the visible points.
+    if (hidden?.has(index)) return
     // A curve that leaves the plotted domain (1/x, tan, a vertical asymptote) is
     // broken rather than connected across the gap.
-    const segments = splitPlotSegments(line.samples, scale.min, scale.max)
+    const evaluate = line.compiled?.evaluate
+    const segments = splitPlotSegments(line.samples, scale.min, scale.max, evaluate === undefined ? undefined : (previous, next) => {
+      // Probe a steep step for a discontinuity between the sampled positions.
+      const jump = axisFraction(next.y, scale.min, scale.max) - axisFraction(previous.y, scale.min, scale.max)
+      if (Math.abs(jump) < 0.25) return false
+      const x = previous.x + (next.x - previous.x) / 2
+      const y = evaluate({ ...variables, x })
+      return !Number.isFinite(y) || y < scale.min || y > scale.max
+    })
 
     segments.forEach((segment, segmentIndex) => {
       if (segment.length === 1) {
@@ -982,37 +1304,251 @@ export function renderPlot(scope: Scope, component: A2UIComponent): ReturnType<t
         }),
       )
     })
-    line.points.forEach((point, pointIndex) => {
-      marks.push(h('circle', { key: `s${index}-${pointIndex}`, cx: xAt(point.x), cy: yAt(point.y), r: 3, fill: line.color }))
-    })
+    if (line.regression) {
+      const fit = fitLinearRegression(line.points)
+      const segment = fit && visibleRegressionSegment(fit, { xMin, xMax, yMin: scale.min, yMax: scale.max })
+      if (segment) {
+        const [start, end] = segment
+        marks.push(h('line', {
+          key: `fit${index}`,
+          'data-plot-regression': index,
+          x1: xAt(start.x), y1: yAt(start.y), x2: xAt(end.x), y2: yAt(end.y),
+          stroke: line.color, strokeWidth: 2, strokeDasharray: '6 4', pointerEvents: 'none',
+        }))
+      }
+      const summary = fit === undefined ? view.t('scatterRegressionUnavailable')
+        : fit.rSquared === undefined ? view.t('scatterRegressionConstant')
+          : `${view.t('scatterRegression')} · R² ${Number(fit.rSquared.toFixed(3))}`
+      regressionSummaries.push(h('span', { key: index },
+        segment ? h('span', { className: 'a2ui-plot-fit-swatch', style: { color: line.color }, 'aria-hidden': true }) : null,
+        `${line.label} · ${summary}`,
+      ))
+    }
+    for (const [pointIndex, point] of line.points.entries()) {
+      if (point.x < xMin || point.x > xMax || point.y < scale.min || point.y > scale.max) {
+        outside += 1
+        continue
+      }
+      scatter.push({
+        ...point, key: `${index}-${pointIndex}`, cx: xAt(point.x), cy: yAt(point.y),
+        series: line.label, color: line.color, radius: bubbleRadius(point.size, maxSize, maxRadius),
+      })
+    }
   })
 
   const invalid = plots.filter((plot) => plot.error !== '')
+  const xLabel = component.xLabel === undefined ? '' : text(scope, component.xLabel)
+  const yLabel = component.yLabel === undefined ? '' : text(scope, component.yLabel)
+  const sizeLabel = (component.sizeLabel === undefined ? '' : text(scope, component.sizeLabel)) || view.t('scatterSize')
+  const sizeTicks = [...new Set([
+    ...(sizes.includes(0) ? [0] : []),
+    ...(maxSize > 0 ? [Math.min(...sizes.filter((size) => size > 0)), maxSize] : []),
+  ])]
+  const sizeLabels = numericTickLabels(sizeTicks)
+  const svg: React.SVGProps<SVGSVGElement> = {
+    className: 'a2ui-chart-svg a2ui-axis',
+    viewBox: `0 0 ${width} ${height}`,
+    role: 'img',
+    'aria-label': `${xLabel || 'x'} ${hasPoints ? xMin : trim(xMin)}..${hasPoints ? xMax : trim(xMax)}${yLabel === '' ? '' : ` · ${yLabel}`}`,
+    style: { maxHeight: `${height}px` },
+  }
   return h(
     'div',
     { className: 'a2ui-chart-wrap' },
     caption(scope, component),
-    h(
-      'svg',
-      {
-        className: 'a2ui-chart-svg a2ui-axis',
-        viewBox: `0 0 ${VIEW_WIDTH} ${height}`,
-        role: 'img',
-        'aria-label': `${component.xLabel === undefined ? 'x' : text(scope, component.xLabel)} ${trim(xMin)}..${trim(xMax)}`,
-        style: { maxHeight: `${height}px` },
-      },
-      grid,
-      ...marks,
-    ),
+    yLabel === '' ? null : h('p', { className: 'a2ui-plot-label' }, yLabel),
+    scatter.length === 0
+      ? h('svg', svg, grid, ...marks)
+      : h(PlotFrame, { svg, points: scatter, plotWidth, plotHeight, left, xLabel, yLabel, sizeLabel, interactive: !view.streaming, t: view.t }, grid, ...marks),
+    xLabel === '' ? null : h('p', { className: 'a2ui-plot-label a2ui-plot-label-x' }, xLabel),
+    outside === 0 ? null : h('p', { className: 'a2ui-caption' }, view.t('scatterOutside').replace('{count}', String(outside))),
     invalid.length === 0
       ? null
       : h('p', { className: 'a2ui-error' }, ...invalid.map((plot, index) => h('span', { key: `e${index}` }, `${plot.label}: ${plot.error}; `))),
-    legend({ series: lines }),
+    legend({ series: lines, hidden, onToggle }),
+    sizeTicks.length === 0 ? null : h('div', { className: 'a2ui-caption a2ui-plot-key a2ui-plot-size' },
+      h('span', null, sizeLabel),
+      ...sizeTicks.map((size, index) => {
+        const diameter = 2 * bubbleRadius(size, maxSize, maxRadius)
+        return h('span', { key: size },
+          h('span', { className: 'a2ui-plot-size-swatch', 'aria-hidden': true,
+            style: { width: diameter, height: diameter, background: size === 0 ? 'transparent' : undefined } }),
+          sizeLabels[index],
+        )
+      }),
+    ),
+    regressionSummaries.length === 0 ? null : h('div', { className: 'a2ui-caption a2ui-plot-key' }, ...regressionSummaries),
   )
 }
 
 export function BarChartView(props: { component: A2UIComponent; scope: Scope }): ReturnType<typeof h> {
   return renderBarChart(props.scope, props.component)
+}
+
+export function useChartWidth(ref: React.RefObject<HTMLDivElement>, responsive: boolean, minWidth = 240): number {
+  const [width, setWidth] = React.useState(VIEW_WIDTH)
+  React.useEffect(() => {
+    const target = ref.current
+    if (!responsive || !target) return
+    const measure = (): void => {
+      const available = Math.floor(target.clientWidth)
+      if (available > 0) setWidth(Math.min(VIEW_WIDTH, Math.max(minWidth, available)))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [ref, responsive, minWidth])
+  return width
+}
+
+function paretoTickLabels(base: number, factors: number[]): string[] {
+  const values = factors.map((factor) => base * factor)
+  const finiteLabels = numericTickLabels(values.filter(Number.isFinite))
+  let i = 0
+  return values.map((value, index) => {
+    if (Number.isFinite(value)) return finiteLabels[i++]
+    const [significand, power] = base.toExponential(16).split('e')
+    const [normalized, shift] = (Number(significand) * factors[index]).toExponential(2).split('e')
+    return `${normalized}e+${Number(power) + Number(shift)}`
+  })
+}
+
+function ParetoPlot({ scope, component, items }: {
+  scope: Scope; component: A2UIComponent; items: ParetoItem[]
+}): ReturnType<typeof h> {
+  const t = scope.view.t
+  const interactive = !scope.view.streaming
+  const ref = React.useRef<HTMLDivElement>(null)
+  const width = useChartWidth(ref, true)
+  const id = React.useId()
+  const [selection, setSelection] = React.useState<{
+    index: number; item: ParetoItem; anchor: SVGGraphicsElement; keyboard: boolean
+  }>()
+  const { ordered, base, total } = React.useMemo(() => {
+    const sorted = [...items].sort((a, b) => b.value - a.value)
+    const base = sorted[0].value
+    let total = 0
+    // Sum scaled values so even several near-maximum finite values stay drawable.
+    const ordered = sorted.map((item) => {
+      const part = item.value / base
+      total += part
+      return { item, part, cumulative: total }
+    })
+    return { ordered, base, total }
+  }, [items])
+  const current = selection === undefined ? undefined : ordered[selection.index]
+  const active = current?.item === selection?.item ? current : undefined
+  const suffix = component.valueSuffix === undefined ? '' : text(scope, component.valueSuffix)
+  const rawLabel = suffix === '' ? t('paretoValue') : `${t('paretoValue')} (${suffix})`
+  const cumulativeLabel = t('paretoCumulative')
+  const title = component.caption === undefined ? t('paretoChart') : text(scope, component.caption) || t('paretoChart')
+  const fractions = [0, 0.25, 0.5, 0.75, 1]
+  const labels = paretoTickLabels(base, fractions.map((fraction) => total * fraction))
+  const ticks = fractions.map((fraction, index) => ({ fraction, label: labels[index] }))
+  const height = chartHeight(component, 250)
+  const left = Math.max(36, Math.max(...ticks.map((tick) => tick.label.length)) * 6 + 10)
+  const right = 40
+  const plotHeight = height - PAD.top - PAD.bottom
+  const plotWidth = width - left - right
+  const band = plotWidth / items.length
+  const barWidth = Math.min(72, band * 0.68)
+  const x = (index: number): number => left + band * (index + 0.5)
+  const y = (fraction: number): number => PAD.top + plotHeight * (1 - fraction)
+  const baseline = y(0)
+  const barColor = seriesColor(0, undefined)
+  const lineColor = seriesColor(1, undefined)
+  const labelEvery = Math.max(1, Math.ceil(60 / band))
+  const pickBar = (index: number): void => {
+    const anchor = ref.current?.querySelector<SVGRectElement>(`[data-pareto-bar="${index}"]`)
+    if (anchor) setSelection({ index, item: ordered[index].item, anchor, keyboard: true })
+  }
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const last = items.length - 1
+    const index = active === undefined ? 0 : (selection?.index ?? 0)
+    const moves: Record<string, number> = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: last }
+    if (event.key === 'Escape') {
+      if (selection === undefined) return
+      event.stopPropagation()
+      setSelection(undefined)
+    } else {
+      const next = moves[event.key]
+      if (typeof next !== 'number') return
+      pickBar(Math.max(0, Math.min(last, next)))
+    }
+    event.preventDefault()
+  }
+  const hover = (index: number) => interactive ? {
+    onPointerEnter: (event: React.PointerEvent<SVGGraphicsElement>) => {
+      setSelection({ index, item: ordered[index].item, anchor: event.currentTarget, keyboard: false })
+    },
+    onPointerLeave: () => setSelection((current) => current?.keyboard ? current : undefined),
+    onClick: (event: React.MouseEvent<SVGGraphicsElement>) => {
+      setSelection({ index, item: ordered[index].item, anchor: event.currentTarget, keyboard: false })
+    },
+  } : {}
+  const lines = active === undefined ? [] : [
+    active.item.label,
+    `${t('paretoValue')}: ${active.item.value}${suffix === '' ? '' : ` ${suffix}`}`,
+    `${cumulativeLabel}: ${trim(100 * active.cumulative / total)}%`,
+  ]
+  return h('div', { className: 'a2ui-chart-wrap a2ui-pareto' },
+    caption(scope, component),
+    h('div', { className: 'a2ui-bar-plot a2ui-plot-frame', ref,
+      ...(interactive ? {
+        role: 'group', tabIndex: 0, 'aria-label': title, 'aria-describedby': id,
+        onFocus: () => pickBar(0), onBlur: () => setSelection(undefined), onKeyDown,
+      } : {}),
+    },
+    h('svg', { className: 'a2ui-chart-svg a2ui-axis', viewBox: `0 0 ${width} ${height}`,
+      role: 'img', 'aria-label': title, 'aria-hidden': interactive || undefined, style: { maxHeight: `${height}px` },
+    },
+    h('g', { className: 'a2ui-grid' }, ...ticks.map(({ fraction, label }) => h('g', { key: fraction },
+      h('line', { x1: left, x2: width - right, y1: y(fraction), y2: y(fraction) }),
+      h('text', { x: left - 6, y: y(fraction) + 3.5, textAnchor: 'end', fontSize: 10 }, label),
+      h('text', { x: width - right + 5, y: y(fraction) + 3.5, fontSize: 10 }, `${fraction * 100}%`),
+    ))),
+    ...ordered.map(({ item, part }, index) => {
+      const top = y(part / total)
+      const labelSize = Math.max(2, Math.floor(Math.min(labelEvery * band, 2 * (x(index) - 3), 2 * (width - x(index) - 3), 88) / 11))
+      return h('g', { key: `bar${index}` },
+        h('rect', { 'data-pareto-bar': index, x: x(index) - barWidth / 2, width: barWidth,
+          y: Math.min(top, baseline - 1), height: Math.max(1, baseline - top), rx: 2,
+          fill: barColor, opacity: active === undefined || active === ordered[index] ? 0.92 : 0.55, ...hover(index),
+        }),
+        index % labelEvery === 0 ? h('text', { x: x(index), y: height - 9, textAnchor: 'middle', fontSize: 10 },
+          visibleCategoryLabel(item.label, labelSize)) : null,
+      )
+    }),
+    h('polyline', { 'data-pareto-line': '', points: ordered.map((row, index) => `${x(index)},${y(row.cumulative / total)}`).join(' '),
+      fill: 'none', stroke: lineColor, strokeWidth: 2, strokeLinejoin: 'round', pointerEvents: 'none',
+    }),
+    ...ordered.map(({ cumulative }, index) => h('circle', {
+      key: `share${index}`, cx: x(index), cy: y(cumulative / total), r: Math.min(3.2, band * 0.3),
+      fill: lineColor, ...hover(index),
+    })),
+    ),
+    interactive ? h('span', { id, className: 'a2ui-visually-hidden' }, t('paretoKeyboard')) : null,
+    interactive ? h('span', { role: 'status', className: 'a2ui-visually-hidden' }, selection?.keyboard ? lines.join(' · ') : '') : null,
+    selection && lines.length > 0 ? h(ChartTooltip, { anchor: selection.anchor, lines }) : null,
+    ),
+    h('div', { className: 'a2ui-caption a2ui-plot-key' },
+      h('span', null, h('span', { className: 'a2ui-legend-swatch', style: { background: barColor }, 'aria-hidden': true }), rawLabel),
+      h('span', null, h('span', { className: 'a2ui-pareto-line-swatch', style: { color: lineColor }, 'aria-hidden': true }), cumulativeLabel),
+    ),
+  )
+}
+
+export function ParetoChartView({ component, scope }: { component: A2UIComponent; scope: Scope }): ReturnType<typeof h> {
+  const t = scope.view.t
+  const data = resolveParetoItems(component.items, resolveContext(scope), '/items')
+  if (data.kind !== 'ready') {
+    return emptyChart(scope, component, t(data.kind === 'pending' && scope.view.streaming ? 'displayWaiting' : 'displayInvalid'))
+  }
+  if (data.value.length === 0) return emptyChart(scope, component, t('chartEmpty'))
+  if (data.value.every((item) => item.value === 0)) return emptyChart(scope, component, t('paretoZeroTotal'))
+  return h(ParetoPlot, { scope, component, items: data.value })
 }
 
 export function LineChartView(props: { component: A2UIComponent; scope: Scope }): ReturnType<typeof h> {
@@ -1024,5 +1560,38 @@ export function PieChartView(props: { component: A2UIComponent; scope: Scope }):
 }
 
 export function PlotView(props: { component: A2UIComponent; scope: Scope }): ReturnType<typeof h> {
-  return renderPlot(props.scope, props.component)
+  const { component, scope } = props
+  const responsive = Array.isArray(component.plots)
+    && component.plots.some((plot) => isPlainObject(plot) && (plot.kind === 'scatter' || plot.points !== undefined))
+  const variables = readPlotVariables(scope, component.variables)
+  const ranges = !scope.view.streaming && (component.yMin === undefined || component.yMax === undefined)
+    ? plotSliderRanges(scope, component.variables, variables)
+    : []
+  const rangeKey = ranges.length === 0 || ranges.length > 2 ? '' : JSON.stringify({
+    ranges,
+    fixed: Object.fromEntries(Object.entries(variables).filter(([name]) => !ranges.some((range) => range.name === name))),
+  })
+  const extent = React.useMemo(() => {
+    if (rangeKey === '') return undefined
+    const input = JSON.parse(rangeKey) as { fixed: Record<string, number>; ranges: SliderRange[] }
+    return linkedPlotExtent(component, input.fixed, input.ranges)
+  }, [component, rangeKey])
+  const ref = React.useRef<HTMLDivElement>(null)
+  const width = useChartWidth(ref, responsive)
+  const [hidden, setHidden] = React.useState<Set<number>>(() => new Set())
+  const toggle = (index: number): void => {
+    setHidden((current) => {
+      const next = new Set(current)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }
+  const content = renderPlot(scope, component, {
+    width: responsive ? width : VIEW_WIDTH,
+    variables,
+    linkedExtent: extent,
+    ...(responsive && !scope.view.streaming ? { hidden, onToggle: toggle } : {}),
+  })
+  return responsive ? h('div', { ref, className: 'a2ui-plot' }, content) : content
 }

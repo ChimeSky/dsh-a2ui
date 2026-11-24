@@ -23,7 +23,7 @@ const useRecorded = process.argv.includes('--session')
 /** A surface that exercises every component in the catalog. */
 function allComponents() {
   const components = [
-    { id: 'root', component: 'Column', children: ['text', 'icons', 'layout', 'card', 'tabs', 'divider', 'form', 'table', 'stats', 'charts', 'plot', 'player', 'progress', 'modal', 'media'] },
+    { id: 'root', component: 'Column', children: ['text', 'icons', 'layout', 'card', 'tabs', 'divider', 'form', 'table', 'stats', 'charts', 'plot', 'displays', 'player', 'progress', 'modal', 'media'] },
     { id: 'text', component: 'Text', text: '**Bold** and *italic* and `code`\nsecond line' },
     { id: 'icons', component: 'Row', children: ['iconOk', 'iconWarn'] },
     { id: 'iconOk', component: 'Icon', name: 'check' },
@@ -51,6 +51,9 @@ function allComponents() {
     { id: 'line', component: 'LineChart', categories: ['Q1', 'Q2', 'Q3'], series: [{ label: 'A', values: [1, 4, 2] }], area: true, curve: 'smooth' },
     { id: 'pie', component: 'PieChart', slices: [{ label: 'x', value: 3 }, { label: 'y', value: 1 }], donut: true },
     { id: 'plot', component: 'Plot', plots: [{ label: 'f', expression: 'a*x^2+b' }], variables: { a: { '@path': '/a' }, b: 1 }, xMin: -3, xMax: 3 },
+    { id: 'displays', component: 'Section', title: 'Additional displays', children: ['heatmap', 'timeline'] },
+    { id: 'heatmap', component: 'Heatmap', caption: 'Correlation matrix', rowLabels: ['Signal A'], columnLabels: ['Signal B', 'Signal C'], values: [[-0.6, null]], scale: 'diverging' },
+    { id: 'timeline', component: 'Timeline', events: [{ when: 'Release day', title: 'Rollout started', status: 'current' }] },
     { id: 'player', component: 'FramePlayer', frames: [{ label: 'f1', items: [{ value: 1 }, { value: 2 }] }, { label: 'f2', items: [{ value: 2, state: 'sorted' }, { value: 1 }] }], mode: 'bars' },
     { id: 'progress', component: 'Progress', label: 'Done', value: 4, max: 10, tone: 'success' },
     { id: 'modal', component: 'Modal', trigger: 'btn', content: 'text' },
@@ -236,6 +239,10 @@ renderCase('all components', View, { ...baseProps, phase: 'result', block: block
   '1,200',
   'Churn',
   'Done',
+  'Additional displays',
+  'Correlation matrix',
+  'Release day',
+  'Rollout started',
 ])
 
 renderCase('incremental create + append', View, { ...baseProps, phase: 'result', block: block(incrementalRestaurants(), 'Restaurants') }, [

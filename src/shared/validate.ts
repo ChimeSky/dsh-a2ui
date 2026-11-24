@@ -23,6 +23,13 @@ import {
 } from './catalog.js'
 import { fail, type Violation } from './schema.js'
 
+export const PRESENTATIONS = ['card', 'compact'] as const
+export type Presentation = (typeof PRESENTATIONS)[number]
+
+export function isPresentation(value: unknown): value is Presentation {
+  return value === 'card' || value === 'compact'
+}
+
 /** A component as authored by the model (validated, not yet rendered). */
 export interface A2UIComponent {
   id: string
@@ -298,6 +305,7 @@ function checkComponentProperties(
     if (value === undefined) continue
     validator(value, `${path}/${key}`, out)
   }
+  spec.check?.(component, path, out)
   if (isExtensionCatalog && spec.origin === 'basic') return
 }
 
@@ -539,10 +547,13 @@ export function validateToolArguments(input: unknown): ToolValidation {
   if (!isPlainObject(input)) {
     return { ok: false, errors: [{ path: '', message: 'arguments must be an object' }], warnings, surfaces: [], messages: [], states: new Map() }
   }
-  const unknownRoot = Object.keys(input).filter((key) => key !== 'messages' && key !== 'title')
+  const unknownRoot = Object.keys(input).filter((key) => key !== 'messages' && key !== 'title' && key !== 'presentation')
   if (unknownRoot.length > 0) fail(errors, '', `has unsupported properties: ${unknownRoot.join(', ')}`)
   if (input.title !== undefined && typeof input.title !== 'string') fail(errors, '/title', 'must be a string')
   if (typeof input.title === 'string' && input.title.length > 200) fail(errors, '/title', 'must be at most 200 characters')
+  if (input.presentation !== undefined && !isPresentation(input.presentation)) {
+    fail(errors, '/presentation', 'must be "card" or "compact"')
+  }
 
   const raw = input.messages
   if (!Array.isArray(raw)) {
@@ -780,7 +791,7 @@ export function validateToolArguments(input: unknown): ToolValidation {
     if (state === undefined) continue
     const estimate = estimateExpansion(state)
     if (estimate.reason !== undefined) {
-      fail(errors, `/surfaces/${touch.surfaceId}`, `surface "${touch.surfaceId}" ${estimate.reason}`)
+      fail(errors, `/surfaces/${touch.surfaceId}${estimate.path ?? ''}`, `surface "${touch.surfaceId}" ${estimate.reason}`)
       continue
     }
     totalNodes += estimate.nodes
