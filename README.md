@@ -6,27 +6,30 @@
 
 [![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](./CHANGELOG.md)
 [![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
-[![Tests](https://img.shields.io/badge/tests-171%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-198%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![React Tests](https://img.shields.io/badge/react%20tests-19%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
 
 [English](./README.en.md) | [更新日志](./CHANGELOG.md) | [架构设计](./docs/ARCHITECTURE.md) | [测试报告](./docs/TEST-REPORT.md)
 
-**dsh-a2ui** 是一个基于 Google A2UI 1.0 协议的 DeepSeek Harness (DSH) 插件，为普通 AI 对话提供**按需生成的可视化界面**。
+**dsh-a2ui** 是基于 Google A2UI 1.0 的 DeepSeek Harness（DSH）插件。Agent 可以在对话中按需生成交互图表、可排序表格和表单。图表支持流式显示，悬停、图例切换和滑块调参均在本地完成。
 
-当回答涉及**数据对比、统计趋势、数值关系或算法过程**时，Agent 可以直接在对话流中生成可排序表格、图表、指标卡和轻量交互组件；对于简单的问题，则依然保持极简的普通 Markdown 回答。
+### v0.4.0 新功能
 
-它的目标**不是**让 AI 创建一个持续运行的复杂仪表盘或应用工作台，而是**为每一次回答选择更合适的表达形式（Answer-first, not dashboard-first）**。
+- **更多数据图表** — 支持热力图、帕累托图和雷达图，散点图可以编码气泡大小并显示线性回归，竖向非堆叠柱状图可以显示误差棒。
+- **更轻的展示方式** — 时间线适合整理事件，`Section` 可以组织短内容，单张图或短内容可用紧凑模式嵌入回答。
 
-### 核心特性
+[查看 v0.4.0 发布说明](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
 
-| 特性 | 说明 |
-| :--- | :--- |
-| **按需可视化** | Agent 根据回答内容自动判断是否值得启用可视化，无需用户手动输入特定指令 |
-| **A2UI 1.0 协议** | 使用标准协议消息与 31 个受控组件目录，依据官方 Schema 校验，拒绝直接注入原始 HTML |
-| **组件级渐进式渲染** | 模型流式生成工具参数时，每闭合一个完整 JSON 值与组件即可逐步上屏，告别漫长白屏等待 |
-| **轻量交互闭环** | 原生支持表格排序、图表悬停、滑块调参等本地交互，必要时可通过 `agent -> UI -> agent` 通道将操作回传 Agent |
-| **历史一致性** | 每次调用生成自包含的回答快照，无需维护跨轮次状态即可由会话日志完整重放 |
+---
+
+## 快速开始
+
+- **DSH 界面** — 打开「插件」→「添加插件」，输入 `dsh-a2ui` 安装所选 npm 源的最新版。 [npm 包页面](https://www.npmjs.com/package/dsh-a2ui)
+- **命令行** — 运行 `dsh plugin --profile desktop add dsh-a2ui`。Web 端可把 `desktop` 换成 `web`。
+- **GitHub 或离线安装** — 在「添加插件」中输入 `github:ChimeSky/dsh-a2ui#v0.4.0`，或下载 `dsh-a2ui.tgz` 后输入文件的绝对路径。 [发布页与安装包](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
+
+更新后重启 DSH，再照常提问。Agent 会根据回答内容决定是否生成界面。
 
 ---
 
@@ -61,40 +64,6 @@
 ![npm 包下载量、GitHub Release 附件下载量和 GitHub Clones 的累计趋势](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
 
 npm 统计整个包，GitHub Release 统计插件 `.tgz` 附件，GitHub Clones 统计仓库克隆次数。图中标有各数据源的最新统计日期。 [原始数据](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
-
----
-
-## 快速开始
-
-### 1. 安装插件
-
-插件以 bundle 形式打包（`dsh.bundle` + `dsh.client`），仓库根目录就是可安装的包，构建产物已随仓库提交，安装时不需要现场编译。
-
-- **在 DSH 内安装 v0.4.0** — 打开「插件」→「添加插件」，输入 `github:ChimeSky/dsh-a2ui#v0.4.0` 并点击安装。
-- **命令行安装 v0.4.0** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.4.0`
-- **离线安装 v0.4.0** — 下载 `dsh-a2ui.tgz` 后，在「添加插件」中输入文件的绝对路径。也可以用 `tools/install.ps1` 安装仓库里的 `vendor/dsh-a2ui-0.4.0.tgz`。 [GitHub Release](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
-- **从 npm 安装** — 输入 `dsh-a2ui` 安装所选 Registry 的 `latest` 版本，或输入 `dsh-a2ui@0.3.1` 固定该版本。 [npm 包页面](https://www.npmjs.com/package/dsh-a2ui)
-- **插件管理器**：`plugin_manager action=install_bundle target=<绝对路径或 tarball 路径>`
-
-把 `desktop` 换成目标 profile（Web 端通常为 `web`）。替换已安装的包之后，需要重启 DSH 才能加载新的 JavaScript 模块。
-
-### 2. 正常提问
-
-不需要加"画个图""做个表"之类的指令。当回答适合用界面表达时，Agent 会自己生成；简单问题仍然是文字。
-
-生成后的表格可以点表头排序，图表可以悬停、切换图例，滑块与动画在本地重绘。只有 `action.event` 按钮或表单提交会向当前会话发送一条用户消息，把操作交回 Agent。
-
-### 3. 从源码构建（可选）
-
-```bash
-git clone https://github.com/ChimeSky/dsh-a2ui.git
-cd dsh-a2ui
-npm install --ignore-scripts
-npm run build
-npm run all
-```
-
-`npm run all` 依次执行类型检查、构建、测试、bundle 校验、真实 React 渲染校验与 fresh-home 安装校验。
 
 ---
 

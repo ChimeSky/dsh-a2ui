@@ -5,27 +5,30 @@
 
 [![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](./CHANGELOG.md)
 [![Protocol](https://img.shields.io/badge/A2UI-1.0-teal.svg)](https://google.github.io/a2ui/)
-[![Tests](https://img.shields.io/badge/tests-171%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-198%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![React Tests](https://img.shields.io/badge/react%20tests-19%20passed-brightgreen.svg)](./docs/TEST-REPORT.md)
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
 
 [简体中文](./README.md) | [Changelog](./CHANGELOG.md) | [Architecture](./docs/ARCHITECTURE.md) | [Test report](./docs/TEST-REPORT.md)
 
-**dsh-a2ui** is a DeepSeek Harness (DSH) plugin built on the Google A2UI 1.0 protocol that gives ordinary AI conversations **on-demand visual interfaces**.
+**dsh-a2ui** brings Google A2UI 1.0 to DeepSeek Harness (DSH). The agent can generate interactive charts, sortable tables, and forms inline when an answer calls for them. Charts can appear progressively, and hover, legend toggles, and sliders work locally.
 
-When an answer contains **data comparisons, statistical trends, numeric relationships or algorithm walk-throughs**, the agent can draw sortable tables, charts, KPI cards and lightly interactive components directly in the conversation; simple questions still get plain Markdown.
+### What's new in v0.4.0
 
-Its goal is **not** to build a persistent dashboard or an app workbench. It is to **pick the right form for each answer (Answer-first, not dashboard-first)**.
+- **More charts.** Create heatmaps, Pareto charts, and radar charts. Scatter plots support bubbles and linear regression, and vertical non-stacked bar charts support error bars.
+- **Lighter layouts.** Use timelines for events, `Section` for short groups of content, and compact presentation for a single chart or a small block.
 
-### Core traits
+[Read the v0.4.0 release notes](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
 
-| Trait | What it means |
-| :--- | :--- |
-| **Visuals on demand** | The agent decides from the answer whether a surface is worth drawing; the user does not have to type a special command |
-| **A2UI 1.0 protocol** | Standard messages and 31 controlled components, validated against the published schema; no raw HTML injection |
-| **Component-level progressive render** | As the model streams the tool arguments, each closed JSON value and component can appear, instead of a long blank wait |
-| **Lightweight interaction loop** | Table sorting, chart hover and slider adjustments run locally; when needed, an `agent -> UI -> agent` action sends the operation back |
-| **History stays honest** | One self-contained snapshot per call; the UI is re-rendered from the session log with no cross-turn state to maintain |
+---
+
+## Quick start
+
+- **DSH interface.** Open Plugins → Add plugin and enter `dsh-a2ui` to install the latest version from your selected npm registry. [npm package](https://www.npmjs.com/package/dsh-a2ui)
+- **Command line.** Run `dsh plugin --profile desktop add dsh-a2ui`. Use `web` in place of `desktop` for the web profile.
+- **GitHub or offline install.** Enter `github:ChimeSky/dsh-a2ui#v0.4.0` in Add plugin, or download `dsh-a2ui.tgz` and enter its absolute path. [Release and download](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
+
+Restart DSH after updating, then ask as usual. The agent decides whether an answer calls for a visual interface.
 
 ---
 
@@ -60,40 +63,6 @@ Grouped, stacked, and horizontal bar charts in one tab.
 ![Cumulative npm downloads, GitHub release asset downloads, and repository clones](https://raw.githubusercontent.com/ChimeSky/dsh-a2ui/download-stats/trend.png)
 
 npm covers the whole package, GitHub Release counts the plugin's `.tgz` assets, and GitHub Clones counts repository clones. The chart shows the latest date for each source. [Source data](https://github.com/ChimeSky/dsh-a2ui/blob/download-stats/history.json)
-
----
-
-## Quick start
-
-### 1. Install
-
-The plugin ships as a bundle (`dsh.bundle` + `dsh.client`): the repository root is the installable package, and the build artifacts are committed, so installing does not compile anything.
-
-- **Install v0.4.0 in DSH** — Open Plugins → Add plugin, enter `github:ChimeSky/dsh-a2ui#v0.4.0`, and click Install.
-- **Install v0.4.0 from the command line** — `dsh plugin --profile desktop add github:ChimeSky/dsh-a2ui#v0.4.0`
-- **Install v0.4.0 offline** — Download `dsh-a2ui.tgz` and enter its absolute path in Add plugin. You can also use `tools/install.ps1` with `vendor/dsh-a2ui-0.4.0.tgz` from the repository. [GitHub Release](https://github.com/ChimeSky/dsh-a2ui/releases/tag/v0.4.0)
-- **Install from npm** — Enter `dsh-a2ui` for the selected registry’s `latest` tag, or enter `dsh-a2ui@0.3.1` to pin that version. [npm package](https://www.npmjs.com/package/dsh-a2ui)
-- **DSH plugin manager**: `plugin_manager action=install_bundle target=<absolute path or tarball>`
-
-Replace `desktop` with the target profile (usually `web` for the web build). Replacing an installed package requires a DSH restart to load the new JavaScript module generation.
-
-### 2. Just ask
-
-No "draw a chart" or "make a table" instruction is needed. When an answer is better shown than read, the agent generates a surface; simple questions stay prose.
-
-Tables sort by clicking a header, charts respond to hover and legend toggles, sliders and animations redraw locally. Only an `action.event` button or a form submit sends a user message back to the agent.
-
-### 3. Build from source (optional)
-
-```bash
-git clone https://github.com/ChimeSky/dsh-a2ui.git
-cd dsh-a2ui
-npm install --ignore-scripts
-npm run build
-npm run all
-```
-
-`npm run all` runs typecheck, build, tests, bundle invariants, the real-React render check and the fresh-home install check.
 
 ---
 
